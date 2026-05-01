@@ -1,0 +1,181 @@
+"""Ollama provider — implements BaseProvider for local and remote Ollama servers.
+
+API keys are resolved exclusively from the password vault (credential named
+``"ollama"``).  There is no fallback to config files or environment variables.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from ollama import AsyncClient
+
+from core.providers.base import (
+    BaseProvider,
+    ChatResponse,
+    Message,
+    StreamChunk,
+    TokenUsage,
+    ToolCall,
+)
+
+if TYPE_CHECKING:
+    from core.config import Config
+    from core.vault import Vault
+
+_DEFAULT_BASE_URL = "http://localhost:11434"
+_DEFAULT_MODEL = "llama3.2"
+
+
+class OllamaProvider:
+    """Ollama LLM provider.
+
+    Parameters
+    ----------
+    config:
+        Cody config for non-secret settings (base URL, model).
+    vault:
+        Password vault for API key lookup.  ``None`` means no key will be
+        sent (suitable for local Ollama instances).
+    model:
+        Explicit model override.  Falls back to ``config.session.model``
+        then to ``"llama3.2"``.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        vault: Vault | None = None,
+        model: str | None = None,
+    ) -> None:
+        self._config = config
+        self._vault = vault
+        self.model = model or config.get("session.model") or _DEFAULT_MODEL
+        self.base_url = config.get("ollama.base_url") or _DEFAULT_BASE_URL
+
+    # ------------------------------------------------------------------
+    # BaseProvider implementation
+    # ------------------------------------------------------------------
+
+    async def chat(
+        self,
+        messages: list[Message],
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ChatResponse:
+        client = self._make_client()
+        ollama_messages = self._to_ollama_messages(messages)
+        ollama_tools = self._to_ollama_tools(tools)
+        response = await client.chat(
+            model=model or self.model,
+            messages=ollama_messages,
+            tools=ollama_tools,
+        )
+        return self._normalise_response(response)
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ):
+        client = self._make_client()
+        ollama_messages = self._to_ollama_messages(messages)
+        ollama_tools = self._to_ollama_tools(tools)
+        async for chunk in await client.chat(
+            model=model or self.model,
+            messages=ollama_messages,
+            tools=ollama_tools,
+            stream=True,
+        ):
+            yield self._normalise_stream_chunk(chunk)
+
+    # ------------------------------------------------------------------
+    # API key
+    # ------------------------------------------------------------------
+
+    def _resolve_api_key(self) -> str | None:
+        """Return the Ollama API key from the vault, or ``None``."""
+        if self._vault is None:
+            return None
+        try:
+            cred = self._vault.get_credential("ollama")
+        except RuntimeError:
+            return None
+        if cred is None:
+            return None
+        _, password = cred
+        return password
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_client(self) -> AsyncClient:
+        key = self._resolve_api_key()
+        headers = {"Authorization": f"Bearer {key}"} if key else None
+        return AsyncClient(host=self.base_url, headers=headers)
+
+    # -- message formatting ------------------------------------------------
+
+    @staticmethod
+    def _to_ollama_message(msg: Message) -> dict[str, str]:
+        return {"role": msg.role, "content": msg.content}
+
+    @classmethod
+    def _to_ollama_messages(cls, messages: list[Message]) -> list[dict[str, str]]:
+        return [cls._to_ollama_message(m) for m in messages]
+
+    # -- tool formatting ---------------------------------------------------
+
+    @staticmethod
+    def _to_ollama_tools(
+        tools: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        if not tools:
+            return None
+        return tools
+
+    # -- response normalisation --------------------------------------------
+
+    @staticmethod
+    def _normalise_response(raw: Any) -> ChatResponse:
+        msg = raw.message
+        content = msg.content or ""
+        thinking = getattr(msg, "thinking", None) or None
+        tool_calls = None
+        if getattr(msg, "tool_calls", None):
+            tool_calls = [
+                ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=tc.function.arguments,
+                )
+                for tc in msg.tool_calls
+            ]
+        usage = TokenUsage(
+            prompt_tokens=getattr(raw, "prompt_eval_count", 0) or 0,
+            completion_tokens=getattr(raw, "eval_count", 0) or 0,
+            total_tokens=(
+                (getattr(raw, "prompt_eval_count", 0) or 0)
+                + (getattr(raw, "eval_count", 0) or 0)
+            ),
+        )
+        return ChatResponse(content=content, usage=usage, tool_calls=tool_calls, thinking=thinking)
+
+    @staticmethod
+    def _normalise_stream_chunk(raw: Any) -> StreamChunk:
+        content = raw.message.content or ""
+        thinking = getattr(raw.message, "thinking", None) or None
+        done = bool(raw.done)
+        usage = None
+        if done:
+            usage = TokenUsage(
+                prompt_tokens=getattr(raw, "prompt_eval_count", 0) or 0,
+                completion_tokens=getattr(raw, "eval_count", 0) or 0,
+                total_tokens=(
+                    (getattr(raw, "prompt_eval_count", 0) or 0)
+                    + (getattr(raw, "eval_count", 0) or 0)
+                ),
+            )
+        return StreamChunk(content=content, done=done, usage=usage, thinking=thinking)
