@@ -627,39 +627,45 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Leader chords: ws v/h (split), ws c (close), ws h/j/k/l (navigate)
  - **COMPLETE** — branch `step-7-pane-tree-workspace` (merged to main)
 
-### Step 8: Tool Registry (zero internal deps)
+### Step 8: Tool Registry (zero internal deps) ✅
 
  - core/tools.py — @register_tool() decorator, tag-based grouping, enable/disable, execute_tool(), get_tools(), reset for tests
  - Tests: Registration, tag filtering, enable/disable, execution, reset isolation
+ - **COMPLETE** — merged to main
 
-### Step 9: Skill System (depends on paths, config, tools)
+### Step 9: Skill System (depends on paths, config, tools) ✅
 
  - core/skills.py — SKILL.md discovery with YAML frontmatter, 3-tier search with override, enable/disable, XML catalog generation, manual scan method (no implicit re-discovery)
  - Tests: Discovery from fixture directories, tier override, frontmatter parsing, catalog XML output, scan method
+ - **COMPLETE** — merged to main
 
 ### Step 10: Agent (depends on providers, tools, skills)
 
  - core/agent.py — system prompt builder, tool-calling loop, streaming response handling, abort, git checkpoint integration point
  - Tests: With mock provider, verify tool call → execute → continue loop, abort mid-stream, message history construction
 
-### Step 11: Database (depends on paths, config)
+### Step 11: Database (depends on paths, config) ✅
 
  - core/database.py — provider abstraction (BaseDBProvider), SQLiteProvider, connection manager, tables: chats/agents/todos/input_history, CRUD, agent seeding
  - Tests: All CRUD operations, multi-connection, provider swapping, seeded agents
+ - **COMPLETE** — merged to main; Cosmos provider dropped per §6.2
 
-### Step 12: Leader Registry + Slash Commands (zero internal deps)
+### Step 12: Leader Registry + Slash Commands (zero internal deps) ✅
 
  - core/leader.py — LeaderNode tree, register_submenu(), register_action(), skill chord discovery
  - core/commands.py — slash-command loader, CommandBase, tiered discovery from skill cmd/ dirs
  - Tests: Tree building, action dispatch, command loading, chord conflict detection
+ - **COMPLETE** — merged to main; LeaderOverlay widget built early in ui/widgets/
 
-### Step 13: Bootstrap + AppContext (depends on everything above)
+### Step 13: Bootstrap + AppContext (depends on everything above) ✅
 
  - context.py — AppContext dataclass (config, skills, database, leader, working_directory)
- - bootstrap.py — Bootstrap class: init config → discover skills → load tools → init DB → build leader → collect CSS → init git → return context + css
- - core/themes.py — theme discovery (3-tier)
- - core/git.py — git checkpoint utilities
- - Tests: Full bootstrap flow with temp directories, verify all services initialized, CSS collection completeness
+ - bootstrap.py — Bootstrap class: init config → discover skills → load tools → init DB → build leader → return context
+ - core/themes.py — theme discovery (3-tier) — **DEFERRED**
+ - core/git.py — git checkpoint utilities — **DEFERRED**
+ - CSS collection — **DEFERRED** to later step
+ - Tests: Full bootstrap flow with temp directories, verify all services initialized
+ - **COMPLETE** — merged to main; leader overlay, main.py wiring, and workspace leader chords built alongside
 
 ### Step 14: Shared UI Widgets (depends on AppContext)
 
