@@ -64,6 +64,14 @@ class Tree(VerticalScroll, can_focus=True):
     def root(self) -> TreeNode:
         return self._root
 
+    def set_root(self, new_root: TreeNode) -> None:
+        """Replace the entire tree with a new root node."""
+        self._root = new_root
+        self._node_map.clear()
+        self._build_node_map(new_root)
+        self._expanded = {new_root.id}
+        self._rebuild_rows()
+
     def select_node(self, node_id: str) -> None:
         """Programmatically select a node by id."""
         if node_id not in self._node_map:

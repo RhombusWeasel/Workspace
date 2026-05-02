@@ -279,3 +279,15 @@ def register_workspace_leader_chords() -> None:
         "Close",
         event_type="leader.workspace.close",
     )
+    register_action(
+        ["w", "t", "l"],
+        "Toggle Left",
+        event_type="leader.workspace.toggle_left",
+        labels={"t": "Toggle"},
+    )
+    register_action(
+        ["w", "t", "r"],
+        "Toggle Right",
+        event_type="leader.workspace.toggle_right",
+        labels={"t": "Toggle"},
+    )

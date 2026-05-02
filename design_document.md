@@ -686,12 +686,13 @@ with fixtures that leverage `AppContext` for dependency injection.
  - ui/terminal/ — terminal integration
  - Tests: Pane splitting, tab opening/closing, terminal launch
 
-### Step 17: Sidebar Components (depends on AppContext, database, widgets)
+### Step 17: Sidebar Components (depends on AppContext, database, widgets) ✅
 
- - ui/sidebar/ — wrapper, ChatHistory, Settings, VaultTab, ToolList
- - ui/db/ — DBTab, DBTree, results modal
- - ui/tree/ — GenericTree, TreeRow ✅ (built early in `step-tree` branch)
- - Tests: History navigation, settings toggle, vault CRUD via UI, tool list display, DB tree browsing
+ - ui/sidebar/ — registry, Sidebar, SidebarContainer, panels/vault_panel.py
+ - ui/db/ — DBTab, DBTree, results modal — DEFERRED
+ - ui/tree/ — GenericTree, TreeRow ✅ (built in `step-tree`)
+ - Tests: registry, sidebar visibility, vault panel rendering
+ - **COMPLETE** — branch `step-sidebar`; DB tab deferred
 
 ### Step 18: app.py + main.py (wires everything)
 

@@ -10,10 +10,13 @@ import os
 import sys
 
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import Footer, Header
 
 from bootstrap import Bootstrap
 from context import AppContext
+from core.events import CodyEvent
+from ui.sidebar.sidebar import Sidebar, SidebarContainer
 from ui.workspace import Workspace
 
 
@@ -43,8 +46,19 @@ class CodyApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+
+        self.left_container = SidebarContainer(
+            Sidebar("left"), side="left"
+        )
         self.ws = Workspace()
-        yield self.ws
+        self.right_container = SidebarContainer(
+            Sidebar("right"), side="right"
+        )
+
+        with Horizontal():
+            yield self.left_container
+            yield self.ws
+            yield self.right_container
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -55,6 +69,15 @@ class CodyApp(App):
         from ui.widgets.leader_overlay import LeaderOverlay
         from core.leader import leader
         self.push_screen(LeaderOverlay(leader, self))
+
+    def on_cody_event(self, event: CodyEvent) -> None:
+        """Handle sidebar toggle events from leader chords."""
+        if event.event_type == "leader.workspace.toggle_left":
+            self.left_container.toggle()
+            event.stop()
+        elif event.event_type == "leader.workspace.toggle_right":
+            self.right_container.toggle()
+            event.stop()
 
 
 # ---------------------------------------------------------------------------
