@@ -72,6 +72,15 @@ class Tree(VerticalScroll, can_focus=True):
         self._expanded = {new_root.id}
         self._rebuild_rows()
 
+    def update_node_label(self, node_id: str, label: str) -> None:
+        """Update the display label of a node in-place (no full rebuild)."""
+        if node_id not in self._node_map:
+            return
+        self._node_map[node_id].label = label
+        for row in self.query("TreeRow"):
+            if row.node.id == node_id:
+                row.refresh(layout=True)
+
     def select_node(self, node_id: str) -> None:
         """Programmatically select a node by id."""
         if node_id not in self._node_map:

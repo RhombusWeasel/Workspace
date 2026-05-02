@@ -63,6 +63,32 @@ class CodyApp(App):
 
     async def on_mount(self) -> None:
         self.ws.focus()
+        self._init_chat_panel()
+
+    def _init_chat_panel(self) -> None:
+        """Find the ChatPanel in the right sidebar and wire it to the agent."""
+        from core.agent import Agent
+        from core.providers.ollama import OllamaProvider
+        from core.tools import get_tools
+        from core.skills import skill_manager
+
+        try:
+            chat_panel = self.right_container.query_one("ChatPanel")
+        except Exception:
+            return
+
+        # Build agent
+        provider = OllamaProvider(self.context.config)
+        agent = Agent(
+            provider=provider,
+            template="You are a helpful AI assistant. {{extra}}",
+            variables={"extra": "Use tools when appropriate."},
+            model=self.context.config.get("session.model", ""),
+            skills_xml=skill_manager.get_catalog_xml(),
+        )
+
+        chat_panel.set_agent(agent)
+        chat_panel.set_tools(get_tools())
 
     def action_open_leader(self) -> None:
         """Push the leader key overlay."""
