@@ -690,7 +690,7 @@ with fixtures that leverage `AppContext` for dependency injection.
 
  - ui/sidebar/ — wrapper, ChatHistory, Settings, VaultTab, ToolList
  - ui/db/ — DBTab, DBTree, results modal
- - ui/tree/ — GenericTree, TreeRow
+ - ui/tree/ — GenericTree, TreeRow ✅ (built early in `step-tree` branch)
  - Tests: History navigation, settings toggle, vault CRUD via UI, tool list display, DB tree browsing
 
 ### Step 18: app.py + main.py (wires everything)

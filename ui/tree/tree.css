@@ -1,0 +1,14 @@
+Tree {
+    height: 1fr;
+    width: 1fr;
+    overflow-y: auto;
+}
+
+TreeRow {
+    width: 1fr;
+    height: 1;
+}
+
+TreeRow:hover {
+    text-style: bold;
+}
