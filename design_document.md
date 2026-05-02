@@ -617,14 +617,15 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Removed ``core/providers/keys.py`` — unnecessary indirection; providers resolve keys directly from vault
  - **COMPLETE** — branch `step-2-6-provider-base-ollama`
 
-### Step 7: Recursive Pane Tree + Workspace (depends on events, context stub)
+### Step 7: Recursive Pane Tree + Workspace (depends on events, context stub) ✅
 
- - core/pane_tree.py — pure data model: LeafPane, SplitPane, operations (split, close, find_neighbor, set_content, get_leaves)
+ - core/pane_tree.py — pure data model: LeafPane, SplitPane, operations (split, close, find_neighbor, set_content, get_leaves, get_layout)
  - ui/workspace/workspace.py — Workspace widget composing tree → Horizontal/Vertical containers, vim+click navigation, leader event posting
  - ui/workspace/workspace.css — pane borders, focus indicators, empty-state styling
  - Tests: All tree operations in isolation, Workspace widget via Textual pilot
  - No resize — splits set a ratio once at creation time
  - Leader chords: ws v/h (split), ws c (close), ws h/j/k/l (navigate)
+ - **COMPLETE** — branch `step-7-pane-tree-workspace` (merged to main)
 
 ### Step 8: Tool Registry (zero internal deps)
 
