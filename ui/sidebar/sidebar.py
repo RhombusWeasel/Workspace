@@ -25,20 +25,23 @@ class Sidebar(Container):
 
     DEFAULT_CSS = """
     Sidebar {
-        width: 25%;
+        width: 1fr;
         height: 1fr;
         overflow-y: auto;
     }
 
     Sidebar TabbedContent {
+        width: 1fr;
         height: 1fr;
     }
 
     Sidebar TabbedContent TabPane {
+        width: 1fr;
         height: 1fr;
     }
 
     Sidebar TabbedContent > ContentSwitcher {
+        width: 1fr;
         height: 1fr;
     }
     """
@@ -57,6 +60,20 @@ class Sidebar(Container):
                 with TabPane(tab.icon, id=f"tab-{tab.name}"):
                     yield tab.widget_class()
 
+    def on_mount(self) -> None:
+        """Set tooltips on tab buttons after mount."""
+        tabs = get_sidebar_tabs(self._side)
+        if not tabs:
+            return
+        try:
+            tabbed = self.query_one(TabbedContent)
+        except Exception:
+            return
+        for tab_meta in tabs:
+            pane_id = f"tab-{tab_meta.name}"
+            tab_widget = tabbed.get_tab(pane_id)
+            if tab_widget is not None and tab_meta.tooltip:
+                tab_widget.tooltip = tab_meta.tooltip
 
 # ---------------------------------------------------------------------------
 # SidebarContainer — animated show/hide wrapper
@@ -81,7 +98,7 @@ class SidebarContainer(Container):
         width: 25%;
         height: 1fr;
         overflow: hidden;
-        transition: width 200ms ease-in-out;
+        transition: width 200ms in_out_cubic;
     }
 
     SidebarContainer.hidden {

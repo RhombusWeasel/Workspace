@@ -23,6 +23,7 @@ class SidebarTab:
     name: str
     icon: str
     side: str
+    tooltip: str
     widget_class: type
 
 
@@ -39,7 +40,7 @@ _sidebar_tabs: dict[str, SidebarTab] = {}
 
 
 def register_sidebar_tab(
-    *, name: str, icon: str, side: str = "left"
+    *, name: str, icon: str, side: str = "left", tooltip: str = ""
 ):
     """Decorator that registers a Widget subclass as a sidebar tab.
 
@@ -57,6 +58,8 @@ def register_sidebar_tab(
         Nerd Font icon character for the tab button.
     side:
         ``"left"`` or ``"right"``.
+    tooltip:
+        Tooltip text for the tab button.
     """
 
     def decorator(cls):
@@ -65,7 +68,7 @@ def register_sidebar_tab(
                 f"Sidebar tab '{name}' is already registered."
             )
         _sidebar_tabs[name] = SidebarTab(
-            name=name, icon=icon, side=side, widget_class=cls
+            name=name, icon=icon, side=side, tooltip=tooltip, widget_class=cls
         )
         return cls
 

@@ -46,6 +46,7 @@ class Bootstrap:
         config = self._init_config()
         skills = self._discover_skills(config)
         self._load_tools(skills)
+        self._load_sidebar_panels(skills)
         database = self._init_database(config)
         self._init_leader()
 
@@ -130,7 +131,19 @@ class Bootstrap:
             spec.loader.exec_module(module)
 
     # ------------------------------------------------------------------
-    # Phase 4 — Database
+    # Phase 4 — Sidebar panels
+    # ------------------------------------------------------------------
+
+    def _load_sidebar_panels(self, skills) -> None:
+        """Import sidebar panel modules to trigger @register_sidebar_tab()."""
+        # Core panels
+        core_panels = os.path.join(self._cody_dir, "ui", "sidebar", "panels")
+        self._import_modules_from(core_panels)
+
+        # Skill panels (future: discover from skill dirs)
+
+    # ------------------------------------------------------------------
+    # Phase 5 — Database
     # ------------------------------------------------------------------
 
     def _init_database(self, config: Config) -> DatabaseManager:

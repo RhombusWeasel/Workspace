@@ -11,7 +11,7 @@ from ui.tree.tree_row import TreeNode
 from ui.tree.tree import Tree, NodeSelected, NodeToggled
 
 
-@register_sidebar_tab(name="vault", icon="\ueb97", side="right")
+@register_sidebar_tab(name="vault", icon="󰦝", side="right", tooltip="Vault")
 class VaultPanel(Container):
     """Sidebar panel showing vault credentials and secure notes in a tree.
 
