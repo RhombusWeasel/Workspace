@@ -10,7 +10,7 @@ import os
 import sys
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer
+from textual.widgets import Footer, Header
 
 from bootstrap import Bootstrap
 from context import AppContext
@@ -42,7 +42,7 @@ class CodyApp(App):
         self.context = context
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(show_clock=True)
         self.ws = Workspace()
         yield self.ws
         yield Footer()
