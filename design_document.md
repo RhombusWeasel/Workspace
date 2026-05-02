@@ -617,33 +617,42 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Removed ``core/providers/keys.py`` — unnecessary indirection; providers resolve keys directly from vault
  - **COMPLETE** — branch `step-2-6-provider-base-ollama`
 
-### Step 7: Tool Registry (zero internal deps)
+### Step 7: Recursive Pane Tree + Workspace (depends on events, context stub)
+
+ - core/pane_tree.py — pure data model: LeafPane, SplitPane, operations (split, close, find_neighbor, set_content, get_leaves)
+ - ui/workspace/workspace.py — Workspace widget composing tree → Horizontal/Vertical containers, vim+click navigation, leader event posting
+ - ui/workspace/workspace.css — pane borders, focus indicators, empty-state styling
+ - Tests: All tree operations in isolation, Workspace widget via Textual pilot
+ - No resize — splits set a ratio once at creation time
+ - Leader chords: ws v/h (split), ws c (close), ws h/j/k/l (navigate)
+
+### Step 8: Tool Registry (zero internal deps)
 
  - core/tools.py — @register_tool() decorator, tag-based grouping, enable/disable, execute_tool(), get_tools(), reset for tests
  - Tests: Registration, tag filtering, enable/disable, execution, reset isolation
 
-### Step 8: Skill System (depends on paths, config, tools)
+### Step 9: Skill System (depends on paths, config, tools)
 
  - core/skills.py — SKILL.md discovery with YAML frontmatter, 3-tier search with override, enable/disable, XML catalog generation, manual scan method (no implicit re-discovery)
  - Tests: Discovery from fixture directories, tier override, frontmatter parsing, catalog XML output, scan method
 
-### Step 9: Agent (depends on providers, tools, skills)
+### Step 10: Agent (depends on providers, tools, skills)
 
  - core/agent.py — system prompt builder, tool-calling loop, streaming response handling, abort, git checkpoint integration point
  - Tests: With mock provider, verify tool call → execute → continue loop, abort mid-stream, message history construction
 
-### Step 10: Database (depends on paths, config)
+### Step 11: Database (depends on paths, config)
 
  - core/database.py — provider abstraction (BaseDBProvider), SQLiteProvider, connection manager, tables: chats/agents/todos/input_history, CRUD, agent seeding
  - Tests: All CRUD operations, multi-connection, provider swapping, seeded agents
 
-### Step 11: Leader Registry + Slash Commands (zero internal deps)
+### Step 12: Leader Registry + Slash Commands (zero internal deps)
 
  - core/leader.py — LeaderNode tree, register_submenu(), register_action(), skill chord discovery
  - core/commands.py — slash-command loader, CommandBase, tiered discovery from skill cmd/ dirs
  - Tests: Tree building, action dispatch, command loading, chord conflict detection
 
-### Step 12: Bootstrap + AppContext (depends on everything above)
+### Step 13: Bootstrap + AppContext (depends on everything above)
 
  - context.py — AppContext dataclass (config, skills, database, leader, working_directory)
  - bootstrap.py — Bootstrap class: init config → discover skills → load tools → init DB → build leader → collect CSS → init git → return context + css
@@ -651,37 +660,37 @@ with fixtures that leverage `AppContext` for dependency injection.
  - core/git.py — git checkpoint utilities
  - Tests: Full bootstrap flow with temp directories, verify all services initialized, CSS collection completeness
 
-### Step 13: Shared UI Widgets (depends on AppContext)
+### Step 14: Shared UI Widgets (depends on AppContext)
 
  - ui/widgets/ — buttons, InputModal, FormModal, CommandsHelp, LeaderGuideScreen
  - Tests: Textual pilot for each widget, modal flows, keyboard navigation
 
-### Step 14: Chat UI (depends on agent, AppContext, widgets)
+### Step 15: Chat UI (depends on agent, AppContext, widgets)
 
  - ui/chat/ — Message widget, StreamingMessage widget, MessageInput, unified MsgBox (streaming-only), ChatTab
  - Tests: Message rendering, streaming append, input submission, MsgBox full turn cycle with mock agent
 
-### Step 15: Workspace + Terminal (depends on AppContext)
+### Step 16: Workspace + Terminal (depends on AppContext)
 
  - ui/workspace/ — split panes, EditorTab, OpenWorkspaceTab
  - ui/terminal/ — terminal integration
  - Tests: Pane splitting, tab opening/closing, terminal launch
 
-### Step 16: Sidebar Components (depends on AppContext, database, widgets)
+### Step 17: Sidebar Components (depends on AppContext, database, widgets)
 
  - ui/sidebar/ — wrapper, ChatHistory, Settings, VaultTab, ToolList
  - ui/db/ — DBTab, DBTree, results modal
  - ui/tree/ — GenericTree, TreeRow
  - Tests: History navigation, settings toggle, vault CRUD via UI, tool list display, DB tree browsing
 
-### Step 17: app.py + main.py (wires everything)
+### Step 18: app.py + main.py (wires everything)
 
  - app.py — TuiApp class, leader key binding, theme registration, all action methods
  - main.py — parse args → Bootstrap.run() → mount app → run
  - app.css — base styles
  - Tests: App launch, leader menu opens, theme switching, full smoke test
 
-### Step 18: Bundled Content + E2E
+### Step 19: Bundled Content + E2E
 
  - Basic skills: coding, git, todo, brave_search
  - Default themes
