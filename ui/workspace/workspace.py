@@ -81,13 +81,10 @@ class Workspace(Widget):
     can_focus = True
 
     BINDINGS = [
-        Binding("ctrl+left", "navigate_left", "← Pane", show=True),
-        Binding("ctrl+right", "navigate_right", "→ Pane", show=True),
-        Binding("ctrl+up", "navigate_up", "↑ Pane", show=True),
-        Binding("ctrl+down", "navigate_down", "↓ Pane", show=True),
-        Binding("ctrl+h", "split_horizontal", "Split H", show=True),
-        Binding("ctrl+v", "split_vertical", "Split V", show=True),
-        Binding("ctrl+x", "close_pane", "Close Pane", show=True),
+        Binding("ctrl+left, ctrl+h", "navigate_left", "← Pane", show=True),
+        Binding("ctrl+right, ctrl+l", "navigate_right", "→ Pane", show=True),
+        Binding("ctrl+up, ctrl+k", "navigate_up", "↑ Pane", show=True),
+        Binding("ctrl+down, ctrl+j", "navigate_down", "↓ Pane", show=True),
     ]
 
     def __init__(self):
@@ -228,3 +225,40 @@ class Workspace(Widget):
 
     def action_navigate_down(self) -> None:
         self.navigate("down")
+
+
+# ---------------------------------------------------------------------------
+# Leader chord registration
+# ---------------------------------------------------------------------------
+
+def register_workspace_leader_chords() -> None:
+    """Register workspace leader chords with the global leader registry.
+
+    Called by bootstrap after the leader registry and workspace are
+    initialised.  Chords:
+
+    - ``Ctrl+Space w s h`` → split horizontal
+    - ``Ctrl+Space w s v`` → split vertical
+    - ``Ctrl+Space w s c`` → close pane
+    """
+    from core.leader import register_action, register_submenu
+
+    register_submenu(["w"], "Workspace")
+
+    register_action(
+        ["w", "s", "h"],
+        "Split H",
+        lambda: None,  # dispatched via CodyEvent by action_* methods
+        labels={"s": "Split"},
+    )
+    register_action(
+        ["w", "s", "v"],
+        "Split V",
+        lambda: None,
+        labels={"s": "Split"},
+    )
+    register_action(
+        ["w", "c"],
+        "Close",
+        lambda: None,
+    )
