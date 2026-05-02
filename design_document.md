@@ -639,10 +639,12 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Tests: Discovery from fixture directories, tier override, frontmatter parsing, catalog XML output, scan method
  - **COMPLETE** — merged to main
 
-### Step 10: Agent (depends on providers, tools, skills)
+### Step 10: Agent (depends on providers, tools, skills) ✅
 
- - core/agent.py — system prompt builder, tool-calling loop, streaming response handling, abort, git checkpoint integration point
- - Tests: With mock provider, verify tool call → execute → continue loop, abort mid-stream, message history construction
+ - core/agent.py — system prompt builder with `{{key}}` template substitution, tool-calling loop, streaming response handling, abort, max_tool_iterations safety limit
+ - core/providers/base.py — added ``tool_calls`` field to ``StreamChunk``
+ - Tests: template rendering, message building, simple chat, tool-calling loop, streaming, abort
+ - **COMPLETE** — branch `step-10-agent`
 
 ### Step 11: Database (depends on paths, config) ✅
 

@@ -43,6 +43,8 @@ class StreamChunk:
     usage: TokenUsage | None = None
     thinking: str | None = None
     """Reasoning / chain-of-thought emitted by the model (DeepSeek-R1, Qwen, etc.)."""
+    tool_calls: list[ToolCall] | None = None
+    """Tool calls emitted in this chunk (typically on the final ``done`` chunk)."""
 
 
 @dataclass
