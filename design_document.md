@@ -669,10 +669,11 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Tests: Full bootstrap flow with temp directories, verify all services initialized
  - **COMPLETE** — merged to main; leader overlay, main.py wiring, and workspace leader chords built alongside
 
-### Step 14: Shared UI Widgets (depends on AppContext)
+### Step 14: Shared UI Widgets (depends on AppContext) ✅
 
- - ui/widgets/ — buttons, InputModal, FormModal, CommandsHelp, LeaderGuideScreen
+ - ui/widgets/ — InputModal, CommandsHelp, LeaderOverlay (built in Step 12/13)
  - Tests: Textual pilot for each widget, modal flows, keyboard navigation
+ - **COMPLETE** — branch `step-14-ui-widgets`; FormModal deferred
 
 ### Step 15: Chat UI (depends on agent, AppContext, widgets)
 
