@@ -39,12 +39,17 @@ class LeaderNode:
         ``True`` when this node was explicitly created via
         ``register_submenu()`` and should not be converted to a
         leaf action.
+    event_type:
+        If set, the leader overlay posts a :class:`CodyEvent`
+        of this type when the leaf is reached (bypassing
+        ``handler``).
     """
 
     label: str = ""
     children: dict[str, LeaderNode] = field(default_factory=dict)
     handler: Callable[[], Any] | None = None
     is_submenu: bool = False
+    event_type: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -70,8 +75,9 @@ class LeaderRegistry:
         self,
         keys: list[str],
         label: str,
-        handler: Callable[[], Any],
+        handler: Callable[[], Any] | None = None,
         labels: dict[str, str] | None = None,
+        event_type: str | None = None,
     ) -> None:
         """Register a chord action at a leaf path.
 
@@ -88,6 +94,10 @@ class LeaderRegistry:
             Optional human-readable labels for intermediate nodes
             created along the path.  Keys not in this dict get an
             empty label.
+        event_type:
+            If set, the leader overlay posts a :class:`CodyEvent`
+            of this type when the leaf is reached (instead of
+            calling ``handler``).
         """
         labels = labels or {}
         node = self._root
@@ -115,6 +125,7 @@ class LeaderRegistry:
                         )
                     child.label = label
                     child.handler = handler
+                    child.event_type = event_type
                 else:
                     # Intermediate — must not already be a leaf action.
                     if child.handler is not None:
@@ -128,7 +139,7 @@ class LeaderRegistry:
             else:
                 if is_last:
                     node.children[key] = LeaderNode(
-                        label=label, handler=handler
+                        label=label, handler=handler, event_type=event_type
                     )
                 else:
                     node.children[key] = LeaderNode(
@@ -208,11 +219,12 @@ leader = LeaderRegistry()
 def register_action(
     keys: list[str],
     label: str,
-    handler: Callable[[], Any],
+    handler: Callable[[], Any] | None = None,
     labels: dict[str, str] | None = None,
+    event_type: str | None = None,
 ) -> None:
     """Register a chord action on the module-level singleton."""
-    leader.register_action(keys, label, handler, labels)
+    leader.register_action(keys, label, handler, labels, event_type)
 
 
 def register_submenu(keys: list[str], label: str) -> None:

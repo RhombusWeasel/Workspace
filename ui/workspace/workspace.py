@@ -197,6 +197,23 @@ class Workspace(Widget):
         self._update_focus_styles()
 
     # ------------------------------------------------------------------
+    # Leader event listeners
+    # ------------------------------------------------------------------
+
+    def on_cody_event(self, event: CodyEvent) -> None:
+        """Route CodyEvents dispatched from leader chord handlers."""
+        et = event.event_type
+        if et == "leader.workspace.split_h":
+            self.run_worker(self.action_split_horizontal())
+            event.stop()
+        elif et == "leader.workspace.split_v":
+            self.run_worker(self.action_split_vertical())
+            event.stop()
+        elif et == "leader.workspace.close":
+            self.run_worker(self.action_close_pane())
+            event.stop()
+
+    # ------------------------------------------------------------------
     # Leader key actions
     # ------------------------------------------------------------------
 
@@ -239,7 +256,7 @@ def register_workspace_leader_chords() -> None:
 
     - ``Ctrl+Space w s h`` → split horizontal
     - ``Ctrl+Space w s v`` → split vertical
-    - ``Ctrl+Space w s c`` → close pane
+    - ``Ctrl+Space w c`` → close pane
     """
     from core.leader import register_action, register_submenu
 
@@ -248,17 +265,17 @@ def register_workspace_leader_chords() -> None:
     register_action(
         ["w", "s", "h"],
         "Split H",
-        lambda: None,  # dispatched via CodyEvent by action_* methods
+        event_type="leader.workspace.split_h",
         labels={"s": "Split"},
     )
     register_action(
         ["w", "s", "v"],
         "Split V",
-        lambda: None,
+        event_type="leader.workspace.split_v",
         labels={"s": "Split"},
     )
     register_action(
         ["w", "c"],
         "Close",
-        lambda: None,
+        event_type="leader.workspace.close",
     )
