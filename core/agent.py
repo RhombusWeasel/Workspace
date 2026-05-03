@@ -172,10 +172,12 @@ class Agent:
         user_text: str,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        """Stream a user message, yielding chunks.
+        """Stream a user message, yielding chunks as they arrive.
 
-        Handles the tool-calling loop internally — tool execution results
-        are not streamed to the UI; only the final text response is.
+        Handles the tool-calling loop internally — chunks are yielded
+        immediately for real-time UI updates.  When tool calls are
+        detected (on the final chunk of an iteration), tools are
+        executed and the loop continues with the tool results.
         """
         self._aborted = False
 
@@ -184,28 +186,36 @@ class Agent:
         for iteration in range(self._max_tool_iterations + 1):
             self._check_abort()
 
-            collected: list[StreamChunk] = []
+            # Stream chunks from the provider, yielding them immediately
+            # while also detecting tool calls (which appear on the last chunk).
+            collected_content: list[str] = []
             tool_calls: list[ToolCall] = []
+            last_chunk: StreamChunk | None = None
+
             async for chunk in self._provider.stream_chat(
                 messages, self._model, tools
             ):
                 self._check_abort()
-                collected.append(chunk)
+
                 if chunk.tool_calls:
                     tool_calls = chunk.tool_calls
+                    last_chunk = chunk
+                    # Don't yield this chunk yet — it has tool_calls which
+                    # means we may need another iteration.
+                else:
+                    yield chunk
+                    if chunk.content:
+                        collected_content.append(chunk.content)
 
             self._check_abort()
 
             if not tool_calls:
-                # Final response — yield collected chunks
-                for chunk in collected:
-                    yield chunk
+                # Final response done — nothing more to do.
                 return
 
-            # Execute tools
-            assistant_content = "".join(
-                c.content for c in collected if c.content
-            )
+            # Tools were called — append assistant + tool results to messages
+            # and continue the loop.
+            assistant_content = "".join(collected_content)
             messages.append(
                 Message(role="assistant", content=assistant_content)
             )
@@ -213,9 +223,11 @@ class Agent:
                 result = self._execute_tool_call(tc)
                 messages.append(Message(role="tool", content=result))
 
-        # Hit max iterations — yield whatever we have
-        for chunk in collected:
-            yield chunk
+            # Yield the tool-call info so the UI can display it.
+            if last_chunk is not None:
+                yield last_chunk
+
+        # Hit max iterations — nothing left to yield
 
     # ------------------------------------------------------------------
     # Abort

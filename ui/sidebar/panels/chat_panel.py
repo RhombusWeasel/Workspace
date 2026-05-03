@@ -106,8 +106,10 @@ class ChatPanel(Container):
                 if chunk.thinking:
                     self.add_thought(chunk.thinking)
 
-                # Handle tool calls (on the final chunk)
+                # Handle tool calls — reset accumulated text since
+                # this iteration's content was intermediate.
                 if chunk.tool_calls:
+                    accumulated = ""
                     for tc in chunk.tool_calls:
                         self.add_tool_result(
                             tc.name, tc.arguments, "executing…"
