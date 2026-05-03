@@ -1,12 +1,20 @@
 """Chat panel — sidebar tab with streaming conversation in a Tree widget.
 
-Messages are displayed in a collapsible tree:
-- User messages as leaf nodes
-- Assistant responses as branch nodes with children for thinking,
-  tool calls, and final response text.
+Each assistant **response** is a branch node whose children contain
+thinking, tool results, and a :class:`~textual.widgets.Markdown` widget
+for streaming content.  User messages are leaf nodes.
 
-Streaming updates the last assistant node in-place via
-:meth:`Tree.update_node_label`.
+Tree structure::
+
+    root (Conversation)
+    ├── 👤 User: "Hello"           ← leaf
+    ├── 💭 Response                ← branch
+    │   ├── 💡 Thinking: "..."     ← leaf
+    │   ├── 🔧 Tool: ...           ← leaf
+    │   └── 📝 [Markdown widget]   ← leaf with streaming content
+    ├── 👤 User: "What is 2+2?"    ← leaf
+    ├── 💭 Response                ← branch
+    │   └── 📝 [Markdown widget]
 """
 
 from __future__ import annotations
@@ -16,7 +24,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical
-from textual.widgets import Input, Static
+from textual.widgets import Input, Markdown, Static
 
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree
@@ -27,10 +35,15 @@ from ui.tree.tree_row import TreeNode
 class ChatPanel(Container):
     """Streaming chat panel using a Tree for collapsible message display.
 
-    Provides ``add_message()``, ``add_thought()``, and
-    ``add_tool_result()`` for building conversation nodes.
-    ``last_assistant_id`` tracks the current response for
-    streaming updates.
+    Each assistant response is a **branch** node.  The response text is
+    rendered in a :class:`~textual.widgets.Markdown` widget (leaf child)
+    that supports streaming via :meth:`update_response_text`.
+
+    Provides:
+    * ``add_message()`` — user leaf or response branch
+    * ``add_thought()`` — thinking leaf under the current response
+    * ``add_tool_result()`` — tool-call leaf under current response
+    * ``update_response_text()`` — stream text into the Markdown widget
     """
 
     def __init__(self):
@@ -38,6 +51,7 @@ class ChatPanel(Container):
         self._root = TreeNode("chat-root", "Conversation")
         self._turn_count = 0
         self.last_assistant_id: str | None = None
+        self._last_markdown: Markdown | None = None
         self._agent = None
         self._history: list[dict[str, Any]] = []
 
@@ -73,7 +87,7 @@ class ChatPanel(Container):
         self.add_message("user", user_text)
         self._history.append({"role": "user", "content": user_text})
 
-        # Create assistant placeholder
+        # Create assistant response branch (with placeholder markdown)
         self.add_message("assistant", "…")
 
         if self._agent is None:
@@ -95,13 +109,11 @@ class ChatPanel(Container):
                 # Handle tool calls (on the final chunk)
                 if chunk.tool_calls:
                     for tc in chunk.tool_calls:
-                        # We don't have the result yet — the agent handles
-                        # execution internally.  Just log the call.
                         self.add_tool_result(
                             tc.name, tc.arguments, "executing…"
                         )
 
-                # Accumulate content
+                # Accumulate content into the markdown widget
                 if chunk.content:
                     accumulated += chunk.content
                     self.update_response_text(accumulated)
@@ -118,6 +130,7 @@ class ChatPanel(Container):
             })
 
         self.last_assistant_id = None
+        self._last_markdown = None
         self._input.focus()
 
     # ------------------------------------------------------------------
@@ -125,19 +138,43 @@ class ChatPanel(Container):
     # ------------------------------------------------------------------
 
     def add_message(self, role: str, content: str) -> str:
-        """Add a top-level message node and return its id.
+        """Add a message node to the tree.
 
-        ``role`` should be ``"user"`` or ``"assistant"``.
-        Sets ``last_assistant_id`` for assistant messages.
+        * ``role == "user"`` → leaf node with plain label.
+        * ``role == "assistant"`` → **branch** node whose children
+          include a :class:`~textual.widgets.Markdown` widget for
+          streaming content.
+
+        Returns the new node id.  Sets ``last_assistant_id`` for
+        assistant messages.
         """
         self._turn_count += 1
         node_id = f"msg-{self._turn_count}"
 
-        prefix = "\uf007" if role == "user" else "\uf4ad"
-        label = f"{prefix} {role.title()}: {content}"
+        if role == "user":
+            label = f"\uf007  User: {_truncate(content, 60)}"
+            node = TreeNode(
+                node_id, label,
+                data={"role": role},
+            )
+        else:
+            # Assistant → branch node with markdown child
+            label = f"\uf4ad  Response"
+            # Create a streaming Markdown widget
+            md = Markdown(content, id=f"md-{node_id}")
+            self._last_markdown = md
+            md_child = TreeNode(
+                f"md-{node_id}",
+                "",  # label unused — widget renders itself
+                content=md,
+                data={"kind": "response"},
+            )
+            node = TreeNode(
+                node_id, label,
+                children=[md_child],
+                data={"role": role},
+            )
 
-        node = TreeNode(node_id, label, children=[],
-                        data={"role": role})
         self._root.children.append(node)
 
         if role == "assistant":
@@ -148,28 +185,27 @@ class ChatPanel(Container):
         return node_id
 
     def add_thought(self, thought: str) -> str:
-        """Add a thinking child under the last assistant message.
+        """Add a thinking leaf under the **last response branch**.
 
-        If the last child is already a thought, update it instead
-        (streaming accumulation).
+        If the last child is already a thought with the same kind,
+        update it in-place (for streaming accumulation).
         """
         parent = self._get_last_assistant()
         if parent is None:
             return ""
 
-        # Check if the last child is already a thought
-        if parent.children and parent.children[-1].data.get("kind") == "thought":
-            # Update existing thought node
-            thought_node = parent.children[-1]
-            thought_node.label = f"\uf0eb  Thinking: {thought}"
-            self._tree.update_node_label(thought_node.id, thought_node.label)
-            return thought_node.id
+        # If the last child is already a thought, update it
+        for child in reversed(parent.children):
+            if child.data.get("kind") == "thought":
+                child.label = f"\uf0eb  Thinking: {thought}"
+                self._tree.update_node_label(child.id, child.label)
+                return child.id
 
         thought_id = f"thought-{uuid.uuid4().hex[:6]}"
         thought_node = TreeNode(
             thought_id,
             f"\uf0eb  Thinking: {thought}",
-            data={"kind": "thought"}
+            data={"kind": "thought"},
         )
         parent.children.append(thought_node)
         self._tree.set_root(self._root)
@@ -179,7 +215,7 @@ class ChatPanel(Container):
     def add_tool_result(
         self, tool_name: str, args: dict[str, Any], result: str
     ) -> str:
-        """Add a tool-call result child under the last assistant message."""
+        """Add a tool-call leaf under the **last response branch**."""
         parent = self._get_last_assistant()
         if parent is None:
             return ""
@@ -188,7 +224,7 @@ class ChatPanel(Container):
         label = f"\uf552  {tool_name}({_format_args(args)}) → {_truncate(result, 80)}"
         tool_node = TreeNode(
             tool_id, label,
-            data={"kind": "tool", "tool_name": tool_name, "result": result}
+            data={"kind": "tool", "tool_name": tool_name, "result": result},
         )
         parent.children.append(tool_node)
         self._tree.set_root(self._root)
@@ -196,14 +232,13 @@ class ChatPanel(Container):
         return tool_id
 
     def update_response_text(self, text: str) -> None:
-        """Update the last assistant message's label with accumulated text."""
-        if self.last_assistant_id is None:
-            return
-        node = self._tree._node_map.get(self.last_assistant_id)
-        if node is None:
-            return
-        node.label = f"\uf4ad  Assistant: {text}"
-        self._tree.update_node_label(self.last_assistant_id, node.label)
+        """Stream text into the Markdown widget of the current response.
+
+        Updates the :class:`~textual.widgets.Markdown` content in-place
+        without rebuilding the tree.
+        """
+        if self._last_markdown is not None:
+            self._last_markdown.update(text)
 
     def get_input(self) -> Input:
         return self._input
@@ -213,6 +248,7 @@ class ChatPanel(Container):
     # ------------------------------------------------------------------
 
     def _get_last_assistant(self) -> TreeNode | None:
+        """Return the last assistant response branch node."""
         if self.last_assistant_id is None:
             return None
         return self._tree._node_map.get(self.last_assistant_id)

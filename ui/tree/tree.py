@@ -155,15 +155,27 @@ class Tree(VerticalScroll, can_focus=True):
         return result
 
     def _rebuild_rows(self) -> None:
-        """Clear and recreate all TreeRow / ActionRow widgets from current
-        expand state.  Nodes with ``buttons`` get an :class:`ActionRow`;
-        all others use :class:`TreeRow`."""
-        # Remove existing rows
-        for row in self.query("TreeRow, ActionRow"):
-            row.remove()
+        """Update tree rows to match the current expand state.
 
+        Uses a diff approach: rows for nodes that are still visible are
+        kept in place (preserving any content widgets).  Rows for newly
+        visible nodes are created; rows for now-hidden nodes are removed.
+        """
         visible = self._get_visible_nodes()
+        visible_ids = {node.id for node, _ in visible}
+
+        # Remove rows whose node is no longer visible
+        for row in self.query("TreeRow, ActionRow"):
+            if row.node.id not in visible_ids:
+                row.remove()
+
+        # Collect existing row node ids
+        existing = {row.node.id for row in self.query("TreeRow, ActionRow")}
+
+        # Mount rows for newly visible nodes
         for node, depth in visible:
+            if node.id in existing:
+                continue
             is_branch = bool(node.children)
             if node.buttons:
                 row: Widget = ActionRow(node, depth=depth)

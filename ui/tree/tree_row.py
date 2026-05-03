@@ -46,11 +46,17 @@ class TreeNode:
     id:
         Unique identifier for this node.
     label:
-        Display text.
+        Display text shown in the indent / toggle prefix area.
     children:
-        Child nodes.
+        Child nodes (makes this a branch when non-empty).
     data:
         Arbitrary attached payload.
+    content:
+        Optional Textual :class:`Widget` mounted as the node's
+        content area.  When set, the widget is composed inside the
+        row instead of a plain text label.  Useful for
+        :class:`~textual.widgets.Markdown` (streaming) or any
+        custom rendering.
     buttons:
         Action buttons to show on this row (only used for leaf nodes).
     """
@@ -59,6 +65,7 @@ class TreeNode:
     label: str
     children: list[TreeNode] = field(default_factory=list)
     data: Any = None
+    content: Widget | None = None
     buttons: list[RowButton] = field(default_factory=list)
 
 
@@ -70,9 +77,10 @@ class TreeNode:
 class TreeRow(Widget):
     """A single visible row in the tree.
 
-    Renders an indent prefix, optional expand/collapse indicator, and
-    the node label.  Posts ``Selected`` on click and ``Toggled`` on
-    expand-indicator click.
+    Composes an indent prefix, optional expand/collapse indicator, and
+    either the node label (plain text) or the node's ``content`` widget.
+
+    Posts ``Selected`` on click and ``Toggled`` on expand-indicator click.
     """
 
     is_selected: reactive[bool] = reactive(False)
@@ -96,17 +104,13 @@ class TreeRow(Widget):
         self.node = node
         self.depth = depth
         self.is_branch = is_branch
-        self._was_expanded: bool = False  # track state for indicator text
 
-    def render(self):
-        from rich.text import Text
-
+    def compose(self) -> ComposeResult:
         indent = "  " * self.depth
         toggle = "▶ " if self.is_branch else "  "
-        text = Text(f"{indent}{toggle}{self.node.label}")
-        if self.is_selected:
-            text.stylize("reverse")
-        return text
+        yield Static(f"{indent}{toggle}{self.node.label}")
+        if self.node.content is not None:
+            yield self.node.content
 
     def on_click(self, event) -> None:
         """Mouse click — if branch, toggle; always select."""

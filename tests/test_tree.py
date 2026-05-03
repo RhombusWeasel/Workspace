@@ -2,10 +2,10 @@
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Label
+from textual.widgets import Label, Markdown, Static
 
 from ui.tree.tree import Tree, TreeNode, NodeSelected, NodeToggled
-from ui.tree.tree_row import TreeRow
+from ui.tree.tree_row import TreeRow, RowButton, ActionRow
 
 
 # ---------------------------------------------------------------------------
@@ -65,12 +65,32 @@ class TestTreeNode:
         assert node.label == "Label X"
         assert node.data == {"key": "val"}
         assert node.children == []
+        assert node.content is None
 
     def test_node_with_children(self):
         child = TreeNode("c", "Child")
         parent = TreeNode("p", "Parent", children=[child])
         assert len(parent.children) == 1
         assert parent.children[0].id == "c"
+
+    def test_node_with_content_widget(self):
+        """TreeNode accepts an optional content widget."""
+        widget = Label("Hello, content!")
+        node = TreeNode("x", "Label", content=widget)
+        assert node.content is widget
+
+    def test_node_with_content_and_children(self):
+        """Node can have both content widget and children."""
+        widget = Label("Branch content")
+        child = TreeNode("c", "Child")
+        node = TreeNode("b", "Branch", children=[child], content=widget)
+        assert node.content is widget
+        assert len(node.children) == 1
+
+    def test_node_content_defaults_to_none(self):
+        """content defaults to None when not specified."""
+        node = TreeNode("x", "Label")
+        assert node.content is None
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +99,8 @@ class TestTreeNode:
 
 
 class TestTreeRow:
-    async def test_row_renders_label(self):
-        """A TreeRow displays its label."""
+    async def test_row_composes_label_as_static(self):
+        """A TreeRow composes its label as a Static widget."""
         node = TreeNode("x", "Hello")
         row = TreeRow(node, depth=0, is_branch=False)
 
@@ -88,8 +108,9 @@ class TestTreeRow:
         async with app.run_test() as pilot:
             await pilot.app.mount(row)
             await pilot.pause()
-            rendered = row.render()
-            assert "Hello" in rendered.plain
+            statics = row.query(Static)
+            assert len(statics) >= 1
+            assert "Hello" in statics[0].render().plain
 
     async def test_row_shows_expand_indicator_for_branch(self):
         """Branch nodes show an expand/collapse indicator."""
@@ -100,9 +121,8 @@ class TestTreeRow:
         async with app.run_test() as pilot:
             await pilot.app.mount(row)
             await pilot.pause()
-            rendered = row.render()
-            # Should show some expand indicator
-            assert "▶" in rendered.plain
+            statics = row.query(Static)
+            assert "▶" in statics[0].render().plain
 
     async def test_row_indent_increases_with_depth(self):
         """Deeper rows have more indentation."""
@@ -113,11 +133,69 @@ class TestTreeRow:
         async with app.run_test() as pilot:
             await pilot.app.mount(row)
             await pilot.pause()
-            rendered = row.render()
-            # Should start with spaces for indent
-            plain = rendered.plain
-            # At least some indentation
-            assert plain.startswith(" ") or "    " in plain
+            statics = row.query(Static)
+            plain = statics[0].render().plain
+            assert plain.startswith("      ")  # 2 * 3 depth = 6 spaces
+
+    async def test_row_with_content_mounts_widget(self):
+        """When node has content, the widget is mounted in the row."""
+        content_widget = Label("I am content!")
+        node = TreeNode("x", "Label", content=content_widget)
+        row = TreeRow(node, depth=1, is_branch=False)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+
+            # The content widget should be mounted as a child of the row
+            labels = row.query(Label)
+            content_labels = [l for l in labels if "I am content!" in l.render().plain]
+            assert len(content_labels) == 1
+
+    async def test_row_with_content_still_shows_indent(self):
+        """Even with content widget, indent prefix is rendered."""
+        content_widget = Label("Content")
+        node = TreeNode("x", "Label", content=content_widget)
+        row = TreeRow(node, depth=2, is_branch=False)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+            statics = row.query(Static)
+            # First static is the indent prefix
+            assert len(statics) >= 1
+            plain = statics[0].render().plain
+            assert plain.startswith("    ")  # 2 * 2 depth = 4 spaces
+
+    async def test_row_with_markdown_content(self):
+        """TreeRow can host a Markdown widget for streaming."""
+        md = Markdown("# Hello\nWorld")
+        node = TreeNode("x", "Response", content=md)
+        row = TreeRow(node, depth=1, is_branch=False)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+
+            markdowns = row.query(Markdown)
+            assert len(markdowns) == 1
+
+    async def test_row_with_content_and_is_branch_shows_toggle(self):
+        """Branch node with content still shows toggle indicator."""
+        content_widget = Label("Content")
+        node = TreeNode("x", "Branch", children=[TreeNode("c", "Child")],
+                        content=content_widget)
+        row = TreeRow(node, depth=0, is_branch=True)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+            statics = row.query(Static)
+            assert "▶" in statics[0].render().plain
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +254,33 @@ class TestTreeRendering:
 
             rows = tree.query(TreeRow)
             assert len(rows) == 5
+
+    async def test_tree_with_content_nodes(self):
+        """Tree properly renders nodes that have content widgets."""
+        content = Label("Leaf content")
+        root = TreeNode("root", "root", children=[
+            TreeNode("a", "Branch A", children=[
+                TreeNode("a1", "Leaf", content=Label("A1 content")),
+            ]),
+            TreeNode("b", "Leaf B", content=Label("B content")),
+        ])
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            tree.expand_node("a")
+            await pilot.pause()
+            await pilot.pause()  # let DOM settle after async remove + rebuild
+
+            rows = tree.query(TreeRow)
+            assert len(rows) == 4  # root + a + a1 + b
+
+            # Verify content labels are mounted inside the tree rows
+            content_texts = []
+            for row in rows:
+                for child in row.children:
+                    if isinstance(child, Label):
+                        content_texts.append(child.render().plain)
+            assert any("A1 content" in t for t in content_texts)
+            assert any("B content" in t for t in content_texts)
 
 
 class TestTreeNavigation:

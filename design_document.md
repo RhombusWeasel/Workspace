@@ -680,6 +680,14 @@ with fixtures that leverage `AppContext` for dependency injection.
  - ui/chat/ — Message widget, StreamingMessage widget, MessageInput, unified MsgBox (streaming-only), ChatTab
  - Tests: Message rendering, streaming append, input submission, MsgBox full turn cycle with mock agent
 
+### Step 15a: Tree Content Widgets + ChatPanel Restructure ✅
+
+ - TreeNode gets optional ``content: Widget`` for arbitrary leaf content
+ - TreeRow switches from ``render()`` to ``compose()``, hosting content widgets
+ - ChatPanel restructured: each response is a branch, responses use Markdown widgets for streaming
+ - Tests: TreeRow with content widget, ChatPanel branch structure, streaming Markdown updates
+ - **COMPLETE** — branch ``step-15a-tree-content-chatpanel``
+
 ### Step 16: Workspace + Terminal (depends on AppContext)
 
  - ui/workspace/ — split panes, EditorTab, OpenWorkspaceTab
