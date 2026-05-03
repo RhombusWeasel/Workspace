@@ -57,7 +57,7 @@ class CodyApp(App):
         )
         self.ws = Workspace()
         self.right_container = SidebarContainer(
-            Sidebar("right"), side="right"
+            Sidebar("right"), side="right", start_hidden=False
         )
 
         with Horizontal():

@@ -107,8 +107,9 @@ class ChatPanel(Container):
                     display = f"\n💡 *{thinking_accumulated}*\n"
                     await self.update_response_text(display)
 
-                # Handle tool calls — fold into markdown, reset state
-                # since this iteration's output was intermediate.
+                # Handle tool calls — fold into markdown as persistent text.
+                # Previous accumulated content was intermediate (this iteration
+                # led to tool calls), so replace it with tool call info.
                 if chunk.tool_calls:
                     thinking_accumulated = ""
                     accumulated = ""
@@ -118,7 +119,6 @@ class ChatPanel(Container):
                             f"{_format_args(tc.arguments)})` → executing…\n"
                         )
                     await self.update_response_text(accumulated)
-                    accumulated = ""
 
                 # Accumulate content into the markdown widget.
                 # On first content chunk, fold the thinking prefix into
@@ -163,14 +163,14 @@ class ChatPanel(Container):
         node_id = f"msg-{self._turn_count}"
 
         if role == "user":
-            label = f"\uf007  User: {_truncate(content, 60)}"
+            label = f"\uf007  [cyan]User:[/cyan] {_truncate(content, 60)}"
             node = TreeNode(
                 node_id, label,
                 data={"role": role},
             )
         else:
             # Assistant → leaf node with streaming Markdown widget as content
-            label = f"\uf4ad  Response"
+            label = f"\uf4ad  [green]Assistant:[/green]"
             md = Markdown(content, id=f"md-{node_id}")
             self._last_markdown = md
             node = TreeNode(

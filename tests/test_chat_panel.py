@@ -8,7 +8,7 @@ tree nodes.
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Label, Markdown, Static
+from textual.widgets import Input, Label, Markdown, Static
 
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode, TreeRow
@@ -243,3 +243,86 @@ class TestChatPanel:
             # New assistant updates it
             resp_id2 = panel.add_message("assistant", "A2")
             assert panel.last_assistant_id == resp_id2
+
+
+class TestChatPanelStreaming:
+    async def test_full_streaming_flow(self):
+        """Simulates the full streaming cycle: user submits → agent yields
+        chunks → markdown updates incrementally."""
+        chunks = [
+            type('C', (), {'thinking': 'Let me', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': ' think', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': 'Hello', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': ' world', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': '!', 'tool_calls': None})(),
+        ]
+
+        class FakeAgent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    yield chunk
+
+        async with ChatPanelTestApp().run_test() as pilot:
+            panel = pilot.app.panel
+            panel.set_agent(FakeAgent(chunks))
+            await pilot.pause()
+
+            # Submit via Input
+            inp = panel.query_one(Input)
+            inp.value = 'Hello?'
+            inp.post_message(Input.Submitted(inp, 'Hello?'))
+            await _settle(pilot, n=10)
+
+            # Verify tree structure
+            tree = panel.query_one(Tree)
+            rows = tree.query(TreeRow)
+            # Should have: root, user msg, response
+            assert len(rows) == 3
+
+            # Verify Markdown widget received the final accumulated text
+            md = tree.query_one(Markdown)
+            assert md._markdown is not None
+            # Content should include 'Hello world!' (final accumulated content)
+            # and thinking should be folded in as prefix
+            assert 'Hello world!' in md._markdown
+            assert 'Let me think' in md._markdown
+
+    async def test_streaming_with_tool_calls(self):
+        """Streaming with tool calls: intermediate content is replaced
+        by tool info, then final content streams."""
+        chunks = [
+            type('C', (), {'thinking': '', 'content': 'Let me check', 'tool_calls': None})(),
+            type('C', (), {
+                'thinking': '', 'content': '',
+                'tool_calls': [type('TC', (), {'name': 'get_weather', 'arguments': {'city': 'London'}})()]
+            })(),
+            type('C', (), {'thinking': '', 'content': 'The weather', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': ' is sunny', 'tool_calls': None})(),
+        ]
+
+        class FakeAgent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    yield chunk
+
+        async with ChatPanelTestApp().run_test() as pilot:
+            panel = pilot.app.panel
+            panel.set_agent(FakeAgent(chunks))
+            await pilot.pause()
+
+            inp = panel.query_one(Input)
+            inp.value = 'Weather?'
+            inp.post_message(Input.Submitted(inp, 'Weather?'))
+            await _settle(pilot, n=10)
+
+            tree = panel.query_one(Tree)
+            md = tree.query_one(Markdown)
+            # Final content should include the tool info and response
+            assert 'get_weather' in md._markdown
+            assert 'The weather is sunny' in md._markdown
+            # Intermediate 'Let me check' should be replaced by tool calls
+            # (not present in final markdown)
