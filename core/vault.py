@@ -20,7 +20,6 @@ import json
 import os
 import secrets
 from base64 import urlsafe_b64encode
-from copy import deepcopy
 from typing import Any
 
 from cryptography.fernet import Fernet
@@ -249,3 +248,221 @@ class Vault:
         with open(self._filepath, "rb") as fh:
             blob = json.loads(fh.read().decode("utf-8"))
         return blob["salt"].encode("latin-1")
+
+
+# ---------------------------------------------------------------------------
+# VaultManager — multi-tier vault (master + optional local)
+# ---------------------------------------------------------------------------
+
+
+class VaultManager:
+    """Manages a master vault and an optional per-project local vault.
+
+    The **master vault** lives at ``~/.agents/vault.enc`` and is encrypted
+    with the user's master password.  An optional **local vault** can be
+    created per project at ``{wd}/.agents/vault.enc`` — its password is a
+    random key generated at creation time and stored as a credential in the
+    master vault.
+
+    On :meth:`unlock`, the master vault is unlocked first, then any local
+    vault belonging to the current working directory is automatically
+    unlocked using its stored passkey.  The user only ever enters one
+    password.
+
+    Credential lookups check the local vault first, then fall back to the
+    master vault.
+    """
+
+    def __init__(self, master_path: str, working_dir: str) -> None:
+        self.master_path: str = master_path
+        self.working_dir: str = working_dir
+        self.master: Vault = Vault(master_path)
+        self._local: Vault | None = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def is_locked(self) -> bool:
+        """``True`` when the master vault is locked."""
+        return self.master.is_locked()
+
+    def initialize_master(self, master_password: str) -> None:
+        """Create a brand-new master vault, overwriting any existing file."""
+        self.master.initialize(master_password)
+        self._local = None
+
+    def unlock(self, master_password: str) -> bool:
+        """Unlock the master vault, then auto-unlock any local vault.
+
+        Returns ``True`` if the master password is correct.
+        """
+        if not self.master.unlock(master_password):
+            return False
+        self._try_unlock_local()
+        return True
+
+    def lock(self) -> None:
+        """Lock both master and local vaults, clearing all cached keys."""
+        self.master.lock()
+        if self._local is not None:
+            self._local.lock()
+            self._local = None
+
+    # ------------------------------------------------------------------
+    # Local vault management
+    # ------------------------------------------------------------------
+
+    def has_local_vault(self) -> bool:
+        """``True`` if a local vault file exists for the current project."""
+        return os.path.isfile(self._local_path())
+
+    def create_local_vault(self) -> None:
+        """Create a local vault for the current project.
+
+        A random passkey is generated and stored as a credential
+        ``"vault:{project_abs_path}"`` in the master vault.  The local
+        vault is immediately available for reads and writes.
+
+        Raises :class:`RuntimeError` if the master vault is locked.
+        """
+        self._require_unlocked()
+
+        passkey_bytes = secrets.token_bytes(32)
+        passkey = urlsafe_b64encode(passkey_bytes).decode("ascii")
+
+        local = Vault(self._local_path())
+        local.initialize(passkey)
+        self._local = local
+
+        project_abs = os.path.abspath(self.working_dir)
+        self.master.register_credential(f"vault:{project_abs}", "_", passkey)
+
+    def remove_local_vault(self) -> None:
+        """Delete the local vault file and its passkey from the master vault."""
+        self._require_unlocked()
+        local_path = self._local_path()
+        project_abs = os.path.abspath(self.working_dir)
+
+        if self._local is not None:
+            self._local.lock()
+            self._local = None
+
+        self.master.delete_credential(f"vault:{project_abs}")
+
+        try:
+            os.remove(local_path)
+        except FileNotFoundError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Credentials
+    # ------------------------------------------------------------------
+
+    def register_credential(self, name: str, username: str, password: str) -> None:
+        """Store a credential in the local vault if available, otherwise master."""
+        self._require_unlocked()
+        target = self._write_target()
+        target.register_credential(name, username, password)
+
+    def get_credential(self, name: str) -> tuple[str, str] | None:
+        """Look up a credential — local first, then master."""
+        self._require_unlocked()
+        if self._local is not None and not self._local.is_locked():
+            result = self._local.get_credential(name)
+            if result is not None:
+                return result
+        return self.master.get_credential(name)
+
+    def list_credentials(self) -> list[str]:
+        """Return all credential names from both vaults (deduplicated).
+
+        Internal ``vault:*`` passkey entries are excluded.
+        """
+        self._require_unlocked()
+        names: set[str] = {
+            n for n in self.master.list_credentials()
+            if not n.startswith("vault:")
+        }
+        if self._local is not None and not self._local.is_locked():
+            names |= {
+                n for n in self._local.list_credentials()
+                if not n.startswith("vault:")
+            }
+        return sorted(names)
+
+    def delete_credential(self, name: str) -> None:
+        """Delete a credential — from local if present there, otherwise master."""
+        self._require_unlocked()
+        if self._local is not None and not self._local.is_locked():
+            if self._local.get_credential(name) is not None:
+                self._local.delete_credential(name)
+                return
+        self.master.delete_credential(name)
+
+    # ------------------------------------------------------------------
+    # Secure notes
+    # ------------------------------------------------------------------
+
+    def register_secure_note(self, name: str, text: str) -> None:
+        """Store a secure note in the local vault if available, otherwise master."""
+        self._require_unlocked()
+        target = self._write_target()
+        target.register_secure_note(name, text)
+
+    def get_secure_note(self, name: str) -> str | None:
+        """Look up a secure note — local first, then master."""
+        self._require_unlocked()
+        if self._local is not None and not self._local.is_locked():
+            result = self._local.get_secure_note(name)
+            if result is not None:
+                return result
+        return self.master.get_secure_note(name)
+
+    def list_secure_notes(self) -> list[str]:
+        """Return all secure note names from both vaults (deduplicated)."""
+        self._require_unlocked()
+        names: set[str] = set(self.master.list_secure_notes())
+        if self._local is not None and not self._local.is_locked():
+            names |= set(self._local.list_secure_notes())
+        return sorted(names)
+
+    def delete_secure_note(self, name: str) -> None:
+        """Delete a secure note — from local if present there, otherwise master."""
+        self._require_unlocked()
+        if self._local is not None and not self._local.is_locked():
+            if self._local.get_secure_note(name) is not None:
+                self._local.delete_secure_note(name)
+                return
+        self.master.delete_secure_note(name)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _local_path(self) -> str:
+        return os.path.join(self.working_dir, ".agents", "vault.enc")
+
+    def _require_unlocked(self) -> None:
+        if self.is_locked():
+            raise RuntimeError("Vault is locked")
+
+    def _write_target(self) -> Vault:
+        """Return the vault to write to (local if available, else master)."""
+        if self._local is not None and not self._local.is_locked():
+            return self._local
+        return self.master
+
+    def _try_unlock_local(self) -> None:
+        """Attempt to auto-unlock the local vault using the passkey stored
+        in the (now-unlocked) master vault."""
+        if not self.has_local_vault():
+            return
+        project_abs = os.path.abspath(self.working_dir)
+        cred = self.master.get_credential(f"vault:{project_abs}")
+        if cred is None:
+            return
+        _, passkey = cred
+        local = Vault(self._local_path())
+        if local.unlock(passkey):
+            self._local = local

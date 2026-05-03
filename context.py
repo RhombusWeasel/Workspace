@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from core.database import DatabaseManager
     from core.leader import LeaderRegistry
     from core.skills import SkillManager
+    from core.vault import VaultManager
 
 
 @dataclass
@@ -30,4 +31,6 @@ class AppContext:
     skills: SkillManager | None = None
     database: DatabaseManager | None = None
     leader: LeaderRegistry | None = None
+    vault: VaultManager | None = None
     working_directory: str = ""
+    css_paths: list[str] = field(default_factory=list)

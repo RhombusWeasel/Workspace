@@ -1,7 +1,8 @@
 """Ollama provider — implements BaseProvider for local and remote Ollama servers.
 
-API keys are resolved exclusively from the password vault (credential named
-``"ollama"``).  There is no fallback to config files or environment variables.
+API keys are resolved exclusively from the password vault (managed by
+:class:`VaultManager`).  There is no fallback to config files or environment
+variables.
 """
 
 from __future__ import annotations
@@ -21,10 +22,10 @@ from core.providers.base import (
 
 if TYPE_CHECKING:
     from core.config import Config
-    from core.vault import Vault
+    from core.vault import VaultManager
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
-_DEFAULT_MODEL = "llama3.2"
+_DEFAULT_MODEL = "deepseek-v4-pro:cloud"
 
 
 class OllamaProvider:
@@ -35,7 +36,7 @@ class OllamaProvider:
     config:
         Cody config for non-secret settings (base URL, model).
     vault:
-        Password vault for API key lookup.  ``None`` means no key will be
+        Vault manager for API key lookup.  ``None`` means no key will be
         sent (suitable for local Ollama instances).
     model:
         Explicit model override.  Falls back to ``config.session.model``
@@ -45,7 +46,7 @@ class OllamaProvider:
     def __init__(
         self,
         config: Config,
-        vault: Vault | None = None,
+        vault: VaultManager | None = None,
         model: str | None = None,
     ) -> None:
         self._config = config
@@ -101,7 +102,7 @@ class OllamaProvider:
         try:
             cred = self._vault.get_credential("ollama")
         except RuntimeError:
-            return None
+            return None  # vault is locked
         if cred is None:
             return None
         _, password = cred

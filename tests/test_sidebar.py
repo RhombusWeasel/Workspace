@@ -2,9 +2,10 @@
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Label, Static
+from textual.widgets import Button, Label, Static
 
 from ui.tree.tree import Tree
+from ui.tree.tree_row import ActionRow, TreeNode
 
 
 # ---------------------------------------------------------------------------
@@ -168,47 +169,111 @@ class TestSidebar:
 
 
 class TestVaultPanel:
-    async def test_renders_vault_items(self):
-        """Vault panel shows credentials and secure notes in a tree."""
+    async def test_renders_global_vault_items(self):
+        """Global vault section shows credentials and notes with action buttons."""
         from ui.sidebar.panels.vault_panel import VaultPanel
-        from core.vault import Vault
+        from core.vault import VaultManager
         import tempfile, os
 
-        # Create a vault with test data
-        vault_path = os.path.join(tempfile.mkdtemp(), "test.enc")
-        vault = Vault(vault_path)
-        vault.initialize("testpass")
+        vault_path = os.path.join(tempfile.mkdtemp(), "vault.enc")
+        mgr = VaultManager(vault_path, tempfile.mkdtemp())
+        mgr.initialize_master("testpass")
 
-        vault.register_credential("ollama", "user1", "pass1")
-        vault.register_credential("openai", "user2", "pass2")
-        vault.register_secure_note("reminder", "Buy milk")
+        mgr.register_credential("ollama", "user1", "pass1")
+        mgr.register_credential("openai", "user2", "pass2")
+        mgr.register_secure_note("reminder", "Buy milk")
 
         class VaultTestApp(App):
-            CSS = "VaultPanel { width: 30; height: 100%; }"
+            CSS = "VaultPanel { width: 40; height: 100%; }"
 
             def compose(self):
                 self.panel = VaultPanel()
-                self.panel.set_vault(vault)
+                self.panel.set_vault(mgr)
                 yield self.panel
 
         async with VaultTestApp().run_test() as pilot:
             panel = pilot.app.panel
             await pilot.pause()
 
-            # Should show credentials and notes
+            # Two trees: global + local (local empty since no local vault)
             trees = panel.query(Tree)
-            assert len(trees) >= 1
-            tree = trees.first()
-            # Query TreeRows for labels
-            rows = tree.query("TreeRow")
-            rendered_texts = []
-            for r in rows:
-                rv = r.render()
-                if hasattr(rv, 'plain'):
-                    rendered_texts.append(rv.plain)
-            combined = " ".join(rendered_texts)
-            assert "ollama" in combined
-            assert "reminder" in combined
+            assert len(trees) == 2
+
+            # Global tree should have credential ActionRows with buttons
+            global_tree = panel.query_one("#global-tree", Tree)
+            action_rows = global_tree.query(ActionRow)
+            assert len(action_rows) >= 3  # ollama + openai + reminder
+
+            # Each ActionRow should have a Copy, Edit, Del button
+            first_row = action_rows.first()
+            buttons = first_row.query(Button)
+            btn_labels = {b.label.plain for b in buttons}
+            assert "Copy" in btn_labels
+            assert "Edit" in btn_labels
+            assert "Del" in btn_labels
+
+    async def test_shows_add_local_vault_button_when_no_local(self):
+        """The 'Add Local Vault' button is visible when no local vault exists."""
+        from ui.sidebar.panels.vault_panel import VaultPanel
+        from core.vault import VaultManager
+        import tempfile, os
+
+        vault_path = os.path.join(tempfile.mkdtemp(), "vault.enc")
+        mgr = VaultManager(vault_path, tempfile.mkdtemp())
+        mgr.initialize_master("testpass")
+
+        class VaultTestApp(App):
+            CSS = "VaultPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = VaultPanel()
+                self.panel.set_vault(mgr)
+                yield self.panel
+
+        async with VaultTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            # The create-local-vault button should exist and be visible
+            btn = pilot.app.query_one("#create-local-vault", Button)
+            assert btn.label.plain == "+ Add Local Vault"
+
+    async def test_shows_local_vault_when_present(self):
+        """Local vault section is visible when a local vault exists."""
+        from ui.sidebar.panels.vault_panel import VaultPanel
+        from core.vault import VaultManager
+        import tempfile, os
+
+        vault_path = os.path.join(tempfile.mkdtemp(), "vault.enc")
+        project_dir = tempfile.mkdtemp()
+        mgr = VaultManager(vault_path, project_dir)
+        mgr.initialize_master("testpass")
+        mgr.create_local_vault()
+        mgr.register_credential("project-key", "proj", "secret")
+
+        class VaultTestApp(App):
+            CSS = "VaultPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = VaultPanel()
+                self.panel.set_vault(mgr)
+                yield self.panel
+
+        async with VaultTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+
+            # Local tree should have content
+            local_tree = panel.query_one("#local-tree", Tree)
+            action_rows = local_tree.query(ActionRow)
+            assert len(action_rows) >= 1  # project-key
+
+            # Panel should have has-local class
+            assert panel.has_class("has-local")
+
+            # Remove local vault button should be present
+            btn = panel.query_one("#remove-local-vault", Button)
+            assert btn is not None
 
 
 # ---------------------------------------------------------------------------

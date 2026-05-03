@@ -8,7 +8,7 @@ import pytest
 from core.config import Config
 from core.providers.base import ChatResponse, Message, StreamChunk, TokenUsage, ToolCall
 from core.providers.ollama import OllamaProvider
-from core.vault import Vault
+from core.vault import VaultManager
 
 
 # ---------------------------------------------------------------------------
@@ -31,14 +31,14 @@ def _make_config(
     return Config([path])
 
 
-def _make_vault(tmp_path, unlocked: bool = True) -> Vault:
-    """Create an unlocked Vault in *tmp_path*."""
-    path = str(tmp_path / "vault.enc")
-    vault = Vault(path)
-    vault.initialize("pw")
+def _make_vault(tmp_path, unlocked: bool = True) -> VaultManager:
+    """Create a VaultManager with an initialized master in *tmp_path*."""
+    master_path = str(tmp_path / "vault.enc")
+    mgr = VaultManager(master_path, str(tmp_path))
+    mgr.initialize_master("pw")
     if not unlocked:
-        vault.lock()
-    return vault
+        mgr.lock()
+    return mgr
 
 
 # ---------------------------------------------------------------------------

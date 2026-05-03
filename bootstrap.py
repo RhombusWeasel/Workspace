@@ -6,8 +6,9 @@ Called once at application startup.  Steps through:
 2. Discover skills (3-tier scan).
 3. Load agent tools (core + skill tiers).
 4. Initialize SQLite database.
-5. Build leader chord tree (core module chords).
-6. Return an :class:`AppContext`.
+5. Create vault manager (master + optional local vault).
+6. Build leader chord tree (core module chords).
+7. Return an :class:`AppContext`.
 
 Git checkpoints and theme/ CSS discovery are deferred to later steps.
 """
@@ -22,6 +23,7 @@ from core.config import Config
 from core.skills import skill_manager
 from core.database import DatabaseManager
 from core.leader import leader as leader_registry
+from core.vault import VaultManager
 
 
 class Bootstrap:
@@ -29,12 +31,12 @@ class Bootstrap:
 
     def __init__(
         self,
-        working_directory: str,
+        working_directory: str | None = None,
         *,
         cody_dir: str | None = None,
         agents_dir: str | None = None,
     ):
-        self.wd = working_directory
+        self.wd = working_directory or os.getcwd()
         self._cody_dir = cody_dir or paths.cody_dir()
         self._agents_dir = agents_dir or paths.agents_dir()
 
@@ -48,14 +50,18 @@ class Bootstrap:
         self._load_tools(skills)
         self._load_sidebar_panels(skills)
         database = self._init_database(config)
+        vault = self._init_vault()
         self._init_leader()
+        css_paths = self._collect_css()
 
         return AppContext(
             config=config,
             skills=skills,
             database=database,
+            vault=vault,
             leader=leader_registry,
             working_directory=self.wd,
+            css_paths=css_paths,
         )
 
     # ------------------------------------------------------------------
@@ -153,7 +159,16 @@ class Bootstrap:
         return DatabaseManager(db_path)
 
     # ------------------------------------------------------------------
-    # Phase 5 — Leader chords
+    # Phase 6 — Vault
+    # ------------------------------------------------------------------
+
+    def _init_vault(self) -> VaultManager:
+        """Create a VaultManager with master vault at ~/.agents/vault.enc."""
+        master_path = os.path.join(self._agents_dir, "vault.enc")
+        return VaultManager(master_path, self.wd)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Leader chords
     # ------------------------------------------------------------------
 
     def _init_leader(self) -> None:
@@ -161,3 +176,11 @@ class Bootstrap:
         from ui.workspace.workspace import register_workspace_leader_chords
 
         register_workspace_leader_chords()
+
+    # ------------------------------------------------------------------
+    # Phase 8 — CSS
+    # ------------------------------------------------------------------
+
+    def _collect_css(self) -> list[str]:
+        """Collect all .tcss files across the three tiers."""
+        return paths.collect_tcss(self.wd)

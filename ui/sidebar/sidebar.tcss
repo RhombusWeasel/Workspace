@@ -1,0 +1,30 @@
+Sidebar {
+    width: 1fr;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+Sidebar TabbedContent {
+    width: 1fr;
+    height: 1fr;
+}
+
+Sidebar TabbedContent TabPane {
+    width: 1fr;
+    height: 1fr;
+}
+
+Sidebar TabbedContent > ContentSwitcher {
+    width: 1fr;
+    height: 1fr;
+}
+
+SidebarContainer {
+    width: 25%;
+    height: 1fr;
+    overflow: hidden;
+}
+
+SidebarContainer.hidden {
+    width: 0;
+}

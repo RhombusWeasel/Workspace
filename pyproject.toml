@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "cryptography>=47.0.0",
     "ollama>=0.6.2",
+    "pyperclip>=1.11.0",
     "textual>=8.2.5",
 ]
 

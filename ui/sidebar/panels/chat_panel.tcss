@@ -1,0 +1,15 @@
+ChatPanel {
+    height: 1fr;
+}
+
+ChatPanel > Vertical {
+    height: 1fr;
+}
+
+ChatPanel Tree {
+    height: 1fr;
+}
+
+ChatPanel Input {
+    dock: bottom;
+}

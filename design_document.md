@@ -665,7 +665,7 @@ with fixtures that leverage `AppContext` for dependency injection.
  - bootstrap.py — Bootstrap class: init config → discover skills → load tools → init DB → build leader → return context
  - core/themes.py — theme discovery (3-tier) — **DEFERRED**
  - core/git.py — git checkpoint utilities — **DEFERRED**
- - CSS collection — **DEFERRED** to later step
+ - CSS collection — ✅ **COMPLETE** (feature/css-3-tier-collection); collected via ``paths.collect_tcss(wd)`` covering all three tiers
  - Tests: Full bootstrap flow with temp directories, verify all services initialized
  - **COMPLETE** — merged to main; leader overlay, main.py wiring, and workspace leader chords built alongside
 

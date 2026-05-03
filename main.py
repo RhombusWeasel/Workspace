@@ -31,9 +31,13 @@ class CodyApp(App):
     Receives an :class:`AppContext` produced by bootstrap and mounts the
     primary UI shell (workspace, footer).  Additional UI (chat tabs,
     sidebars, leader modal) will be added in later steps.
+
+    CSS paths are dynamically collected from three tiers at bootstrap time
+    (cody bundled → ~/.agents/ → project .agents/) and set on the instance
+    via ``context.css_paths``.
     """
 
-    CSS_PATH = "ui/workspace/workspace.css"
+    CSS_PATH = []
 
     BINDINGS = [
         ("ctrl+q", "quit", "Quit"),
@@ -41,8 +45,9 @@ class CodyApp(App):
     ]
 
     def __init__(self, context: AppContext):
-        super().__init__()
+        self.CSS_PATH = context.css_paths
         self.context = context
+        super().__init__()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -63,7 +68,17 @@ class CodyApp(App):
 
     async def on_mount(self) -> None:
         self.ws.focus()
+        self._init_vault_panel()
         self._init_chat_panel()
+
+    def _init_vault_panel(self) -> None:
+        """Find the VaultPanel and bind the vault manager from context."""
+        try:
+            vault_panel = self.right_container.query_one("VaultPanel")
+        except Exception:
+            return
+
+        vault_panel.set_vault(self.context.vault)
 
     def _init_chat_panel(self) -> None:
         """Find the ChatPanel in the right sidebar and wire it to the agent."""
@@ -97,13 +112,57 @@ class CodyApp(App):
         self.push_screen(LeaderOverlay(leader, self))
 
     def on_cody_event(self, event: CodyEvent) -> None:
-        """Handle sidebar toggle events from leader chords."""
+        """Handle events from leader chords and sidebar panels."""
         if event.event_type == "leader.workspace.toggle_left":
             self.left_container.toggle()
             event.stop()
         elif event.event_type == "leader.workspace.toggle_right":
             self.right_container.toggle()
             event.stop()
+        elif event.event_type == "vault.needs_unlock":
+            self._prompt_vault_unlock()
+            event.stop()
+        elif event.event_type == "vault.needs_init":
+            self._prompt_vault_init()
+            event.stop()
+
+    def _prompt_vault_unlock(self) -> None:
+        from ui.widgets.input_modal import InputModal
+
+        async def do_prompt() -> None:
+            modal = InputModal(
+                "Enter master password:", "Password", password=True
+            )
+            result = await self.push_screen_wait(modal)
+            if result is None:
+                return
+            try:
+                if self.context.vault.unlock(result):
+                    panel = self.right_container.query_one("VaultPanel")
+                    panel._rebuild()
+            except Exception:
+                pass
+
+        self.run_worker(do_prompt())
+
+    def _prompt_vault_init(self) -> None:
+        from ui.widgets.input_modal import InputModal
+
+        async def do_prompt() -> None:
+            modal = InputModal(
+                "Create master password:", "Password", password=True
+            )
+            result = await self.push_screen_wait(modal)
+            if result is None:
+                return
+            try:
+                self.context.vault.initialize_master(result)
+                panel = self.right_container.query_one("VaultPanel")
+                panel._rebuild()
+            except Exception:
+                pass
+
+        self.run_worker(do_prompt())
 
 
 # ---------------------------------------------------------------------------

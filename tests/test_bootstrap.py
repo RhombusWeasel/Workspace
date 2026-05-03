@@ -49,7 +49,7 @@ def {name}():
 
 
 class TestBootstrap:
-    def test_returns_app_context(self, tmp_path):
+    def test_returns_app_context(self, tmp_path, monkeypatch):
         """Bootstrap.run() returns an AppContext with all services."""
         from bootstrap import Bootstrap
         from context import AppContext
@@ -97,6 +97,15 @@ class TestBootstrap:
         os.makedirs(skill_tools)
         _write_tool_file(skill_tools, "code_tool.py", "code_review", ["skills"])
 
+        # Set up tcss files in mock cody tier
+        ui_dir = cody_dir / "ui" / "workspace"
+        os.makedirs(ui_dir)
+        _write_file(ui_dir / "styles.tcss", "Button {}")
+
+        # Monkeypatch paths so collect_tcss finds our mock tiers
+        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
+
         # Bootstrap
         b = Bootstrap(
             working_directory=str(working_dir),
@@ -140,8 +149,19 @@ class TestBootstrap:
         root = ctx.leader.get_root()
         assert "w" in root.children  # workspace chords registered
 
+        # Verify vault
+        assert ctx.vault is not None
+        assert not ctx.vault.is_locked()
+        assert ctx.vault.working_dir == str(working_dir)
+
         # Verify working directory
         assert ctx.working_directory == str(working_dir)
+
+        # Verify CSS paths
+        assert isinstance(ctx.css_paths, list)
+        # With monkeypatched paths, we should see cody tier tcss files
+        assert len(ctx.css_paths) >= 1
+        assert any("styles.tcss" in p for p in ctx.css_paths)
 
         # Cleanup
         ctx.database.close()

@@ -33,3 +33,33 @@ def resolve(subpath: str, working_dir: str) -> list[str]:
         os.path.normpath(os.path.join(agents_dir(), subpath)),
         os.path.normpath(os.path.join(working_dir, ".agents", subpath)),
     ]
+
+
+def collect_tcss(working_dir: str) -> list[str]:
+    """Collect all ``.tcss`` files across all three tiers.
+
+    Returns paths in order: cody (bundled), user (``~/.agents/``),
+    project (``{wd}/.agents/``).  Later tiers override earlier tiers in
+    Textual's CSS cascade, so project-level CSS can override user-level
+    which can override bundled defaults.
+    """
+    roots = resolve("", working_dir)
+    paths: list[str] = []
+    for root in roots:
+        paths.extend(_find_tcss(root))
+    return paths
+
+
+def _find_tcss(root: str) -> list[str]:
+    """Walk *root* and return all ``.tcss`` files, sorted for determinism.
+
+    Returns an empty list if *root* does not exist.
+    """
+    if not os.path.isdir(root):
+        return []
+    result: list[str] = []
+    for dirpath, _, filenames in os.walk(root):
+        for f in sorted(filenames):
+            if f.endswith(".tcss"):
+                result.append(os.path.join(dirpath, f))
+    return result

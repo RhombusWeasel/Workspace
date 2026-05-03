@@ -33,24 +33,6 @@ class ChatPanel(Container):
     streaming updates.
     """
 
-    DEFAULT_CSS = """
-    ChatPanel {
-        height: 1fr;
-    }
-
-    ChatPanel > Vertical {
-        height: 1fr;
-    }
-
-    ChatPanel Tree {
-        height: 1fr;
-    }
-
-    ChatPanel Input {
-        dock: bottom;
-    }
-    """
-
     def __init__(self):
         super().__init__()
         self._root = TreeNode("chat-root", "Conversation")

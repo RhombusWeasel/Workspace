@@ -8,7 +8,7 @@ from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 
-from ui.tree.tree_row import TreeNode, TreeRow
+from ui.tree.tree_row import TreeNode, TreeRow, RowButton, ActionRow
 
 
 # ---------------------------------------------------------------------------
@@ -155,17 +155,22 @@ class Tree(VerticalScroll, can_focus=True):
         return result
 
     def _rebuild_rows(self) -> None:
-        """Clear and recreate all TreeRow widgets from current expand state."""
+        """Clear and recreate all TreeRow / ActionRow widgets from current
+        expand state.  Nodes with ``buttons`` get an :class:`ActionRow`;
+        all others use :class:`TreeRow`."""
         # Remove existing rows
-        for row in self.query(TreeRow):
+        for row in self.query("TreeRow, ActionRow"):
             row.remove()
 
         visible = self._get_visible_nodes()
         for node, depth in visible:
             is_branch = bool(node.children)
-            row = TreeRow(node, depth=depth, is_branch=is_branch)
-            if node.id == self.selected_id:
-                row.is_selected = True
+            if node.buttons:
+                row: Widget = ActionRow(node, depth=depth)
+            else:
+                row = TreeRow(node, depth=depth, is_branch=is_branch)
+                if node.id == self.selected_id:
+                    row.is_selected = True
             self.mount(row)
 
     def _update_selection(self) -> None:
@@ -184,3 +189,9 @@ class Tree(VerticalScroll, can_focus=True):
     def on_tree_row_toggled(self, msg: TreeRow.Toggled) -> None:
         msg.stop()
         self.toggle_node(msg.node.id)
+
+    def on_action_row_button_pressed(self, msg: ActionRow.ButtonPressed) -> None:
+        """Re-bubble ActionRow.ButtonPressed so owners can listen.
+
+        The message is NOT stopped — it bubbles up to the vault panel.
+        """

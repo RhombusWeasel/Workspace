@@ -1,0 +1,71 @@
+VaultPanel {
+    height: 1fr;
+    padding: 0 1;
+}
+
+VaultPanel .vault-section-header {
+    text-style: bold;
+    color: $accent;
+    padding: 1 0 0 0;
+    height: 1;
+}
+
+VaultPanel Tree {
+    height: auto;
+    max-height: 50%;
+    margin-bottom: 1;
+}
+
+VaultPanel .vault-actions {
+    height: 1;
+    margin-bottom: 1;
+}
+
+VaultPanel .vault-actions Button {
+    min-width: 6;
+    margin-right: 1;
+}
+
+VaultPanel .vault-copy {
+    min-width: 5;
+    background: $success 30%;
+}
+
+VaultPanel .vault-edit {
+    min-width: 5;
+    background: $warning 30%;
+}
+
+VaultPanel .vault-del {
+    min-width: 4;
+    background: $error 30%;
+}
+
+VaultPanel .vault-add-local {
+    dock: bottom;
+    margin-bottom: 1;
+}
+
+VaultPanel #local-vault-header,
+VaultPanel #local-tree,
+VaultPanel #local-actions,
+VaultPanel #remove-local-vault {
+    display: none;
+}
+
+VaultPanel #create-local-vault {
+    display: none;
+}
+
+VaultPanel.has-local #local-vault-header,
+VaultPanel.has-local #local-tree,
+VaultPanel.has-local #local-actions,
+VaultPanel.has-local #remove-local-vault {
+    display: block;
+}
+
+VaultPanel.no-local #create-local-vault {
+    display: block;
+    dock: bottom;
+    margin-bottom: 1;
+}

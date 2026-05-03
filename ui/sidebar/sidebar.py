@@ -23,29 +23,6 @@ class Sidebar(Container):
         side are shown.
     """
 
-    DEFAULT_CSS = """
-    Sidebar {
-        width: 1fr;
-        height: 1fr;
-        overflow-y: auto;
-    }
-
-    Sidebar TabbedContent {
-        width: 1fr;
-        height: 1fr;
-    }
-
-    Sidebar TabbedContent TabPane {
-        width: 1fr;
-        height: 1fr;
-    }
-
-    Sidebar TabbedContent > ContentSwitcher {
-        width: 1fr;
-        height: 1fr;
-    }
-    """
-
     def __init__(self, side: str):
         super().__init__()
         self._side = side
@@ -91,19 +68,6 @@ class SidebarContainer(Container):
         ``"left"`` or ``"right"``.
     start_hidden:
         Whether the sidebar starts collapsed.
-    """
-
-    DEFAULT_CSS = """
-    SidebarContainer {
-        width: 25%;
-        height: 1fr;
-        overflow: hidden;
-        transition: width 200ms in_out_cubic;
-    }
-
-    SidebarContainer.hidden {
-        width: 0;
-    }
     """
 
     def __init__(
