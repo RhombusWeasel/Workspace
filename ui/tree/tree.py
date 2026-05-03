@@ -65,11 +65,28 @@ class Tree(VerticalScroll, can_focus=True):
         return self._root
 
     def set_root(self, new_root: TreeNode) -> None:
-        """Replace the entire tree with a new root node."""
+        """Replace the entire tree with a new root node.
+
+        Resets the expand state — only the new root is expanded.
+        Use :meth:`rebuild` for incremental updates to the same root.
+        """
         self._root = new_root
         self._node_map.clear()
         self._build_node_map(new_root)
         self._expanded = {new_root.id}
+        self._rebuild_rows()
+
+    def rebuild(self) -> None:
+        """Rebuild visible rows for the current root *without* resetting
+        the expand state.
+
+        Call this after modifying the tree data model in-place
+        (adding/removing children) to reflect changes in the UI.
+        Content widgets on existing, still-visible nodes are preserved.
+        """
+        # Re-scan node map in case children were added/removed
+        self._node_map.clear()
+        self._build_node_map(self._root)
         self._rebuild_rows()
 
     def update_node_label(self, node_id: str, label: str) -> None:

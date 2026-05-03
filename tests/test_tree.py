@@ -367,3 +367,58 @@ class TestTreeEvents:
             # Children should now be visible
             rows = tree.query(TreeRow)
             assert len(rows) == 5  # root + A + A1 + A2 + B
+
+
+class TestTreeRebuild:
+    async def test_rebuild_preserves_expanded_state(self):
+        """rebuild() does NOT reset the expand state — set_root() does."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            tree.expand_node("a")
+            await pilot.pause()
+            assert tree.is_expanded("a")
+
+            # rebuild should keep "a" expanded
+            tree.rebuild()
+            await pilot.pause()
+            assert tree.is_expanded("a")
+
+            # set_root should reset — only root expanded
+            tree.set_root(tree.root)
+            await pilot.pause()
+            assert not tree.is_expanded("a")
+            assert tree.is_expanded("root")
+
+    async def test_rebuild_preserves_content_widgets(self):
+        """rebuild() keeps existing rows with content widgets intact."""
+        md = Markdown("# Test", id="test-md")
+        root = TreeNode("root", "root", children=[
+            TreeNode("a", "Branch", children=[
+                TreeNode("leaf", "", content=md),
+            ]),
+        ])
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            tree.expand_node("a")
+            await pilot.pause()
+            await pilot.pause()
+
+            # Verify initial state
+            md_widgets = tree.query(Markdown)
+            assert len(md_widgets) == 1
+
+            # Add a new child to branch "a"
+            tree._node_map["a"].children.append(TreeNode("new", "New child"))
+            tree.rebuild()
+            await pilot.pause()
+            await pilot.pause()
+
+            # Markdown widget should still be there
+            md_widgets_after = tree.query(Markdown)
+            assert len(md_widgets_after) == 1
+
+            # New child should be visible
+            rows = tree.query(TreeRow)
+            row_ids = {r.node.id for r in rows}
+            assert "new" in row_ids

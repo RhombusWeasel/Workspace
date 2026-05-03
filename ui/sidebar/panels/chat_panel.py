@@ -182,7 +182,7 @@ class ChatPanel(Container):
         if role == "assistant":
             self.last_assistant_id = node_id
 
-        self._tree.set_root(self._root)
+        self._tree.rebuild()
         self._tree.expand_all()
         return node_id
 
@@ -210,7 +210,7 @@ class ChatPanel(Container):
             data={"kind": "thought"},
         )
         parent.children.append(thought_node)
-        self._tree.set_root(self._root)
+        self._tree.rebuild()
         self._tree.expand_all()
         return thought_id
 
@@ -229,7 +229,7 @@ class ChatPanel(Container):
             data={"kind": "tool", "tool_name": tool_name, "result": result},
         )
         parent.children.append(tool_node)
-        self._tree.set_root(self._root)
+        self._tree.rebuild()
         self._tree.expand_all()
         return tool_id
 
@@ -242,6 +242,23 @@ class ChatPanel(Container):
         """
         if self._last_markdown is not None:
             await self._last_markdown.update(text)
+        else:
+            # Fallback: try to find the markdown widget in the tree
+            tree = self.query_one(Tree)
+            if self.last_assistant_id:
+                resp = tree._node_map.get(self.last_assistant_id)
+                if resp:
+                    for child in resp.children:
+                        if child.content is not None and isinstance(child.content, Markdown):
+                            self._last_markdown = child.content
+                            await self._last_markdown.update(text)
+                            return
+            # No markdown found — update label as last resort
+            if self.last_assistant_id is not None:
+                tree.update_node_label(
+                    self.last_assistant_id,
+                    f"\uf4ad  Assistant: {text}",
+                )
 
     def get_input(self) -> Input:
         return self._input
