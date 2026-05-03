@@ -1,8 +1,9 @@
 """Tests for the ChatPanel sidebar widget.
 
-Covers the restructured tree where each assistant response is a **branch**
-node (not a flat sibling), and response text uses a :class:`Markdown` widget
-for streaming.
+Covers the simplified chat panel where each assistant response is a leaf
+node with a :class:`Markdown` content widget for streaming.  Thoughts and
+tool calls are folded into the markdown text instead of creating separate
+tree nodes.
 """
 
 import pytest
@@ -81,9 +82,9 @@ class TestChatPanel:
                          and "Hello" in r.node.label]
             assert len(user_rows) == 1
 
-    async def test_add_assistant_creates_branch_node(self):
-        """add_message with role='assistant' creates a branch node
-        (has children with markdown widget)."""
+    async def test_add_assistant_creates_markdown_leaf(self):
+        """add_message with role='assistant' creates a leaf node with a
+        Markdown content widget."""
         async with ChatPanelTestApp().run_test() as pilot:
             panel = pilot.app.panel
             await pilot.pause()
@@ -93,89 +94,71 @@ class TestChatPanel:
 
             tree = panel.query_one(Tree)
 
-            # Verify the response node exists and has children
+            # The response node exists and has no children (it IS the leaf)
             assert resp_id in tree._node_map
             resp_node = tree._node_map[resp_id]
-            assert len(resp_node.children) > 0
+            assert len(resp_node.children) == 0
 
-            # One of those children should be a markdown widget
+            # The response node's content is a Markdown widget
+            assert resp_node.content is not None
+            assert isinstance(resp_node.content, Markdown)
+
+            # Markdown widget is rendered in the tree
             md_widgets = tree.query(Markdown)
-            assert len(md_widgets) >= 1
-
-    async def test_response_branch_contains_markdown(self):
-        """An assistant response includes a Markdown widget child for
-        streaming content."""
-        async with ChatPanelTestApp().run_test() as pilot:
-            panel = pilot.app.panel
-            await pilot.pause()
-
-            panel.add_message("user", "Hello")
-            resp_id = panel.add_message("assistant", "Hi there!")
-            await _settle(pilot)
-
-            tree = panel.query_one(Tree)
-
-            # Find the response node
-            resp_node = tree._node_map[resp_id]
-
-            # Should have a child with a Markdown widget
-            content_children = [
-                c for c in resp_node.children
-                if c.content is not None and isinstance(c.content, Markdown)
-            ]
-            assert len(content_children) == 1
+            assert len(md_widgets) == 1
 
     async def test_add_thought(self):
-        """add_thought creates a child node under the last response branch."""
+        """add_thought updates the markdown widget with thinking text."""
         async with ChatPanelTestApp().run_test() as pilot:
             panel = pilot.app.panel
             await pilot.pause()
 
             panel.add_message("user", "What is 2+2?")
             panel.add_message("assistant", "Let me think...")
+            await _settle(pilot)
+
             panel.add_thought("I should calculate this carefully")
             await _settle(pilot)
 
             tree = panel.query_one(Tree)
-            tree.expand_all()
-            await _settle(pilot)
-
+            # Should have only 4 rows: root, user, response (no separate thought row)
             rows = tree.query(TreeRow)
-            thought_rows = [r for r in rows if "I should calculate" in r.node.label]
-            assert len(thought_rows) == 1
+            assert len(rows) == 3  # root + user + response
+
+            # Markdown should contain the thinking text
+            md = tree.query_one(Markdown)
+            assert "I should calculate" in (md._markdown or "")
 
     async def test_add_tool_result(self):
-        """add_tool_result creates a child node under the last response branch."""
+        """add_tool_result updates the markdown widget with tool info."""
         async with ChatPanelTestApp().run_test() as pilot:
             panel = pilot.app.panel
             await pilot.pause()
 
             panel.add_message("user", "Weather?")
             panel.add_message("assistant", "Checking...")
+            await _settle(pilot)
+
             panel.add_tool_result("get_weather", {"city": "London"}, "Sunny, 22°C")
             await _settle(pilot)
 
             tree = panel.query_one(Tree)
-            tree.expand_all()
-            await _settle(pilot)
-
             rows = tree.query(TreeRow)
-            tool_rows = [r for r in rows if "get_weather" in r.node.label]
-            assert len(tool_rows) == 1
+            assert len(rows) == 3  # root + user + response
+
+            # Markdown should contain the tool info
+            md = tree.query_one(Markdown)
+            assert "get_weather" in (md._markdown or "")
 
     async def test_conversation_tree_structure(self):
-        """Full conversation produces correct branch-based tree structure.
+        """Full conversation produces correct tree structure.
 
         Expected:
         root
         ├── 👤 User: "What is 2+2?"
-        ├── 💭 Response (branch)
-        │   ├── 💡 Thinking: "using calculator"
-        │   ├── 🔧 Tool: calculate → 4
-        │   └── 📝 [Markdown widget]
+        ├── 💭 Response (leaf with Markdown widget)
         ├── 👤 User: "Thanks!"
-        ├── 💭 Response (branch)
-        │   └── 📝 [Markdown widget]
+        ├── 💭 Response (leaf with Markdown widget)
         """
         async with ChatPanelTestApp().run_test() as pilot:
             panel = pilot.app.panel
@@ -194,28 +177,28 @@ class TestChatPanel:
             await _settle(pilot)
 
             tree = panel.query_one(Tree)
-            tree.expand_all()
-            await _settle(pilot)
 
-            # Verify root children: user leaf, response branch, user leaf, response branch
+            # Verify root children: user, response, user, response
             root_node = tree._node_map["chat-root"]
             assert len(root_node.children) == 4  # 2 users + 2 responses
 
-            # First child is user
+            # First child is user (leaf, no content widget)
             assert root_node.children[0].data.get("role") == "user"
             assert "What is 2+2?" in root_node.children[0].label
+            assert root_node.children[0].content is None
 
-            # Second child is response branch
+            # Second child is response (leaf with markdown content)
             assert root_node.children[1].data.get("role") == "assistant"
-            assert len(root_node.children[1].children) >= 1
+            assert root_node.children[1].content is not None
+            assert isinstance(root_node.children[1].content, Markdown)
 
             # Third child is user
             assert root_node.children[2].data.get("role") == "user"
             assert "Thanks!" in root_node.children[2].label
 
-            # Fourth child is response branch
+            # Fourth child is response
             assert root_node.children[3].data.get("role") == "assistant"
-            assert len(root_node.children[3].children) >= 1
+            assert isinstance(root_node.children[3].content, Markdown)
 
     async def test_streaming_markdown_update(self):
         """update_response_text updates the Markdown widget's content."""
@@ -239,12 +222,12 @@ class TestChatPanel:
             await panel.update_response_text("Hello there, how can I help?")
             await _settle(pilot)
 
-            # Markdown widget should reflect the update
             md = markdowns[0]
             assert md._markdown is not None
+            assert "Hello there" in md._markdown
 
-    async def test_last_assistant_id_cleared_after_new_user(self):
-        """After a new user message, last_assistant_id tracks correctly."""
+    async def test_last_assistant_id_tracks_current_response(self):
+        """last_assistant_id tracks the most recent assistant response."""
         async with ChatPanelTestApp().run_test() as pilot:
             panel = pilot.app.panel
             await pilot.pause()
@@ -253,40 +236,10 @@ class TestChatPanel:
             resp_id = panel.add_message("assistant", "A1")
             assert panel.last_assistant_id == resp_id
 
-            # New user message does NOT change last_assistant_id
+            # User doesn't change it
             panel.add_message("user", "Q2")
-            assert panel.last_assistant_id == resp_id  # unchanged by user
+            assert panel.last_assistant_id == resp_id
 
-            # New assistant message updates it
+            # New assistant updates it
             resp_id2 = panel.add_message("assistant", "A2")
             assert panel.last_assistant_id == resp_id2
-
-    async def test_multiple_turns_independent_branches(self):
-        """Each response is an independent branch — toggling one
-        does not affect others."""
-        async with ChatPanelTestApp().run_test() as pilot:
-            panel = pilot.app.panel
-            await pilot.pause()
-
-            panel.add_message("user", "Q1")
-            r1 = panel.add_message("assistant", "A1")
-            panel.add_thought("thinking 1")
-
-            panel.add_message("user", "Q2")
-            r2 = panel.add_message("assistant", "A2")
-            panel.add_thought("thinking 2")
-
-            await _settle(pilot)
-
-            tree = panel.query_one(Tree)
-
-            # Both response branches should be independently expandable
-            assert tree.is_expanded(r1)
-            assert tree.is_expanded(r2)
-
-            # Collapse r1 only
-            tree.collapse_node(r1)
-            await _settle(pilot)
-
-            assert not tree.is_expanded(r1)
-            assert tree.is_expanded(r2)

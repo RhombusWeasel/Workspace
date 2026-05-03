@@ -19,7 +19,6 @@ Tree structure::
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from textual.app import ComposeResult
@@ -94,7 +93,8 @@ class ChatPanel(Container):
             await self.update_response_text("No agent configured.")
             return
 
-        # Stream from agent
+        # Stream from agent — thoughts and tool calls are folded into
+        # the markdown content instead of creating separate tree nodes.
         accumulated = ""
         try:
             async for chunk in self._agent.stream_chat(
@@ -102,18 +102,22 @@ class ChatPanel(Container):
                 user_text,
                 tools=getattr(self, '_tools', None),
             ):
-                # Handle thinking
+                # Handle thinking — fold into markdown
                 if chunk.thinking:
-                    self.add_thought(chunk.thinking)
+                    accumulated += f"\n💡 *{chunk.thinking}*\n"
+                    await self.update_response_text(accumulated)
 
-                # Handle tool calls — reset accumulated text since
-                # this iteration's content was intermediate.
+                # Handle tool calls — fold into markdown, reset accumulated
+                # since this iteration's content was intermediate.
                 if chunk.tool_calls:
                     accumulated = ""
                     for tc in chunk.tool_calls:
-                        self.add_tool_result(
-                            tc.name, tc.arguments, "executing…"
+                        accumulated += (
+                            f"\n🔧 `{tc.name}("
+                            f"{_format_args(tc.arguments)})` → executing…\n"
                         )
+                    await self.update_response_text(accumulated)
+                    accumulated = ""  # reset for next iteration
 
                 # Accumulate content into the markdown widget
                 if chunk.content:
@@ -160,20 +164,13 @@ class ChatPanel(Container):
                 data={"role": role},
             )
         else:
-            # Assistant → branch node with markdown child
+            # Assistant → leaf node with streaming Markdown widget as content
             label = f"\uf4ad  Response"
-            # Create a streaming Markdown widget
             md = Markdown(content, id=f"md-{node_id}")
             self._last_markdown = md
-            md_child = TreeNode(
-                f"md-{node_id}",
-                "",  # label unused — widget renders itself
-                content=md,
-                data={"kind": "response"},
-            )
             node = TreeNode(
                 node_id, label,
-                children=[md_child],
+                content=md,
                 data={"role": role},
             )
 
@@ -187,51 +184,28 @@ class ChatPanel(Container):
         return node_id
 
     def add_thought(self, thought: str) -> str:
-        """Add a thinking leaf under the **last response branch**.
-
-        If the last child is already a thought with the same kind,
-        update it in-place (for streaming accumulation).
-        """
-        parent = self._get_last_assistant()
-        if parent is None:
+        """Display thinking text inline in the markdown widget."""
+        if self._last_markdown is None:
             return ""
-
-        # If the last child is already a thought, update it
-        for child in reversed(parent.children):
-            if child.data.get("kind") == "thought":
-                child.label = f"\uf0eb  Thinking: {thought}"
-                self._tree.update_node_label(child.id, child.label)
-                return child.id
-
-        thought_id = f"thought-{uuid.uuid4().hex[:6]}"
-        thought_node = TreeNode(
-            thought_id,
-            f"\uf0eb  Thinking: {thought}",
-            data={"kind": "thought"},
-        )
-        parent.children.append(thought_node)
-        self._tree.rebuild()
-        self._tree.expand_all()
-        return thought_id
+        current = self._last_markdown._markdown or ""
+        new_text = f"{current}\n💡 *{thought}*\n"
+        # Fire-and-forget — will render on next message pump
+        self._last_markdown.update(new_text)
+        return "thought"
 
     def add_tool_result(
         self, tool_name: str, args: dict[str, Any], result: str
     ) -> str:
-        """Add a tool-call leaf under the **last response branch**."""
-        parent = self._get_last_assistant()
-        if parent is None:
+        """Display tool call/result inline in the markdown widget."""
+        if self._last_markdown is None:
             return ""
-
-        tool_id = f"tool-{uuid.uuid4().hex[:6]}"
-        label = f"\uf552  {tool_name}({_format_args(args)}) → {_truncate(result, 80)}"
-        tool_node = TreeNode(
-            tool_id, label,
-            data={"kind": "tool", "tool_name": tool_name, "result": result},
+        current = self._last_markdown._markdown or ""
+        new_text = (
+            f"{current}\n🔧 `{tool_name}("
+            f"{_format_args(args)})` → {_truncate(result, 80)}\n"
         )
-        parent.children.append(tool_node)
-        self._tree.rebuild()
-        self._tree.expand_all()
-        return tool_id
+        self._last_markdown.update(new_text)
+        return "tool"
 
     async def update_response_text(self, text: str) -> None:
         """Stream text into the Markdown widget of the current response.
@@ -242,41 +216,13 @@ class ChatPanel(Container):
         """
         if self._last_markdown is not None:
             await self._last_markdown.update(text)
-        else:
-            # Fallback: try to find the markdown widget in the tree
-            tree = self.query_one(Tree)
-            if self.last_assistant_id:
-                resp = tree._node_map.get(self.last_assistant_id)
-                if resp:
-                    for child in resp.children:
-                        if child.content is not None and isinstance(child.content, Markdown):
-                            self._last_markdown = child.content
-                            await self._last_markdown.update(text)
-                            return
-            # No markdown found — update label as last resort
-            if self.last_assistant_id is not None:
-                tree.update_node_label(
-                    self.last_assistant_id,
-                    f"\uf4ad  Assistant: {text}",
-                )
 
     def get_input(self) -> Input:
         return self._input
 
     # ------------------------------------------------------------------
-    # Internal
+    # Helpers
     # ------------------------------------------------------------------
-
-    def _get_last_assistant(self) -> TreeNode | None:
-        """Return the last assistant response branch node."""
-        if self.last_assistant_id is None:
-            return None
-        return self._tree._node_map.get(self.last_assistant_id)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _format_args(args: dict[str, Any]) -> str:
