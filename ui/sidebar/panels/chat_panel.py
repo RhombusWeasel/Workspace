@@ -91,7 +91,7 @@ class ChatPanel(Container):
         self.add_message("assistant", "…")
 
         if self._agent is None:
-            self.update_response_text("No agent configured.")
+            await self.update_response_text("No agent configured.")
             return
 
         # Stream from agent
@@ -118,10 +118,10 @@ class ChatPanel(Container):
                 # Accumulate content into the markdown widget
                 if chunk.content:
                     accumulated += chunk.content
-                    self.update_response_text(accumulated)
+                    await self.update_response_text(accumulated)
 
         except Exception as exc:
-            self.update_response_text(f"Error: {exc}")
+            await self.update_response_text(f"Error: {exc}")
 
         # Add final response to history
         if accumulated:
@@ -233,14 +233,15 @@ class ChatPanel(Container):
         self._tree.expand_all()
         return tool_id
 
-    def update_response_text(self, text: str) -> None:
+    async def update_response_text(self, text: str) -> None:
         """Stream text into the Markdown widget of the current response.
 
         Updates the :class:`~textual.widgets.Markdown` content in-place
-        without rebuilding the tree.
+        without rebuilding the tree.  Must be awaited because
+        :meth:`Markdown.update` is asynchronous.
         """
         if self._last_markdown is not None:
-            self._last_markdown.update(text)
+            await self._last_markdown.update(text)
 
     def get_input(self) -> Input:
         return self._input

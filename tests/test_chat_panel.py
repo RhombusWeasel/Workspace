@@ -228,7 +228,7 @@ class TestChatPanel:
             await _settle(pilot)
 
             # Stream partial update
-            panel.update_response_text("Hello")
+            await panel.update_response_text("Hello")
             await _settle(pilot)
 
             tree = panel.query_one(Tree)
@@ -236,7 +236,7 @@ class TestChatPanel:
             assert len(markdowns) == 1
 
             # Stream more
-            panel.update_response_text("Hello there, how can I help?")
+            await panel.update_response_text("Hello there, how can I help?")
             await _settle(pilot)
 
             # Markdown widget should reflect the update
