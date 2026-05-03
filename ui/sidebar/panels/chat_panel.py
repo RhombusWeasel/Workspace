@@ -1,20 +1,17 @@
 """Chat panel — sidebar tab with streaming conversation in a Tree widget.
 
-Each assistant **response** is a branch node whose children contain
-thinking, tool results, and a :class:`~textual.widgets.Markdown` widget
-for streaming content.  User messages are leaf nodes.
+Each message is a tree node.  User messages are plain leaf nodes.
+Assistant responses are leaf nodes with a
+:class:`~textual.widgets.Markdown` content widget that supports
+streaming for all output: thinking, tool calls, and response text.
 
 Tree structure::
 
     root (Conversation)
-    ├── 👤 User: "Hello"           ← leaf
-    ├── 💭 Response                ← branch
-    │   ├── 💡 Thinking: "..."     ← leaf
-    │   ├── 🔧 Tool: ...           ← leaf
-    │   └── 📝 [Markdown widget]   ← leaf with streaming content
-    ├── 👤 User: "What is 2+2?"    ← leaf
-    ├── 💭 Response                ← branch
-    │   └── 📝 [Markdown widget]
+    ├── 👤 User: "Hello"           ← leaf (text label)
+    ├── 💭 Response                ← leaf (Markdown widget)
+    ├── 👤 User: "What is 2+2?"    ← leaf (text label)
+    ├── 💭 Response                ← leaf (Markdown widget)
 """
 
 from __future__ import annotations
@@ -34,14 +31,15 @@ from ui.tree.tree_row import TreeNode
 class ChatPanel(Container):
     """Streaming chat panel using a Tree for collapsible message display.
 
-    Each assistant response is a **branch** node.  The response text is
-    rendered in a :class:`~textual.widgets.Markdown` widget (leaf child)
-    that supports streaming via :meth:`update_response_text`.
+    Each assistant response is a leaf node whose content is a
+    :class:`~textual.widgets.Markdown` widget.  Thinking and tool-call
+    output is folded into the markdown stream so everything appears
+    inline with real-time updates.
 
     Provides:
-    * ``add_message()`` — user leaf or response branch
-    * ``add_thought()`` — thinking leaf under the current response
-    * ``add_tool_result()`` — tool-call leaf under current response
+    * ``add_message()`` — user leaf or response leaf with Markdown
+    * ``add_thought()`` — append thinking text to the markdown widget
+    * ``add_tool_result()`` — append tool result to the markdown widget
     * ``update_response_text()`` — stream text into the Markdown widget
     """
 
@@ -93,23 +91,26 @@ class ChatPanel(Container):
             await self.update_response_text("No agent configured.")
             return
 
-        # Stream from agent — thoughts and tool calls are folded into
-        # the markdown content instead of creating separate tree nodes.
+        # Stream from agent — thinking and content are accumulated
+        # separately because thinking comes before content in the stream.
         accumulated = ""
+        thinking_accumulated = ""
         try:
             async for chunk in self._agent.stream_chat(
                 self._history,
                 user_text,
                 tools=getattr(self, '_tools', None),
             ):
-                # Handle thinking — fold into markdown
+                # Handle thinking — accumulate incrementally for streaming
                 if chunk.thinking:
-                    accumulated += f"\n💡 *{chunk.thinking}*\n"
-                    await self.update_response_text(accumulated)
+                    thinking_accumulated += chunk.thinking
+                    display = f"\n💡 *{thinking_accumulated}*\n"
+                    await self.update_response_text(display)
 
-                # Handle tool calls — fold into markdown, reset accumulated
-                # since this iteration's content was intermediate.
+                # Handle tool calls — fold into markdown, reset state
+                # since this iteration's output was intermediate.
                 if chunk.tool_calls:
+                    thinking_accumulated = ""
                     accumulated = ""
                     for tc in chunk.tool_calls:
                         accumulated += (
@@ -117,10 +118,14 @@ class ChatPanel(Container):
                             f"{_format_args(tc.arguments)})` → executing…\n"
                         )
                     await self.update_response_text(accumulated)
-                    accumulated = ""  # reset for next iteration
+                    accumulated = ""
 
-                # Accumulate content into the markdown widget
+                # Accumulate content into the markdown widget.
+                # On first content chunk, fold the thinking prefix into
+                # the accumulated text so it appears before the response.
                 if chunk.content:
+                    if thinking_accumulated and not accumulated:
+                        accumulated = f"\n💡 *{thinking_accumulated}*\n\n"
                     accumulated += chunk.content
                     await self.update_response_text(accumulated)
 
