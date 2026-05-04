@@ -15,5 +15,5 @@ ChatDisplay Tree {
 }
 
 ChatInput {
-    dock: bottom;
+    height: auto;
 }
