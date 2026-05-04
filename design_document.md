@@ -671,7 +671,15 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Tests: TreeRow with content widget, add_message (user/assistant), ``add_thought()`` / ``add_tool_result()`` inline updates, conversation tree structure, streaming Markdown updates, ``last_assistant_id`` tracking, full streaming flow with fake agent (thinking + content + tool calls)
  - **COMPLETE** — branch ``step-15a-tree-content-chatpanel``
 
-### Step 16: Workspace + Terminal (depends on AppContext)
+### Step 15b: Decouple ChatPanel into ui/chat/ ✅
+
+ - ``ui/chat/chat_input.py`` — ``ChatInput`` widget: wraps ``Input``, posts ``ChatSubmitted(text)`` message, exposes ``focus()`` / ``clear()``
+ - ``ui/chat/chat_display.py`` — ``ChatDisplay`` widget: wraps ``Tree``, provides streaming API (``add_user_message()``, ``begin_assistant_turn()``, ``update_section()``, ``finalize_turn()``), owns ``PersistentMarkdown``
+ - ``ui/chat/chat_manager.py`` — ``ChatManager`` widget: composes ``ChatInput`` + ``ChatDisplay``, orchestrates streaming loop, manages history/DB/agent, listens to ``ChatSubmitted`` and drives ``ChatDisplay``
+ - ``ui/sidebar/panels/chat_panel.py`` — thin wrapper: ``ChatPanel`` sidebar tab that composes a ``ChatManager`` and wires it from ``AppContext`` on mount
+ - Tests: Updated ``tests/test_chat_panel.py`` and new ``tests/test_chat_display.py``
+
+### Step 16: Workspace + Terminal (depends on AppContext, ui/chat/)
 
  - ui/workspace/ — **DONE** (split panes built in Step 7)
  - ui/terminal/ — terminal integration (not started)
