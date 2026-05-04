@@ -667,17 +667,12 @@ with fixtures that leverage `AppContext` for dependency injection.
 ### Step 15: Chat UI (depends on agent, AppContext, widgets, tree) ✅
 
  - ui/tree/tree_row.py — ``TreeNode`` gets optional ``content: Widget`` for arbitrary leaf content; TreeRow uses ``compose()`` to host content widgets
- - ui/sidebar/panels/chat_panel.py — ChatPanel sidebar tab with a Tree widget: user messages as plain leaf nodes, assistant responses as leaf nodes with ``Markdown`` content for real-time streaming; thinking and tool calls folded into the markdown stream; ``Input.Submitted`` drives the full agent streaming cycle
- - Tests: TreeRow with content widget, add_message (user/assistant), ``add_thought()`` / ``add_tool_result()`` inline updates, conversation tree structure, streaming Markdown updates, ``last_assistant_id`` tracking, full streaming flow with fake agent (thinking + content + tool calls)
- - **COMPLETE** — branch ``step-15a-tree-content-chatpanel``
-
-### Step 15b: Decouple ChatPanel into ui/chat/ ✅
-
  - ``ui/chat/chat_input.py`` — ``ChatInput`` widget: wraps ``Input``, posts ``ChatSubmitted(text)`` message, exposes ``focus()`` / ``clear()``
- - ``ui/chat/chat_display.py`` — ``ChatDisplay`` widget: wraps ``Tree``, provides streaming API (``add_user_message()``, ``begin_assistant_turn()``, ``update_section()``, ``finalize_turn()``), owns ``PersistentMarkdown``
+ - ``ui/chat/chat_display.py`` — ``ChatDisplay`` widget: wraps ``Tree``, provides streaming API (``add_user_message()``, ``begin_assistant_turn()``, ``update_section()``, ``finalize_turn()``), owns ``PersistentMarkdown`` for surviving tree re-mounts
  - ``ui/chat/chat_manager.py`` — ``ChatManager`` widget: composes ``ChatInput`` + ``ChatDisplay``, orchestrates streaming loop, manages history/DB/agent, listens to ``ChatSubmitted`` and drives ``ChatDisplay``
- - ``ui/sidebar/panels/chat_panel.py`` — thin wrapper: ``ChatPanel`` sidebar tab that composes a ``ChatManager`` and wires it from ``AppContext`` on mount
- - Tests: Updated ``tests/test_chat_panel.py`` and new ``tests/test_chat_display.py``
+ - ``ui/sidebar/panels/chat_panel.py`` — thin wrapper: ``ChatPanel`` sidebar tab that composes a ``ChatManager`` and wires it from ``AppContext`` on mount. Same ``ChatManager`` can be embedded in workspace panes later.
+ - Tests: 44 tests across ``tests/test_chat_input.py``, ``tests/test_chat_display.py``, ``tests/test_chat_manager.py``, ``tests/test_chat_panel.py`` covering all components, streaming with fake agents, and persistence
+ - **COMPLETE** — branches ``step-15a-tree-content-chatpanel`` and ``step-15b-decouple-chat``
 
 ### Step 16: Workspace + Terminal (depends on AppContext, ui/chat/)
 
