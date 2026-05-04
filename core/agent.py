@@ -12,8 +12,9 @@ optional skills XML injection.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from core.providers.base import (
     BaseProvider,
@@ -22,6 +23,9 @@ from core.providers.base import (
     StreamChunk,
     ToolCall,
 )
+
+if TYPE_CHECKING:
+    from context import AppContext
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +81,7 @@ class Agent:
         model: str = "",
         skills_xml: str = "",
         max_tool_iterations: int = 10,
+        ctx: AppContext | None = None,
     ):
         self._provider = provider
         self._template = template
@@ -84,6 +89,7 @@ class Agent:
         self._model = model
         self._skills_xml = skills_xml
         self._max_tool_iterations = max_tool_iterations
+        self._ctx = ctx
         self._aborted = False
 
     # ------------------------------------------------------------------
@@ -154,7 +160,7 @@ class Agent:
                 Message(role="assistant", content=response.content or "")
             )
             for tc in response.tool_calls:
-                result = self._execute_tool_call(tc)
+                result = await self._execute_tool_call(tc)
                 messages.append(
                     Message(role="tool", content=result)
                 )
@@ -220,7 +226,7 @@ class Agent:
                 Message(role="assistant", content=assistant_content)
             )
             for tc in tool_calls:
-                result = self._execute_tool_call(tc)
+                result = await self._execute_tool_call(tc)
                 messages.append(Message(role="tool", content=result))
 
             # Yield the tool-call info so the UI can display it.
@@ -246,12 +252,13 @@ class Agent:
         if self._aborted:
             raise asyncio.CancelledError("Agent aborted")
 
-    @staticmethod
-    def _execute_tool_call(tc: ToolCall) -> str:
+    async def _execute_tool_call(self, tc: ToolCall) -> str:
         from core.tools import execute_tool
 
         try:
-            result = execute_tool(tc.name, tc.arguments)
+            result = execute_tool(tc.name, tc.arguments, ctx=self._ctx)
+            if inspect.iscoroutine(result):
+                result = await result
             return str(result)
         except Exception as exc:
             return f"Error executing {tc.name}: {exc}"

@@ -92,6 +92,7 @@ class SQLiteProvider(BaseDBProvider):
                 chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
                 role       TEXT NOT NULL,
                 content    TEXT NOT NULL DEFAULT '',
+                thinking   TEXT NOT NULL DEFAULT '',
                 tool_calls TEXT,
                 created_at TEXT NOT NULL
             );
@@ -202,18 +203,19 @@ class DatabaseManager:
         role: str,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        thinking: str = "",
     ) -> int:
         tc_json = json.dumps(tool_calls) if tool_calls is not None else None
         cur = self._provider.conn.execute(
-            "INSERT INTO messages (chat_id, role, content, tool_calls, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (chat_id, role, content, tc_json, _now()),
+            "INSERT INTO messages (chat_id, role, content, thinking, tool_calls, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (chat_id, role, content, thinking, tc_json, _now()),
         )
         return cur.lastrowid
 
     def get_messages(self, chat_id: str) -> list[dict[str, Any]]:
         rows = self._provider.execute(
-            "SELECT id, chat_id, role, content, tool_calls, created_at "
+            "SELECT id, chat_id, role, content, thinking, tool_calls, created_at "
             "FROM messages WHERE chat_id = ? ORDER BY id ASC",
             (chat_id,),
         )

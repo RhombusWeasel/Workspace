@@ -51,6 +51,8 @@ class ChatPanel(Container):
         self._last_markdown: Markdown | None = None
         self._agent = None
         self._history: list[dict[str, Any]] = []
+        self._db = None
+        self._chat_id: str | None = None
 
     def set_agent(self, agent) -> None:
         """Bind an :class:`Agent` instance for LLM conversations."""
@@ -68,8 +70,12 @@ class ChatPanel(Container):
         app = self.app
         if hasattr(app, 'context') and app.context is not None:
             ctx = app.context
+            self._db = ctx.database if ctx.database is not None else None
             if self._agent is None:
                 self._wire_agent(ctx)
+            # Create a new chat session if we have a database.
+            if self._db is not None:
+                self._chat_id = self._db.create_chat()
         self._input.focus()
 
     def _wire_agent(self, ctx) -> None:
@@ -86,6 +92,7 @@ class ChatPanel(Container):
             variables={"extra": "Use tools when appropriate."},
             model=ctx.config.get("session.model", ""),
             skills_xml=skill_manager.get_catalog_xml(),
+            ctx=ctx,
         )
         self._agent = agent
         self._tools = get_tools()
@@ -120,8 +127,10 @@ class ChatPanel(Container):
 
         # Stream from agent — thinking and content are accumulated
         # separately because thinking comes before content in the stream.
+        # all_tool_calls captures every tool invocation for DB persistence.
         accumulated = ""
         thinking_accumulated = ""
+        all_tool_calls: list[dict[str, Any]] = []
         try:
             async for chunk in self._agent.stream_chat(
                 self._history,
@@ -131,7 +140,7 @@ class ChatPanel(Container):
                 # Handle thinking — accumulate incrementally for streaming
                 if chunk.thinking:
                     thinking_accumulated += chunk.thinking
-                    display = f"\n💡 *{thinking_accumulated}*\n"
+                    display = f"\n💡 [gray]*{thinking_accumulated}*[/gray]\n"
                     await self.update_response_text(display)
 
                 # Handle tool calls — fold into markdown as persistent text.
@@ -141,6 +150,10 @@ class ChatPanel(Container):
                     thinking_accumulated = ""
                     accumulated = ""
                     for tc in chunk.tool_calls:
+                        all_tool_calls.append({
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                        })
                         accumulated += (
                             f"\n🔧 `{tc.name}("
                             f"{_format_args(tc.arguments)})` → executing…\n"
@@ -159,17 +172,50 @@ class ChatPanel(Container):
         except Exception as exc:
             await self.update_response_text(f"Error: {exc}")
 
-        # Add final response to history
+        # Add final response to in-memory history.
         if accumulated:
             self._history.append({
                 "role": "assistant",
                 "content": accumulated,
-                "tool_calls": None,
+                "tool_calls": all_tool_calls if all_tool_calls else None,
             })
+
+        # Persist the full turn to the database — once, at the end.
+        self._save_turn(
+            user_text, accumulated,
+            thinking=thinking_accumulated,
+            tool_calls=all_tool_calls if all_tool_calls else None,
+        )
 
         self.last_assistant_id = None
         self._last_markdown = None
         self._input.focus()
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def _save_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        thinking: str = "",
+        tool_calls: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Save user + assistant messages to the database."""
+        if self._db is None or self._chat_id is None:
+            return
+        try:
+            self._db.save_message(self._chat_id, "user", user_text)
+            self._db.save_message(
+                self._chat_id,
+                "assistant",
+                assistant_text,
+                tool_calls=tool_calls,
+                thinking=thinking,
+            )
+        except Exception:
+            pass  # Don't break the UI for a persistence failure.
 
     # ------------------------------------------------------------------
     # Message building

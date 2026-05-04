@@ -10,11 +10,24 @@ Tag-based grouping, enable/disable (per-tool and per-group), and a
 This module intentionally uses module-level globals rather than a class
 wrapper — the decorator pattern is the backbone of skill extensibility
 (see design document § 6.1).
+
+Async + context injection
+--------------------------
+* :func:`execute_tool` is async — tools can be ``async def``.
+* Tools that declare a ``ctx`` parameter receive the :class:`AppContext`
+  when executed.  This lets tools push confirmation modals, read config,
+  and access the working directory for path validation.
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from context import AppContext
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +130,12 @@ def get_tools(
     return result
 
 
-def execute_tool(name: str, args: dict[str, Any]) -> Any:
+def execute_tool(name: str, args: dict[str, Any], ctx: AppContext | None = None) -> Any:
     """Look up a tool by *name* and call it with **args.
+
+    Tools may be synchronous or ``async def`` — this function handles
+    both.  If the tool's signature includes a ``ctx`` parameter, the
+    supplied *ctx* is injected automatically.
 
     Raises
     ------
@@ -129,7 +146,17 @@ def execute_tool(name: str, args: dict[str, Any]) -> Any:
         fn, _tags, _desc, _params = _tools[name]
     except KeyError:
         raise KeyError(f"Tool '{name}' is not registered.")
-    return fn(**args)
+
+    # Inspect the function signature to optionally inject ctx.
+    sig = inspect.signature(fn)
+    call_args = dict(args)
+    if "ctx" in sig.parameters:
+        call_args["ctx"] = ctx
+
+    result = fn(**call_args)
+    if inspect.iscoroutine(result):
+        return result  # caller must await
+    return result
 
 
 def disable_tool(name: str) -> None:

@@ -31,7 +31,7 @@ import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handle
 class CodyApp(App):
     """Top-level Textual application.
 
-    Receives an :class:`AppContext` produced by bootstrap and mounts the
+    Receives a :class:`AppContext` produced by bootstrap and mounts the
     primary UI shell (workspace, footer).  Additional UI (chat tabs,
     sidebars, leader modal) will be added in later steps.
 

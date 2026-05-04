@@ -326,3 +326,198 @@ class TestChatPanelStreaming:
             assert 'The weather is sunny' in md._markdown
             # Intermediate 'Let me check' should be replaced by tool calls
             # (not present in final markdown)
+
+
+# ---------------------------------------------------------------------------
+# Persistence tests — ChatPanelTestApp with a real SQLite database
+# ---------------------------------------------------------------------------
+
+
+class ChatPanelDBTestApp(App):
+    """Test app that provides a real DatabaseManager via context."""
+
+    CSS = """
+    ChatPanel {
+        width: 60;
+        height: 100%;
+    }
+    ChatPanel Tree {
+        height: 1fr;
+    }
+    """
+
+    def __init__(self, db):
+        self._test_db = db
+        from core.config import Config
+        cfg = Config([])  # empty config — defaults to fallbacks
+        from context import AppContext
+        self.context = AppContext(
+            database=db,
+            config=cfg,
+            working_directory="/tmp",
+        )
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        from ui.sidebar.panels.chat_panel import ChatPanel
+        self.panel = ChatPanel()
+        yield self.panel
+
+
+class TestChatPanelPersistence:
+    async def test_turn_saved_to_database(self):
+        """After a streaming turn, both user and assistant messages
+        appear in the database."""
+        from core.database import DatabaseManager
+        import tempfile
+
+        chunks = [
+            type('C', (), {'thinking': 'Hmm', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': 'Hi there!', 'tool_calls': None})(),
+        ]
+
+        class FakeAgent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    yield chunk
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        try:
+            db = DatabaseManager(db_path)
+
+            async with ChatPanelDBTestApp(db).run_test() as pilot:
+                panel = pilot.app.panel
+                panel.set_agent(FakeAgent(chunks))
+                await _settle(pilot)
+
+                inp = panel.query_one(Input)
+                inp.value = 'Hello!'
+                inp.post_message(Input.Submitted(inp, 'Hello!'))
+                await _settle(pilot, n=10)
+
+            # Now check the DB outside the app context.
+            chats = db.list_chats()
+            assert len(chats) == 1
+            chat_id = chats[0]["id"]
+
+            messages = db.get_messages(chat_id)
+            assert len(messages) == 2
+
+            user_msg = messages[0]
+            assert user_msg["role"] == "user"
+            assert user_msg["content"] == "Hello!"
+
+            asst_msg = messages[1]
+            assert asst_msg["role"] == "assistant"
+            assert "Hi there!" in asst_msg["content"]
+        finally:
+            import os
+            try:
+                db.close()
+                os.unlink(db_path)
+            except Exception:
+                pass
+
+    async def test_thinking_persisted(self):
+        """Thinking text from the model is stored in the DB."""
+        from core.database import DatabaseManager
+        import tempfile
+
+        chunks = [
+            type('C', (), {'thinking': 'Let me', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': ' think...', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': 'The answer is 42.', 'tool_calls': None})(),
+        ]
+
+        class FakeAgent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    yield chunk
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        try:
+            db = DatabaseManager(db_path)
+
+            async with ChatPanelDBTestApp(db).run_test() as pilot:
+                panel = pilot.app.panel
+                panel.set_agent(FakeAgent(chunks))
+                await _settle(pilot)
+
+                inp = panel.query_one(Input)
+                inp.value = 'What is the answer?'
+                inp.post_message(Input.Submitted(inp, 'What is the answer?'))
+                await _settle(pilot, n=10)
+
+            chats = db.list_chats()
+            messages = db.get_messages(chats[0]["id"])
+            asst_msg = messages[1]
+            assert "Let me think..." in asst_msg.get("thinking", "")
+        finally:
+            import os
+            try:
+                db.close()
+                os.unlink(db_path)
+            except Exception:
+                pass
+
+    async def test_tool_calls_persisted(self):
+        """Tool calls invoked during the turn are stored in the DB."""
+        from core.database import DatabaseManager
+        import tempfile
+
+        chunks = [
+            type('C', (), {
+                'thinking': '', 'content': '',
+                'tool_calls': [
+                    type('TC', (), {'name': 'read_file', 'arguments': {'path': 'test.txt'}})()
+                ]
+            })(),
+            type('C', (), {'thinking': '', 'content': 'Done.', 'tool_calls': None})(),
+        ]
+
+        class FakeAgent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    yield chunk
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        try:
+            db = DatabaseManager(db_path)
+
+            async with ChatPanelDBTestApp(db).run_test() as pilot:
+                panel = pilot.app.panel
+                panel.set_agent(FakeAgent(chunks))
+                await _settle(pilot)
+
+                inp = panel.query_one(Input)
+                inp.value = 'Read test.txt'
+                inp.post_message(Input.Submitted(inp, 'Read test.txt'))
+                await _settle(pilot, n=10)
+
+            chats = db.list_chats()
+            messages = db.get_messages(chats[0]["id"])
+            asst_msg = messages[1]
+            tc = asst_msg.get("tool_calls")
+            assert tc is not None
+            assert len(tc) == 1
+            assert tc[0]["name"] == "read_file"
+            assert tc[0]["arguments"] == {"path": "test.txt"}
+        finally:
+            import os
+            try:
+                db.close()
+                os.unlink(db_path)
+            except Exception:
+                pass
