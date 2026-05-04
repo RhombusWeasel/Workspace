@@ -1,4 +1,9 @@
-"""Tests for the Tree and TreeRow widgets (ui/tree/)."""
+"""Tests for the Tree and TreeRow widgets (ui/tree/).
+
+After Step 15c: expand/collapse toggles a ``-hidden`` CSS class instead
+of removing/re-mounting rows.  All rows are mounted once and stay in the
+DOM; only their visibility changes.
+"""
 
 import pytest
 from textual.app import App, ComposeResult
@@ -20,6 +25,9 @@ class TreeTestApp(App):
     Tree {
         height: 100%;
         width: 100%;
+    }
+    TreeRow.-hidden, ActionRow.-hidden {
+        display: none;
     }
     """
 
@@ -51,6 +59,16 @@ def _make_tree():
         ]),
         TreeNode("b", "Node B"),
     ])
+
+
+def _visible_rows(tree: Tree) -> list[TreeRow]:
+    """Return TreeRow widgets that are NOT hidden."""
+    return [r for r in tree.query(TreeRow) if not r.has_class("-hidden")]
+
+
+def _visible_action_rows(tree: Tree) -> list[ActionRow]:
+    """Return ActionRow widgets that are NOT hidden."""
+    return [r for r in tree.query(ActionRow) if not r.has_class("-hidden")]
 
 
 # ---------------------------------------------------------------------------
@@ -199,24 +217,39 @@ class TestTreeRow:
 
 
 # ---------------------------------------------------------------------------
-# Tree
+# Tree — rendering (CSS hide/show)
 # ---------------------------------------------------------------------------
 
 
 class TestTreeRendering:
-    async def test_tree_renders_all_visible_nodes(self):
-        """Initially, root + direct children are visible, deeper children hidden."""
+    async def test_all_rows_mounted_on_start(self):
+        """All nodes are mounted as rows, including initially hidden ones."""
         root = _make_tree()
         async with TreeTestApp(root).run_test() as pilot:
             tree = pilot.app.tree
             await pilot.pause()
 
-            rows = tree.query(TreeRow)
-            # root + A + B = 3 visible (A1, A2 hidden until A expanded)
-            assert len(rows) == 3
+            # All 5 nodes should have rows (root, A, A1, A2, B).
+            all_rows = tree.query(TreeRow)
+            assert len(all_rows) == 5
 
-    async def test_expand_shows_children(self):
-        """Expanding a branch reveals its children."""
+    async def test_initially_only_root_and_direct_children_visible(self):
+        """Hidden rows have the -hidden class."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            await pilot.pause()
+
+            # root + A + B = 3 visible; A1, A2 are hidden
+            assert len(_visible_rows(tree)) == 3
+
+            hidden = [r for r in tree.query(TreeRow) if r.has_class("-hidden")]
+            assert len(hidden) == 2
+            hidden_ids = {r.node.id for r in hidden}
+            assert hidden_ids == {"a1", "a2"}
+
+    async def test_expand_reveals_children(self):
+        """Expanding removes -hidden from children."""
         root = _make_tree()
         async with TreeTestApp(root).run_test() as pilot:
             tree = pilot.app.tree
@@ -225,12 +258,13 @@ class TestTreeRendering:
             tree.expand_node("a")
             await pilot.pause()
 
-            rows = tree.query(TreeRow)
-            # root + A + A1 + A2 + B = 5
-            assert len(rows) == 5
+            assert len(_visible_rows(tree)) == 5
+            # No rows should be hidden.
+            hidden = [r for r in tree.query(TreeRow) if r.has_class("-hidden")]
+            assert len(hidden) == 0
 
     async def test_collapse_hides_children(self):
-        """Collapsing a branch hides its children."""
+        """Collapsing adds -hidden to children."""
         root = _make_tree()
         async with TreeTestApp(root).run_test() as pilot:
             tree = pilot.app.tree
@@ -241,23 +275,57 @@ class TestTreeRendering:
             tree.collapse_node("a")
             await pilot.pause()
 
-            rows = tree.query(TreeRow)
-            assert len(rows) == 3
+            assert len(_visible_rows(tree)) == 3
+            hidden = [r for r in tree.query(TreeRow) if r.has_class("-hidden")]
+            hidden_ids = {r.node.id for r in hidden}
+            assert hidden_ids == {"a1", "a2"}
 
     async def test_expand_all_shows_everything(self):
-        """expand_all reveals the entire tree."""
+        """expand_all reveals every node."""
         root = _make_tree()
         async with TreeTestApp(root).run_test() as pilot:
             tree = pilot.app.tree
             tree.expand_all()
             await pilot.pause()
 
-            rows = tree.query(TreeRow)
-            assert len(rows) == 5
+            assert len(_visible_rows(tree)) == 5
+            hidden = [r for r in tree.query(TreeRow) if r.has_class("-hidden")]
+            assert len(hidden) == 0
 
-    async def test_tree_with_content_nodes(self):
-        """Tree properly renders nodes that have content widgets."""
-        content = Label("Leaf content")
+    async def test_nested_expand_and_collapse(self):
+        """Deep nesting: collapsing a parent hides all descendants."""
+        root = TreeNode("root", "root", children=[
+            TreeNode("a", "A", children=[
+                TreeNode("a1", "A1", children=[
+                    TreeNode("a1a", "A1a"),
+                ]),
+            ]),
+        ])
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            await pilot.pause()
+
+            # Expand all
+            tree.expand_node("a")
+            await pilot.pause()
+            tree.expand_node("a1")
+            await pilot.pause()
+
+            assert len(_visible_rows(tree)) == 4  # root, A, A1, A1a
+
+            # Collapse A — hides A1 and A1a, but A itself stays visible.
+            tree.collapse_node("a")
+            await pilot.pause()
+
+            # root and A are visible (branch node stays visible when collapsed)
+            assert len(_visible_rows(tree)) == 2
+
+            hidden = [r for r in tree.query(TreeRow) if r.has_class("-hidden")]
+            hidden_ids = {r.node.id for r in hidden}
+            assert hidden_ids == {"a1", "a1a"}
+
+    async def test_content_visible_after_expand(self):
+        """Content widgets on descendant rows become visible on expand."""
         root = TreeNode("root", "root", children=[
             TreeNode("a", "Branch A", children=[
                 TreeNode("a1", "Leaf", content=Label("A1 content")),
@@ -268,19 +336,52 @@ class TestTreeRendering:
             tree = pilot.app.tree
             tree.expand_node("a")
             await pilot.pause()
-            await pilot.pause()  # let DOM settle after async remove + rebuild
+            await pilot.pause()
 
-            rows = tree.query(TreeRow)
-            assert len(rows) == 4  # root + a + a1 + b
+            labels = tree.query(Label)
+            label_texts = [l.render().plain for l in labels]
+            assert any("A1 content" in t for t in label_texts)
+            assert any("B content" in t for t in label_texts)
 
-            # Verify content labels are mounted inside the tree rows
-            content_texts = []
-            for row in rows:
-                for child in row.children:
-                    if isinstance(child, Label):
-                        content_texts.append(child.render().plain)
-            assert any("A1 content" in t for t in content_texts)
-            assert any("B content" in t for t in content_texts)
+    async def test_content_widget_survives_collapse_and_reexpand(self):
+        """Content widgets stay mounted through collapse/expand cycles.
+
+        No PersistentMarkdown hack needed — the widget is never unmounted.
+        """
+        md = Markdown("# Before", id="survivor-md")
+        root = TreeNode("root", "root", children=[
+            TreeNode("a", "Branch", children=[
+                TreeNode("leaf", "", content=md),
+            ]),
+        ])
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            tree.expand_node("a")
+            await pilot.pause()
+            await pilot.pause()
+
+            # Verify the Markdown exists and has our content.
+            markdowns = tree.query(Markdown)
+            assert len(markdowns) == 1
+            assert markdowns[0].id == "survivor-md"
+
+            # Collapse then re-expand — same widget instance should survive.
+            tree.collapse_node("a")
+            await pilot.pause()
+            tree.expand_node("a")
+            await pilot.pause()
+            await pilot.pause()
+
+            markdowns2 = tree.query(Markdown)
+            assert len(markdowns2) == 1
+            assert markdowns2[0].id == "survivor-md"
+            # Same instance — never was destroyed.
+            assert markdowns2[0] is md
+
+
+# ---------------------------------------------------------------------------
+# Tree — navigation
+# ---------------------------------------------------------------------------
 
 
 class TestTreeNavigation:
@@ -327,12 +428,28 @@ class TestTreeNavigation:
             tree.toggle_node("a")
             await pilot.pause()
             assert tree.is_expanded("a") is True
-            assert len(tree.query(TreeRow)) == 5
+            assert len(_visible_rows(tree)) == 5
 
             tree.toggle_node("a")
             await pilot.pause()
             assert tree.is_expanded("a") is False
-            assert len(tree.query(TreeRow)) == 3
+            assert len(_visible_rows(tree)) == 3
+
+    async def test_select_hidden_node_still_works(self):
+        """A hidden node can still be selected (row exists, just not displayed)."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            await pilot.pause()
+
+            # a1 is hidden but its row exists.
+            tree.select_node("a1")
+            assert tree.selected_id == "a1"
+
+
+# ---------------------------------------------------------------------------
+# Tree — events
+# ---------------------------------------------------------------------------
 
 
 class TestTreeEvents:
@@ -364,9 +481,12 @@ class TestTreeEvents:
             await pilot.pause()
 
             assert tree.is_expanded("a")
-            # Children should now be visible
-            rows = tree.query(TreeRow)
-            assert len(rows) == 5  # root + A + A1 + A2 + B
+            assert len(_visible_rows(tree)) == 5
+
+
+# ---------------------------------------------------------------------------
+# Tree — rebuild (structural changes)
+# ---------------------------------------------------------------------------
 
 
 class TestTreeRebuild:
@@ -390,8 +510,34 @@ class TestTreeRebuild:
             assert not tree.is_expanded("a")
             assert tree.is_expanded("root")
 
-    async def test_rebuild_preserves_content_widgets(self):
-        """rebuild() keeps existing rows with content widgets intact."""
+    async def test_rebuild_preserves_existing_rows(self):
+        """rebuild() preserves existing rows and adds new ones."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            tree.expand_node("a")
+            await pilot.pause()
+
+            # Capture existing row instances.
+            original_rows = list(tree.query(TreeRow))
+            assert len(original_rows) == 5
+
+            # rebuild with same tree — all rows preserved.
+            tree.rebuild()
+            await pilot.pause()
+
+            new_rows = list(tree.query(TreeRow))
+            assert len(new_rows) == 5
+
+            # Same instances survive (hybrid rebuild preserves existing rows).
+            for orig in original_rows:
+                assert orig in new_rows
+
+            # Visibility is preserved.
+            assert len(_visible_rows(tree)) == 5
+
+    async def test_rebuild_after_adding_child(self):
+        """Adding a child then rebuild() shows the new node."""
         md = Markdown("# Test", id="test-md")
         root = TreeNode("root", "root", children=[
             TreeNode("a", "Branch", children=[
@@ -404,21 +550,33 @@ class TestTreeRebuild:
             await pilot.pause()
             await pilot.pause()
 
-            # Verify initial state
-            md_widgets = tree.query(Markdown)
-            assert len(md_widgets) == 1
+            # Content widget is present.
+            assert len(tree.query(Markdown)) == 1
 
-            # Add a new child to branch "a"
+            # Add a new child in the data model.
             tree._node_map["a"].children.append(TreeNode("new", "New child"))
             tree.rebuild()
             await pilot.pause()
             await pilot.pause()
 
-            # Markdown widget should still be there
-            md_widgets_after = tree.query(Markdown)
-            assert len(md_widgets_after) == 1
+            assert "new" in {r.node.id for r in tree.query(TreeRow)}
+            # Content widget survives rebuild (hybrid approach preserves existing rows).
+            assert len(tree.query(Markdown)) == 1
 
-            # New child should be visible
-            rows = tree.query(TreeRow)
-            row_ids = {r.node.id for r in rows}
-            assert "new" in row_ids
+    async def test_set_root_remounts_all_rows(self):
+        """set_root() re-mounts all rows and resets expand state."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            tree.expand_node("a")
+            await pilot.pause()
+
+            tree.set_root(tree.root)
+            await pilot.pause()
+
+            # All rows re-mounted.
+            all_rows = tree.query(TreeRow)
+            assert len(all_rows) == 5
+            # Expand state reset.
+            assert not tree.is_expanded("a")
+            assert tree.is_expanded("root")

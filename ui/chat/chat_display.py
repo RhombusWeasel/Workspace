@@ -18,41 +18,14 @@ from ui.tree.tree_row import TreeNode
 
 
 # ---------------------------------------------------------------------------
-# PersistentMarkdown — survives TreeRow re-mounts
-# ---------------------------------------------------------------------------
-
-
-class PersistentMarkdown(Markdown):
-    """A ``Markdown`` that restores its content across re-mounts.
-
-    When a Tree branch is collapsed and re-expanded the ``TreeRow`` is
-    recreated, remounting its content widget.  Standard ``Markdown``
-    resets to its initial text on mount; this subclass preserves the
-    last ``update()`` call and re-applies it on mount.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._persisted: str = ""
-
-    async def update(self, markdown: str) -> None:
-        self._persisted = markdown
-        await super().update(markdown)
-
-    def on_mount(self) -> None:
-        if self._persisted:
-            self.run_worker(self.update(self._persisted))
-
-
-# ---------------------------------------------------------------------------
 # ChatDisplay
 # ---------------------------------------------------------------------------
 
 _VALID_SECTIONS = frozenset({"thinking", "tools", "response"})
 _SECTION_ICONS: dict[str, str] = {
-    "thinking": "  💡 Thinking",
-    "tools": "  🔧 Tools",
-    "response": "  ✏️ Response",
+    "thinking": "  󰟶 Thinking",
+    "tools": "  󱁤 Tools",
+    "response": "  󰭹 Response",
 }
 
 
@@ -117,7 +90,7 @@ class ChatDisplay(Widget):
         md_map: dict[str, Markdown] = {}
 
         for section in ("thinking", "tools", "response"):
-            md = PersistentMarkdown("", id=f"md-{section}-{asst_id}")
+            md = Markdown("", id=f"md-{section}-{asst_id}")
             md_map[section] = md
             leaf = TreeNode(
                 f"{section}-leaf-{asst_id}", "",
@@ -142,6 +115,12 @@ class ChatDisplay(Widget):
         self._active_sections = set()
 
         self._rebuild()
+
+        # Auto-expand section branches so Markdown children are visible.
+        tree = self.query_one(Tree)
+        for section in ("thinking", "tools", "response"):
+            tree.expand_node(f"{section}-{asst_id}")
+
         return asst_id
 
     async def update_section(self, section: str, text: str) -> None:
@@ -159,6 +138,10 @@ class ChatDisplay(Widget):
             return  # No active turn.
         self._active_sections.add(section)
         await md.update(text)
+        # Guard: if Markdown._markdown wasn't set (race with mount),
+        # store the text directly so it can be recovered.
+        if not md._markdown:
+            md._markdown = text
 
     def finalize_turn(self) -> None:
         """Remove empty section children, rebuild tree, clear internal state."""

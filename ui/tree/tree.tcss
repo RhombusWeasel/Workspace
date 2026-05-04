@@ -16,3 +16,7 @@ TreeRow {
 TreeRow:hover {
     text-style: bold;
 }
+
+TreeRow.-hidden, ActionRow.-hidden {
+    display: none;
+}

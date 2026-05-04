@@ -1,4 +1,10 @@
-"""Generic tree widget — hierarchical list with expand/collapse."""
+"""Generic tree widget — hierarchical list with expand/collapse.
+
+Rows are mounted once for all nodes and stay in the DOM.  Expand/collapse
+toggles a ``-hidden`` CSS class (``display: none``) instead of removing
+and re-mounting rows.  This means content widgets (e.g. ``Markdown``)
+survive collapse/expand cycles without special handling.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,7 @@ from typing import Any
 from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
+from textual.widget import Widget
 
 from ui.tree.tree_row import TreeNode, TreeRow, RowButton, ActionRow
 
@@ -45,6 +52,7 @@ class Tree(VerticalScroll, can_focus=True):
     :class:`TreeRow` widgets.
 
     Supports expand/collapse, keyboard navigation, and selection.
+    Rows are mounted once — expand/collapse toggles CSS visibility.
     """
 
     selected_id: reactive[str | None] = reactive(None)
@@ -68,29 +76,60 @@ class Tree(VerticalScroll, can_focus=True):
         """Replace the entire tree with a new root node.
 
         Resets the expand state — only the new root is expanded.
-        Use :meth:`rebuild` for incremental updates to the same root.
+        All rows are removed and re-created.
         """
         self._root = new_root
         self._node_map.clear()
         self._build_node_map(new_root)
         self._expanded = {new_root.id}
-        # Remove all old rows so fresh labels are created
-        for row in self.query("TreeRow, ActionRow"):
-            row.remove()
-        self._rebuild_rows()
+        # Detach content widgets so they don't get destroyed with rows
+        self._orphan_content_widgets()
+        self._remove_all_rows()
+        self._mount_all_rows()
+        self._refresh_visibility()
 
     def rebuild(self) -> None:
-        """Rebuild visible rows for the current root *without* resetting
-        the expand state.
+        """Sync rows to the current data model without resetting expand state.
 
-        Call this after modifying the tree data model in-place
-        (adding/removing children) to reflect changes in the UI.
-        Content widgets on existing, still-visible nodes are preserved.
+        Call after adding/removing children in-place.  Rows for nodes
+        that still exist are preserved (including their content widgets).
+        Rows for removed nodes are unmounted; rows for new nodes are mounted.
+        Visibility is refreshed from ``_expanded``.
         """
-        # Re-scan node map in case children were added/removed
         self._node_map.clear()
         self._build_node_map(self._root)
-        self._rebuild_rows()
+
+        # Remove rows whose node no longer exists.
+        for row in list(self.query("TreeRow, ActionRow")):
+            if row.node.id not in self._node_map:
+                # Detach content widgets first so they survive.
+                if hasattr(row, 'node') and row.node.content is not None:
+                    row.node.content = None
+                row.remove()
+
+        # Mount rows for new nodes.
+        existing_ids = {row.node.id for row in self.query("TreeRow, ActionRow")}
+        order: dict[str, int] = {}
+        for i, (node, depth) in enumerate(self._get_all_nodes_depth()):
+            order[node.id] = i
+            if node.id in existing_ids:
+                continue
+            is_branch = bool(node.children)
+            if node.buttons:
+                row: Widget = ActionRow(node, depth=depth)
+            else:
+                row = TreeRow(node, depth=depth, is_branch=is_branch)
+                if node.id == self.selected_id:
+                    row.is_selected = True
+            self.mount(row)
+
+        # Re-sort into depth-first order.
+        self.sort_children(
+            key=lambda w: order.get(w.node.id, 9999)
+            if hasattr(w, 'node') else 9999
+        )
+
+        self._refresh_visibility()
 
     def update_node_label(self, node_id: str, label: str) -> None:
         """Update the display label of a node in-place (no full rebuild)."""
@@ -111,7 +150,7 @@ class Tree(VerticalScroll, can_focus=True):
         self.post_message(NodeSelected(node_id, node))
 
     def expand_node(self, node_id: str) -> None:
-        """Expand a branch node, revealing its children."""
+        """Expand a branch node, revealing its descendants."""
         if node_id not in self._node_map:
             return
         node = self._node_map[node_id]
@@ -120,15 +159,15 @@ class Tree(VerticalScroll, can_focus=True):
         if node_id in self._expanded:
             return
         self._expanded.add(node_id)
-        self._rebuild_rows()
+        self._refresh_visibility()
         self.post_message(NodeToggled(node_id, node, True))
 
     def collapse_node(self, node_id: str) -> None:
-        """Collapse a branch node, hiding its children."""
+        """Collapse a branch node, hiding its descendants."""
         if node_id not in self._expanded:
             return
         self._expanded.discard(node_id)
-        self._rebuild_rows()
+        self._refresh_visibility()
         node = self._node_map[node_id]
         self.post_message(NodeToggled(node_id, node, False))
 
@@ -144,25 +183,40 @@ class Tree(VerticalScroll, can_focus=True):
         for node_id, node in self._node_map.items():
             if node.children:
                 self._expanded.add(node_id)
-        self._rebuild_rows()
+        self._refresh_visibility()
 
     def is_expanded(self, node_id: str) -> bool:
         return node_id in self._expanded
 
     # ------------------------------------------------------------------
-    # Composition
+    # Mount / rebuild internals
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
-        self._rebuild_rows()
+        self._mount_all_rows()
+        self._refresh_visibility()
 
     def _build_node_map(self, node: TreeNode) -> None:
         self._node_map[node.id] = node
         for child in node.children:
             self._build_node_map(child)
 
+    def _get_all_nodes_depth(self) -> list[tuple[TreeNode, int]]:
+        """Walk the entire tree (ignoring expand state) and return
+        (node, depth) for every node in depth-first order."""
+        result: list[tuple[TreeNode, int]] = []
+
+        def walk(node: TreeNode, depth: int) -> None:
+            result.append((node, depth))
+            for child in node.children:
+                walk(child, depth + 1)
+
+        walk(self._root, 0)
+        return result
+
     def _get_visible_nodes(self) -> list[tuple[TreeNode, int]]:
-        """Walk the tree and return (node, depth) for visible nodes."""
+        """Walk the tree respecting expand state; return (node, depth)
+        for every visible node."""
         result: list[tuple[TreeNode, int]] = []
 
         def walk(node: TreeNode, depth: int) -> None:
@@ -174,28 +228,11 @@ class Tree(VerticalScroll, can_focus=True):
         walk(self._root, 0)
         return result
 
-    def _rebuild_rows(self) -> None:
-        """Update tree rows to match the current expand state.
-
-        Uses a diff approach: rows for nodes that are still visible are
-        kept in place (preserving any content widgets).  Rows for newly
-        visible nodes are created; rows for now-hidden nodes are removed.
-        """
-        visible = self._get_visible_nodes()
-        visible_ids = {node.id for node, _ in visible}
-
-        # Remove rows whose node is no longer visible
-        for row in self.query("TreeRow, ActionRow"):
-            if row.node.id not in visible_ids:
-                row.remove()
-
-        # Collect existing row node ids
-        existing = {row.node.id for row in self.query("TreeRow, ActionRow")}
-
-        # Mount rows for newly visible nodes
-        for node, depth in visible:
-            if node.id in existing:
-                continue
+    def _mount_all_rows(self) -> None:
+        """Mount a row for every node in the entire tree."""
+        order: dict[str, int] = {}
+        for i, (node, depth) in enumerate(self._get_all_nodes_depth()):
+            order[node.id] = i
             is_branch = bool(node.children)
             if node.buttons:
                 row: Widget = ActionRow(node, depth=depth)
@@ -204,6 +241,33 @@ class Tree(VerticalScroll, can_focus=True):
                 if node.id == self.selected_id:
                     row.is_selected = True
             self.mount(row)
+
+        # Sort into depth-first order.
+        self.sort_children(
+            key=lambda w: order.get(w.node.id, 9999)
+            if hasattr(w, 'node') else 9999
+        )
+
+    def _remove_all_rows(self) -> None:
+        for row in list(self.query("TreeRow, ActionRow")):
+            row.remove()
+
+    def _orphan_content_widgets(self) -> None:
+        """Detach content widgets from rows so they aren't destroyed on remove."""
+        for row in self.query("TreeRow"):
+            row.node.content = None
+
+    def _refresh_visibility(self) -> None:
+        """Toggle the ``-hidden`` CSS class on every row based on
+        the current expand state.  Rows for nodes that are not in the
+        visible set get ``-hidden`` (``display: none``); visible rows
+        have the class removed."""
+        visible_ids = {node.id for node, _ in self._get_visible_nodes()}
+        for row in self.query("TreeRow, ActionRow"):
+            if row.node.id in visible_ids:
+                row.remove_class("-hidden")
+            else:
+                row.add_class("-hidden")
 
     def _update_selection(self) -> None:
         """Update is_selected on all rows to match selected_id."""

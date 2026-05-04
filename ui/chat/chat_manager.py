@@ -7,6 +7,7 @@ messages and driving the full streaming cycle through an LLM agent.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from textual.app import ComposeResult
@@ -107,6 +108,12 @@ class ChatManager(Widget):
 
         # Assistant branch.
         asst_id = self._chat_display.begin_assistant_turn()
+
+        # New rows were mounted synchronously; yield to the event loop
+        # so Markdown widgets finish their mount lifecycle before we
+        # call update() on them.
+        self.refresh(layout=True)
+        await asyncio.sleep(0)
 
         if self._agent is None:
             await self._chat_display.update_section("response", "No agent configured.")
