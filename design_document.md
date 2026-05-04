@@ -674,6 +674,14 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Tests: 44 tests across ``tests/test_chat_input.py``, ``tests/test_chat_display.py``, ``tests/test_chat_manager.py``, ``tests/test_chat_panel.py`` covering all components, streaming with fake agents, and persistence
  - **COMPLETE** — branches ``step-15a-tree-content-chatpanel`` and ``step-15b-decouple-chat``
 
+### Step 15c: Tree CSS Hide/Show (replaces DOM remounts) ✅
+
+ - ``ui/tree/tree.py`` — mount all rows once on mount/set_root; expand/collapse toggles a ``-hidden`` CSS class instead of removing/re-mounting rows; ``_rebuild_rows()`` replaced by ``_refresh_visibility()``; ``rebuild()`` still remounts all rows for structural changes
+ - ``ui/tree/tree_row.py`` — ``PersistentMarkdown`` removed from ``ui/chat/chat_display.py`` (no longer needed since content widgets stay mounted)
+ - ``ui/chat/chat_display.py`` — use plain ``Markdown`` instead of ``PersistentMarkdown``
+ - Tests: Updated ``tests/test_tree.py`` and ``tests/test_chat_display.py``
+ - Branch: ``step-15c-tree-css-hide-show``
+
 ### Step 16: Workspace + Terminal (depends on AppContext, ui/chat/)
 
  - ui/workspace/ — **DONE** (split panes built in Step 7)
