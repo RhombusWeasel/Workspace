@@ -6,7 +6,7 @@ Returns the entered text on submit or ``None`` on cancel.
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
 
@@ -26,39 +26,6 @@ class InputModal(ModalScreen[str | None]):
         If ``True``, the input is masked.
     """
 
-    CSS = """
-    InputModal {
-        align: center middle;
-    }
-
-    #input-dialog {
-        width: 60;
-        height: auto;
-        padding: 1 2;
-        background: $surface;
-        border: thick $primary;
-    }
-
-    #input-dialog Label {
-        width: 100%;
-        margin-bottom: 1;
-    }
-
-    #input-dialog Input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-
-    #input-dialog Horizontal {
-        width: 100%;
-        align-horizontal: right;
-    }
-
-    #input-dialog Button {
-        margin-left: 1;
-    }
-    """
-
     def __init__(
         self,
         prompt: str,
@@ -73,16 +40,17 @@ class InputModal(ModalScreen[str | None]):
         self._password = password
 
     def compose(self) -> ComposeResult:
-        yield Label(self._prompt, id="input-dialog")
-        yield Input(
-            value=self._default,
-            placeholder=self._label,
-            password=self._password,
-            id="modal-input",
-        )
-        with Horizontal():
-            yield Button("OK", variant="primary", id="btn-ok")
-            yield Button("Cancel", variant="default", id="btn-cancel")
+        with Vertical(id="input-dialog"):
+            yield Label(self._prompt)
+            yield Input(
+                value=self._default,
+                placeholder=self._label,
+                password=self._password,
+                id="modal-input",
+            )
+            with Horizontal():
+                yield Button("OK", variant="primary", id="btn-ok")
+                yield Button("Cancel", variant="default", id="btn-cancel")
 
     def on_mount(self) -> None:
         self.query_one("#modal-input", Input).focus()

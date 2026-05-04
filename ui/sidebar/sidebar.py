@@ -2,6 +2,10 @@
 
 Renders registered sidebar tabs as a ``TabbedContent`` widget.
 Wrapped by ``SidebarContainer`` for show/hide animation.
+
+Event handlers:
+* ``leader.workspace.toggle_left`` — toggles the left sidebar
+* ``leader.workspace.toggle_right`` — toggles the right sidebar
 """
 
 from __future__ import annotations
@@ -10,6 +14,8 @@ from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import TabbedContent, TabPane
 
+from context import AppContext
+from core.events import register_handler
 from ui.sidebar.registry import get_sidebar_tabs
 
 
@@ -71,9 +77,9 @@ class SidebarContainer(Container):
     """
 
     def __init__(
-        self, sidebar: Sidebar, *, side: str, start_hidden: bool = True
+        self, sidebar: Sidebar, *, side: str, start_hidden: bool = True, **kwargs
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.sidebar = sidebar
         self._hidden = start_hidden
 
@@ -103,3 +109,31 @@ class SidebarContainer(Container):
     def hide(self) -> None:
         if not self._hidden:
             self.toggle()
+
+
+# ---------------------------------------------------------------------------
+# Event handlers — registered at import time via decorator
+# ---------------------------------------------------------------------------
+
+
+@register_handler("leader.workspace.toggle_left")
+def _on_toggle_left(data: dict, ctx: AppContext) -> None:
+    """Toggle the left sidebar visibility."""
+    _toggle_sidebar(ctx, "#sidebar-left")
+
+
+@register_handler("leader.workspace.toggle_right")
+def _on_toggle_right(data: dict, ctx: AppContext) -> None:
+    """Toggle the right sidebar visibility."""
+    _toggle_sidebar(ctx, "#sidebar-right")
+
+
+def _toggle_sidebar(ctx: AppContext, selector: str) -> None:
+    app = ctx.app
+    if app is None:
+        return
+    try:
+        container = app.query_one(selector, SidebarContainer)
+        container.toggle()
+    except Exception:
+        pass

@@ -7,7 +7,7 @@ to query config, database, leader chords, or issue app commands.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from core.config import Config
@@ -34,3 +34,9 @@ class AppContext:
     vault: VaultManager | None = None
     working_directory: str = ""
     css_paths: list[str] = field(default_factory=list)
+    app: Any = None
+    """The running :class:`CodyApp` instance.
+
+    Set by the app in its constructor.  Event handlers use this to
+    call ``push_screen_wait()``, ``notify()``, and query the DOM.
+    """

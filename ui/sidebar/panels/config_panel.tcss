@@ -1,0 +1,16 @@
+ConfigPanel {
+    height: 1fr;
+    padding: 0 1;
+}
+
+ConfigPanel Tree {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+ConfigPanel #config-save {
+    dock: bottom;
+    margin-bottom: 1;
+    min-width: 10;
+    background: $success 20%;
+}

@@ -1,0 +1,35 @@
+InputModal {
+    align: center middle;
+    border: round $primary;
+}
+
+#input-dialog {
+    width: 50%;
+    height: 11;
+    padding: 1 2;
+    background: $surface;
+    border: round $primary;
+}
+
+#input-dialog Label {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+#input-dialog Input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#input-dialog Horizontal {
+    width: 100%;
+    align-horizontal: right;
+}
+
+#input-dialog Button {
+    margin-left: 1;
+    width: 1fr;
+    height: 1;
+    border: none;
+}

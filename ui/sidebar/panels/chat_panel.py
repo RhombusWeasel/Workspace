@@ -60,15 +60,42 @@ class ChatPanel(Container):
         """Set the tool definitions to pass to the agent."""
         self._tools = tools
 
+    # ------------------------------------------------------------------
+    # Mount — self-wire from app context
+    # ------------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        app = self.app
+        if hasattr(app, 'context') and app.context is not None:
+            ctx = app.context
+            if self._agent is None:
+                self._wire_agent(ctx)
+        self._input.focus()
+
+    def _wire_agent(self, ctx) -> None:
+        """Build an :class:`Agent` and bind it from the app context."""
+        from core.agent import Agent
+        from core.providers.ollama import OllamaProvider
+        from core.tools import get_tools
+        from core.skills import skill_manager
+
+        provider = OllamaProvider(ctx.config)
+        agent = Agent(
+            provider=provider,
+            template="You are a helpful AI assistant. {{extra}}",
+            variables={"extra": "Use tools when appropriate."},
+            model=ctx.config.get("session.model", ""),
+            skills_xml=skill_manager.get_catalog_xml(),
+        )
+        self._agent = agent
+        self._tools = get_tools()
+
     def compose(self) -> ComposeResult:
         with Vertical():
             self._tree = Tree(self._root)
             yield self._tree
             self._input = Input(placeholder="Type a message…")
             yield self._input
-
-    def on_mount(self) -> None:
-        self._input.focus()
 
     # ------------------------------------------------------------------
     # Input handling → streaming agent

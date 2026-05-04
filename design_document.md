@@ -332,37 +332,26 @@ cody/
 │   ├── write_file.py
 │   └── run_command.py
 ├── ui/                      ← All Textual widgets
-│   ├── chat/
-│   │   ├── chat_tab.py      ← ChatTab (TabPane subclass)
-│   │   ├── msg_box.py       ← Unified MsgBox (streaming only, blocking as wrapper)
-│   │   ├── message.py       ← Message + StreamingMessage widgets
-│   │   ├── input.py         ← MessageInput
-│   │   └── chat.css
-│   ├── workspace/
-│   │   ├── workspace.py
-│   │   └── workspace.css
-│   ├── sidebar/
-│   │   ├── wrapper.py
-│   │   ├── chat_history.py
-│   │   ├── settings.py
-│   │   ├── vault_tab.py
-│   │   ├── tool_list.py
-│   │   └── sidebar.css
-│   ├── terminal/
-│   │   └── terminal.py
-│   ├── db/
-│   │   ├── db_tab.py
-│   │   ├── db_tree.py
-│   │   └── db.css
 │   ├── tree/                ← Generic tree components
-│   │   ├── tree.py
-│   │   ├── tree_row.py
-│   │   └── tree.css
-│   └── widgets/             ← Shared widgets (buttons, modals, leader screen)
-│       ├── buttons.py
-│       ├── modals.py
-│       ├── leader_screen.py
-│       └── widgets.css
+│   │   ├── tree.py          ← Tree widget (flat expandable list)
+│   │   ├── tree_row.py      ← TreeRow (compose-based, hosts content widgets)
+│   │   └── tree.tcss
+│   ├── workspace/
+│   │   ├── workspace.py     ← Recursive split-pane workspace
+│   │   └── workspace.tcss
+│   ├── sidebar/
+│   │   ├── registry.py      ← Sidebar tab registration + discovery
+│   │   ├── sidebar.py       ← Sidebar + SidebarContainer (hides/shows)
+│   │   ├── panels/
+│   │   │   ├── vault_panel.py    ← Encrypted credential + note management
+│   │   │   ├── chat_panel.py     ← Streaming chat (Tree + Markdown widgets)
+│   │   │   └── config_panel.py   ← Editable config tree
+│   │   └── sidebar.tcss
+│   └── widgets/             ← Shared widgets (modals, leader screen)
+│       ├── input_modal.py
+│       ├── commands_help.py
+│       ├── leader_overlay.py
+│       └── *.tcss
 ├── skills/                  ← Bundled skills (unchanged structure)
 ├── themes/                  ← Bundled themes
 └── cmd/                     ← Core slash commands
@@ -675,39 +664,33 @@ with fixtures that leverage `AppContext` for dependency injection.
  - Tests: Textual pilot for each widget, modal flows, keyboard navigation
  - **COMPLETE** — branch `step-14-ui-widgets`; FormModal deferred
 
-### Step 15: Chat UI (depends on agent, AppContext, widgets)
+### Step 15: Chat UI (depends on agent, AppContext, widgets, tree) ✅
 
- - ui/chat/ — Message widget, StreamingMessage widget, MessageInput, unified MsgBox (streaming-only), ChatTab
- - Tests: Message rendering, streaming append, input submission, MsgBox full turn cycle with mock agent
-
-### Step 15a: Tree Content Widgets + ChatPanel Restructure ✅
-
- - TreeNode gets optional ``content: Widget`` for arbitrary leaf content
- - TreeRow switches from ``render()`` to ``compose()``, hosting content widgets
- - ChatPanel restructured: each response is a branch, responses use Markdown widgets for streaming
- - Tests: TreeRow with content widget, ChatPanel branch structure, streaming Markdown updates
+ - ui/tree/tree_row.py — ``TreeNode`` gets optional ``content: Widget`` for arbitrary leaf content; TreeRow uses ``compose()`` to host content widgets
+ - ui/sidebar/panels/chat_panel.py — ChatPanel sidebar tab with a Tree widget: user messages as plain leaf nodes, assistant responses as leaf nodes with ``Markdown`` content for real-time streaming; thinking and tool calls folded into the markdown stream; ``Input.Submitted`` drives the full agent streaming cycle
+ - Tests: TreeRow with content widget, add_message (user/assistant), ``add_thought()`` / ``add_tool_result()`` inline updates, conversation tree structure, streaming Markdown updates, ``last_assistant_id`` tracking, full streaming flow with fake agent (thinking + content + tool calls)
  - **COMPLETE** — branch ``step-15a-tree-content-chatpanel``
 
 ### Step 16: Workspace + Terminal (depends on AppContext)
 
- - ui/workspace/ — split panes, EditorTab, OpenWorkspaceTab
- - ui/terminal/ — terminal integration
- - Tests: Pane splitting, tab opening/closing, terminal launch
+ - ui/workspace/ — **DONE** (split panes built in Step 7)
+ - ui/terminal/ — terminal integration (not started)
+ - Tests: Terminal launch
 
 ### Step 17: Sidebar Components (depends on AppContext, database, widgets) ✅
 
- - ui/sidebar/ — registry, Sidebar, SidebarContainer, panels/vault_panel.py
+ - ui/sidebar/ — registry, Sidebar, SidebarContainer, panels/vault_panel.py, panels/chat_panel.py, panels/config_panel.py
  - ui/db/ — DBTab, DBTree, results modal — DEFERRED
  - ui/tree/ — GenericTree, TreeRow ✅ (built in `step-tree`)
- - Tests: registry, sidebar visibility, vault panel rendering
+ - Tests: registry, sidebar visibility, vault panel rendering, chat panel streaming, config panel editing
  - **COMPLETE** — branch `step-sidebar`; DB tab deferred
 
 ### Step 18: app.py + main.py (wires everything)
 
- - app.py — TuiApp class, leader key binding, theme registration, all action methods
+ - main.py — ``CodyApp`` class (TuiApp-style), leader key binding, header/footer/workspace/sidebars compose, vault+chat wire-up on mount, vault unlock/init prompts
  - main.py — parse args → Bootstrap.run() → mount app → run
- - app.css — base styles
- - Tests: App launch, leader menu opens, theme switching, full smoke test
+ - **DONE** — no separate ``app.py`` needed; wiring lives in ``main.py``
+ - **REMAINING:** app-wide CSS, theme registration, smoke test
 
 ### Step 19: Bundled Content + E2E
 

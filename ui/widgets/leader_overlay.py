@@ -38,7 +38,7 @@ class LeaderOverlay(ModalScreen[None]):
         height: auto;
         padding: 1 2;
         background: $surface;
-        border: thick $primary;
+        border: round $primary;
     }
     """
 
@@ -111,3 +111,22 @@ class LeaderOverlay(ModalScreen[None]):
             lines.append(f" {key}  {label}  {marker}")
 
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Event handler — registered at import time
+# ---------------------------------------------------------------------------
+
+from core.events import register_handler
+from context import AppContext
+
+
+@register_handler("app.open_leader")
+def _on_open_leader(data: dict, ctx: AppContext) -> None:
+    """Push the leader key overlay on ``app.open_leader``."""
+    from core.leader import leader
+
+    app = ctx.app
+    if app is None:
+        return
+    app.push_screen(LeaderOverlay(leader, app))

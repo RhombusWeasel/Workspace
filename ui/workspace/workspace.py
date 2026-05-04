@@ -81,10 +81,10 @@ class Workspace(Widget):
     can_focus = True
 
     BINDINGS = [
-        Binding("ctrl+left, ctrl+h", "navigate_left", "← Pane", show=True),
-        Binding("ctrl+right, ctrl+l", "navigate_right", "→ Pane", show=True),
-        Binding("ctrl+up, ctrl+k", "navigate_up", "↑ Pane", show=True),
-        Binding("ctrl+down, ctrl+j", "navigate_down", "↓ Pane", show=True),
+        Binding("ctrl+left, ctrl+h", "navigate_left", "← Pane", show=False),
+        Binding("ctrl+right, ctrl+l", "navigate_right", "→ Pane", show=False),
+        Binding("ctrl+up, ctrl+k", "navigate_up", "↑ Pane", show=False),
+        Binding("ctrl+down, ctrl+j", "navigate_down", "↓ Pane", show=False),
     ]
 
     def __init__(self):

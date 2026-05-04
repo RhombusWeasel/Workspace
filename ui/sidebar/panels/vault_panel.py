@@ -3,6 +3,10 @@
 Shows credentials and secure notes from the global (master) vault and an
 optional per-project local vault.  Each entry row has action buttons for
 copy / edit / delete.  Section-level buttons add new entries.
+
+Event handlers (registered at import time):
+* ``vault.needs_unlock`` — prompts for master password
+* ``vault.needs_init`` — prompts to create a master password
 """
 
 from __future__ import annotations
@@ -14,7 +18,8 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Button, Static
 
-from core.events import CodyEvent
+from context import AppContext
+from core.events import CodyEvent, register_handler
 from core.vault import VaultManager
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import NodeSelected, NodeToggled, Tree
@@ -69,6 +74,17 @@ class VaultPanel(Container):
             self._rebuild()
 
     # ------------------------------------------------------------------
+    # Mount — self-wire from app context
+    # ------------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        if self._vault is None:
+            app = self.app
+            if hasattr(app, 'context') and app.context is not None:
+                self._vault = app.context.vault
+        self._rebuild()
+
+    # ------------------------------------------------------------------
     # Compose
     # ------------------------------------------------------------------
 
@@ -99,13 +115,6 @@ class VaultPanel(Container):
         # Shown when no local vault exists yet
         yield Button("+ Add Local Vault", id="create-local-vault",
                      classes="vault-add-local")
-
-    # ------------------------------------------------------------------
-    # Mount
-    # ------------------------------------------------------------------
-
-    def on_mount(self) -> None:
-        self._rebuild()
 
     # ------------------------------------------------------------------
     # Rebuild
@@ -268,6 +277,7 @@ class VaultPanel(Container):
                 text = self._vault.get_secure_note(name)
                 if text is not None:
                     pyperclip.copy(text)
+            self.app.notify("Copied to clipboard.")
         except Exception:
             pass
 
@@ -428,3 +438,53 @@ class VaultPanel(Container):
                 pass
 
         self.app.run_worker(do_remove())
+
+
+# ---------------------------------------------------------------------------
+# Event handlers — registered at import time via decorator
+# ---------------------------------------------------------------------------
+
+
+@register_handler("vault.needs_unlock")
+def _on_vault_needs_unlock(data: dict, ctx: AppContext) -> None:
+    """Prompt for master password and unlock the vault."""
+    _prompt_vault_password(
+        ctx, "Enter master password:",
+        lambda v, pw: v.unlock(pw),
+    )
+
+
+@register_handler("vault.needs_init")
+def _on_vault_needs_init(data: dict, ctx: AppContext) -> None:
+    """Prompt to create a master password."""
+    _prompt_vault_password(
+        ctx, "Create master password:",
+        lambda v, pw: v.initialize_master(pw),
+    )
+
+
+def _prompt_vault_password(ctx: AppContext, prompt: str, action) -> None:
+    """Push an :class:`InputModal` and call *action(vault, result)* on submit.
+
+    After the action completes, rebuilds the VaultPanel so its contents
+    are visible.
+    """
+    from ui.widgets.input_modal import InputModal
+
+    app = ctx.app
+    if app is None or ctx.vault is None:
+        return
+
+    async def do_prompt() -> None:
+        modal = InputModal(prompt, "Password", password=True)
+        result = await app.push_screen_wait(modal)
+        if result is None:
+            return
+        try:
+            action(ctx.vault, result)
+            panel = app.query_one("VaultPanel")
+            panel._rebuild()
+        except Exception:
+            pass
+
+    app.run_worker(do_prompt())

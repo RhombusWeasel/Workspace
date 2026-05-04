@@ -74,6 +74,9 @@ class Tree(VerticalScroll, can_focus=True):
         self._node_map.clear()
         self._build_node_map(new_root)
         self._expanded = {new_root.id}
+        # Remove all old rows so fresh labels are created
+        for row in self.query("TreeRow, ActionRow"):
+            row.remove()
         self._rebuild_rows()
 
     def rebuild(self) -> None:

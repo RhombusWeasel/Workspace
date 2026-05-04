@@ -3,6 +3,12 @@ VaultPanel {
     padding: 0 1;
 }
 
+VaultPanel Button {
+    min-width: 3;
+    border: none;
+    height: 1;
+}
+
 VaultPanel .vault-section-header {
     text-style: bold;
     color: $accent;
