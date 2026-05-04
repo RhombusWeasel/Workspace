@@ -1,0 +1,19 @@
+ChatManager {
+    height: 1fr;
+}
+
+ChatManager > Vertical {
+    height: 1fr;
+}
+
+ChatDisplay {
+    height: 1fr;
+}
+
+ChatDisplay Tree {
+    height: 1fr;
+}
+
+ChatInput {
+    dock: bottom;
+}
