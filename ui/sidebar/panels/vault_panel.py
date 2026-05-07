@@ -23,7 +23,7 @@ from core.events import CodyEvent, register_handler
 from core.vault import VaultManager
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import NodeSelected, NodeToggled, Tree
-from ui.tree.tree_row import ActionRow, RowButton, TreeNode
+from ui.tree.tree_row import TreeRow, RowButton, TreeNode
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -245,7 +245,7 @@ class VaultPanel(Container):
     # ActionRow button handlers — Copy / Edit / Delete
     # ------------------------------------------------------------------
 
-    def on_action_row_button_pressed(self, event: ActionRow.ButtonPressed) -> None:
+    def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
         """Handle copy / edit / delete from an entry row."""
         event.stop()
         node = event.node

@@ -27,7 +27,7 @@ from textual.widgets import Button
 from core.config import Config
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree
-from ui.tree.tree_row import ActionRow, RowButton, TreeNode
+from ui.tree.tree_row import TreeRow, RowButton, TreeNode
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -235,7 +235,7 @@ class ConfigPanel(Container):
     # ActionRow button handlers — Edit
     # ------------------------------------------------------------------
 
-    def on_action_row_button_pressed(self, event: ActionRow.ButtonPressed) -> None:
+    def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
         """Handle the Edit button on a leaf node.
 
         Opens an :class:`~ui.widgets.input_modal.InputModal` pre-filled

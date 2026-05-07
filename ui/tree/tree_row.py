@@ -1,4 +1,13 @@
-"""Tree row — a single row in a :class:`~ui.tree.tree.Tree`."""
+"""Tree row — a single row in a :class:`~ui.tree.tree.Tree`.
+
+Each row can optionally display inline action buttons alongside the label.
+Branch nodes show ▼/▶ toggle indicators regardless of whether they have buttons.
+Clicking the label area posts ``Selected`` (leaf) or ``Toggled`` (branch).
+Clicking an action button posts ``ButtonPressed``.
+
+The label area is a separate :class:`_RowLabel` widget so that clicks on
+buttons do not also trigger selection or toggle events.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +34,7 @@ class RowButton:
     Parameters
     ----------
     action_id:
-        Machine-readable identifier posted in ``ActionRow.ButtonPressed``.
+        Machine-readable identifier posted in ``ButtonPressed``.
     label:
         Display text on the button.
     style:
@@ -58,7 +67,12 @@ class TreeNode:
         :class:`~textual.widgets.Markdown` (streaming) or any
         custom rendering.
     buttons:
-        Action buttons to show on this row (only used for leaf nodes).
+        Action buttons to show on this row.
+    loaded:
+        Whether children have been loaded.  ``False`` means this
+        is a lazy node that has not been scanned yet — the tree
+        will treat it as a branch and post :class:`NodeNeedsChildren`
+        when the user tries to expand it.
     """
 
     id: str
@@ -67,6 +81,7 @@ class TreeNode:
     data: Any = None
     content: Widget | None = None
     buttons: list[RowButton] = field(default_factory=list)
+    loaded: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +95,47 @@ _INDENT = "    "
 
 
 # ---------------------------------------------------------------------------
+# _RowLabel — clickable label area within a TreeRow
+# ---------------------------------------------------------------------------
+
+
+class _RowLabel(Widget):
+    """Label area within a :class:`TreeRow` that handles clicks for
+    selection and toggle, independently of action buttons.
+
+    Clicks here post :class:`TreeRow.Selected` (leaf) or
+    :class:`TreeRow.Toggled` (branch) messages.
+    """
+
+    DEFAULT_CSS = """
+    _RowLabel {
+        width: 1fr;
+        height: auto;
+        min-height: 1;
+    }
+    """
+
+    def __init__(self, text: str, node: TreeNode, is_branch: bool):
+        super().__init__()
+        self._text = text
+        self._node = node
+        self._is_branch = is_branch
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._text)
+
+    def on_click(self, event) -> None:
+        event.stop()
+        parent = self.ancestor(TreeRow)
+        if parent is None:
+            return
+        if self._is_branch:
+            parent.post_message(TreeRow.Toggled(self._node))
+        else:
+            parent.post_message(TreeRow.Selected(self._node))
+
+
+# ---------------------------------------------------------------------------
 # TreeRow
 # ---------------------------------------------------------------------------
 
@@ -87,27 +143,39 @@ _INDENT = "    "
 class TreeRow(Widget):
     """A single visible row in the tree.
 
-    Composes a tree-line prefix (using box-drawing characters), an
-    expand/collapse indicator for branch nodes, and either the node
-    label (plain text) or the node's ``content`` widget.
+    Composes a clickable label area (with tree-line prefix and
+    optional ▼/▶ toggle), an optional content widget, and optional
+    inline action buttons.
 
-    Posts ``Selected`` on click and ``Toggled`` on expand-indicator click.
+    - Clicking the **label area** posts ``Selected`` (leaf) or
+      ``Toggled`` (branch).
+    - Clicking an **action button** posts ``ButtonPressed``.
+    - The two click targets are separate widgets so that clicking
+      a button does not also trigger selection or toggle.
     """
 
     is_selected: reactive[bool] = reactive(False)
 
     class Selected(Message):
-        """Posted when the row is clicked."""
+        """Posted when the label area is clicked on a leaf node."""
 
         def __init__(self, node: TreeNode) -> None:
             super().__init__()
             self.node = node
 
     class Toggled(Message):
-        """Posted when the expand/collapse indicator is clicked."""
+        """Posted when the label area is clicked on a branch node."""
 
         def __init__(self, node: TreeNode) -> None:
             super().__init__()
+            self.node = node
+
+    class ButtonPressed(Message):
+        """Posted when an action button is clicked."""
+
+        def __init__(self, action_id: str, node: TreeNode) -> None:
+            super().__init__()
+            self.action_id = action_id
             self.node = node
 
     def __init__(
@@ -135,67 +203,62 @@ class TreeRow(Widget):
         return f"{self.prefix}{toggle}{self.node.label}"
 
     def compose(self) -> ComposeResult:
-        self._label = Static(self._render_label())
-        yield self._label
-        if self.node.content is not None:
-            yield self.node.content
+        # Label area — handles clicks for select/toggle
+        self._label = _RowLabel(
+            self._render_label(), self.node, self.is_branch
+        )
+        with Horizontal(classes="tree-row-inner"):
+            yield self._label
+            if self.node.content is not None:
+                yield self.node.content
+
+        # Buttons — handle their own clicks independently
+        if self.node.buttons:
+            with Horizontal(classes="tree-row-buttons"):
+                for btn in self.node.buttons:
+                    yield Button(
+                        btn.label,
+                        id=f"act-{self.node.id}-{btn.action_id}",
+                        classes=btn.style or "",
+                    )
+
+    @property
+    def label_text(self) -> str:
+        """The current rendered label string."""
+        return self._render_label()
 
     def set_expanded(self, expanded: bool) -> None:
         """Update the expand/collapse indicator and re-render the label."""
         self.expanded = expanded
         if hasattr(self, "_label"):
-            self._label.update(self._render_label())
-
-    def on_click(self, event) -> None:
-        """Mouse click — if branch, toggle; always select."""
-        if self.is_branch:
-            self.post_message(self.Toggled(self.node))
-        else:
-            self.post_message(self.Selected(self.node))
-        event.stop()
-
-
-# ---------------------------------------------------------------------------
-# ActionRow — a tree row with inline action buttons
-# ---------------------------------------------------------------------------
-
-
-class ActionRow(Widget):
-    """A tree row that composes action buttons alongside the node label.
-
-    Used by :class:`~ui.tree.tree.Tree` when a :class:`TreeNode` has a
-    non-empty ``buttons`` list.  Posts ``ButtonPressed`` when any of the
-    action buttons is clicked.
-    """
-
-    class ButtonPressed(Message):
-        """Posted when an action button is clicked."""
-
-        def __init__(self, action_id: str, node: TreeNode) -> None:
-            super().__init__()
-            self.action_id = action_id
-            self.node = node
-
-    def __init__(self, node: TreeNode, *, depth: int = 0, prefix: str = ""):
-        super().__init__()
-        self.node = node
-        self.depth = depth
-        self.prefix = prefix
-
-    def compose(self) -> ComposeResult:
-        label_text = f"{self.prefix}{self.node.label}"
-        with Horizontal():
-            yield Static(label_text)
-            for btn in self.node.buttons:
-                yield Button(
-                    btn.label,
-                    id=f"act-{self.node.id}-{btn.action_id}",
-                    classes=btn.style or "",
-                )
+            self._label._text = self._render_label()
+            # Update the Static inside _RowLabel
+            statics = self._label.query(Static)
+            if statics:
+                statics[0].update(self._render_label())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route button clicks to ``ButtonPressed`` message."""
         event.stop()
-        # Parse action_id back from the DOM id
         prefix = f"act-{self.node.id}-"
         action_id = event.button.id[len(prefix):]
         self.post_message(self.ButtonPressed(action_id, self.node))
+
+
+# ---------------------------------------------------------------------------
+# ActionRow — legacy compatibility alias
+# ---------------------------------------------------------------------------
+
+
+class ActionRow(TreeRow):
+    """Legacy alias for :class:`TreeRow` when buttons are present.
+
+    .. deprecated::
+        Use :class:`TreeRow` directly — all rows now support buttons.
+    """
+
+    def __init__(self, node: TreeNode, *, depth: int = 0, prefix: str = ""):
+        is_branch = bool(node.children) or not node.loaded
+        super().__init__(
+            node, depth=depth, is_branch=is_branch, prefix=prefix
+        )

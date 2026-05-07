@@ -6,7 +6,7 @@ from textual.widgets import Button
 
 from core.config import Config
 from ui.tree.tree import Tree
-from ui.tree.tree_row import ActionRow, TreeNode
+from ui.tree.tree_row import TreeRow, TreeNode
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ class TestConfigPanelRendering:
             tree.expand_all()
             await pilot.pause()
 
-            visible_rows = tree.query("ActionRow")
+            visible_rows = tree.query(TreeRow)
             labels = [r.node.label for r in visible_rows]
             assert any("timeout" in l and "30" in l for l in labels)
             assert any("debug" in l and "False" in l for l in labels)
@@ -173,7 +173,7 @@ class TestConfigPanelRendering:
             tree.expand_all()
             await pilot.pause()
 
-            rows = tree.query(ActionRow)
+            rows = tree.query(TreeRow)
             labels = [r.node.label for r in rows]
             assert any("allowed_hosts" in l and "[" in l for l in labels)
 
@@ -198,7 +198,7 @@ class TestConfigPanelRendering:
             tree.expand_all()
             await pilot.pause()
 
-            rows = tree.query(ActionRow)
+            rows = tree.query(TreeRow)
             labels = [r.node.label for r in rows]
             assert any("True" in l for l in labels)
 
@@ -223,7 +223,7 @@ class TestConfigPanelRendering:
             tree.expand_all()
             await pilot.pause()
 
-            rows = tree.query(ActionRow)
+            rows = tree.query(TreeRow)
             labels = [r.node.label for r in rows]
             assert any("None" in l for l in labels)
 
@@ -292,7 +292,7 @@ class TestConfigPanelRendering:
             tree = panel.query_one(Tree)
             tree.expand_all()
             await pilot.pause()
-            rows1 = tree.query(ActionRow)
+            rows1 = tree.query(TreeRow)
             labels1 = [r.node.label for r in rows1]
             assert any("first" in l for l in labels1)
 
@@ -303,7 +303,7 @@ class TestConfigPanelRendering:
             tree2 = panel.query_one(Tree)
             tree2.expand_all()
             await pilot.pause()
-            rows2 = tree2.query(ActionRow)
+            rows2 = tree2.query(TreeRow)
             labels2 = [r.node.label for r in rows2]
             assert any("second" in l for l in labels2)
             assert not any("first" in l for l in labels2)
@@ -331,9 +331,9 @@ class TestConfigPanelEditing:
             tree.expand_all()
             await pilot.pause()
 
-            action_rows = tree.query(ActionRow)
-            assert len(action_rows) == 1  # one leaf
-            row = action_rows.first()
+            action_rows = [r for r in tree.query(TreeRow) if r.node.buttons]
+            assert len(action_rows) == 1  # one leaf with Edit button
+            row = action_rows[0]
             buttons = row.query(Button)
             btn_labels = {b.label.plain for b in buttons}
             assert "Edit" in btn_labels
@@ -425,7 +425,7 @@ class TestConfigPanelEditing:
             tree2 = panel.query_one(Tree)
             tree2.expand_all()
             await pilot.pause()
-            rows = tree2.query(ActionRow)
+            rows = tree2.query(TreeRow)
             labels = [r.node.label for r in rows]
             assert any("9090" in l for l in labels)
 
@@ -491,8 +491,8 @@ class TestConfigPanelEditing:
             await pilot.pause()
 
             # Find the Edit button for the port leaf
-            # There should be two action rows: host and port
-            action_rows = list(tree.query(ActionRow))
+            # There should be two leaf rows with buttons: host and port
+            action_rows = [r for r in tree.query(TreeRow) if r.node.buttons]
             assert len(action_rows) == 2
 
             # Press Edit on the port row
@@ -625,7 +625,7 @@ class TestConfigPanelEditing:
             tree.expand_all()
             await pilot.pause()
 
-            action_rows = list(tree.query(ActionRow))
+            action_rows = list(tree.query(TreeRow))
             count_row = [r for r in action_rows if "count" in r.node.label][0]
             count_btns = list(count_row.query(Button))
             count_edit = next((b for b in count_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)

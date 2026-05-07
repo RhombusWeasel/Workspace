@@ -17,6 +17,12 @@ TreeRow:hover {
     text-style: bold;
 }
 
-TreeRow.-hidden, ActionRow.-hidden {
+TreeRow.-hidden {
     display: none;
+}
+
+_RowLabel {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
 }

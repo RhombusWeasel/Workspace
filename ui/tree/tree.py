@@ -4,6 +4,10 @@ Rows are mounted once for all nodes and stay in the DOM.  Expand/collapse
 toggles a ``-hidden`` CSS class (``display: none``) instead of removing
 and re-mounting rows.  This means content widgets (e.g. ``Markdown``)
 survive collapse/expand cycles without special handling.
+
+Every row is a :class:`TreeRow`, whether or not it has action buttons.
+Lazy nodes (``loaded=False``) are treated as branches; expanding them
+posts :class:`NodeNeedsChildren` instead of expanding immediately.
 """
 
 from __future__ import annotations
@@ -51,6 +55,20 @@ class NodeToggled(Message):
         self.expanded = expanded
 
 
+class NodeNeedsChildren(Message):
+    """Posted when a lazy node (``loaded=False``) is expanded for the
+    first time.
+
+    The handler should populate ``node.children``, set ``node.loaded = True``,
+    then call ``tree.rebuild()`` followed by ``tree.expand_node(node_id)``.
+    """
+
+    def __init__(self, node_id: str, node: TreeNode) -> None:
+        super().__init__()
+        self.node_id = node_id
+        self.node = node
+
+
 # ---------------------------------------------------------------------------
 # Tree
 # ---------------------------------------------------------------------------
@@ -60,12 +78,16 @@ class Tree(VerticalScroll, can_focus=True):
     """A generic tree widget that renders :class:`TreeNode` data as
     :class:`TreeRow` widgets.
 
-    Supports expand/collapse, keyboard navigation, and selection.
-    Rows are mounted once — expand/collapse toggles CSS visibility.
+    Supports expand/collapse, lazy loading, keyboard navigation, and
+    selection.  Rows are mounted once — expand/collapse toggles CSS
+    visibility.
 
     Tree lines use box-drawing characters (│ ├── └──) to show
     hierarchical structure.  Branch nodes display a ▼ / ▶ toggle
     that updates dynamically with expand/collapse state.
+
+    Action buttons on :class:`TreeRow` are rendered inline;
+    clicking a button posts :class:`TreeRow.ButtonPressed`.
     """
 
     selected_id: reactive[str | None] = reactive(None)
@@ -113,33 +135,30 @@ class Tree(VerticalScroll, can_focus=True):
         self._build_node_map(self._root)
 
         # Remove rows whose node no longer exists.
-        for row in list(self.query("TreeRow, ActionRow")):
+        for row in list(self.query(TreeRow)):
             if row.node.id not in self._node_map:
                 # Detach content widgets first so they survive.
-                if hasattr(row, 'node') and row.node.content is not None:
+                if row.node.content is not None:
                     row.node.content = None
                 row.remove()
 
         # Mount rows for new nodes.
         prefixes = self._compute_prefixes()
-        existing_ids = {row.node.id for row in self.query("TreeRow, ActionRow")}
+        existing_ids = {row.node.id for row in self.query(TreeRow)}
         order: dict[str, int] = {}
         for i, (node, depth) in enumerate(self._get_all_nodes_depth()):
             order[node.id] = i
             if node.id in existing_ids:
                 continue
-            is_branch = bool(node.children)
+            is_branch = bool(node.children) or not node.loaded
             prefix = prefixes.get(node.id, "")
             expanded = node.id in self._expanded
-            if node.buttons:
-                row: Widget = ActionRow(node, depth=depth, prefix=prefix)
-            else:
-                row = TreeRow(
-                    node, depth=depth, is_branch=is_branch,
-                    prefix=prefix, expanded=expanded,
-                )
-                if node.id == self.selected_id:
-                    row.is_selected = True
+            row = TreeRow(
+                node, depth=depth, is_branch=is_branch,
+                prefix=prefix, expanded=expanded,
+            )
+            if node.id == self.selected_id:
+                row.is_selected = True
             self.mount(row)
 
         # Re-sort into depth-first order.
@@ -155,9 +174,9 @@ class Tree(VerticalScroll, can_focus=True):
         if node_id not in self._node_map:
             return
         self._node_map[node_id].label = label
-        for row in self.query("TreeRow"):
+        for row in self.query(TreeRow):
             if row.node.id == node_id:
-                row.refresh(layout=True)
+                row.set_expanded(row.expanded)  # forces label re-render
 
     def select_node(self, node_id: str) -> None:
         """Programmatically select a node by id."""
@@ -169,10 +188,18 @@ class Tree(VerticalScroll, can_focus=True):
         self.post_message(NodeSelected(node_id, node))
 
     def expand_node(self, node_id: str) -> None:
-        """Expand a branch node, revealing its descendants."""
+        """Expand a branch node, revealing its descendants.
+
+        If the node is lazy (``loaded=False``), posts
+        :class:`NodeNeedsChildren` instead of expanding.
+        """
         if node_id not in self._node_map:
             return
         node = self._node_map[node_id]
+        # Lazy node: request children instead of expanding
+        if not node.loaded:
+            self.post_message(NodeNeedsChildren(node_id, node))
+            return
         if not node.children:
             return
         if node_id in self._expanded:
@@ -200,7 +227,7 @@ class Tree(VerticalScroll, can_focus=True):
     def expand_all(self) -> None:
         """Expand every branch node in the tree."""
         for node_id, node in self._node_map.items():
-            if node.children:
+            if node.children and node.loaded:
                 self._expanded.add(node_id)
         self._refresh_visibility()
 
@@ -279,18 +306,15 @@ class Tree(VerticalScroll, can_focus=True):
         order: dict[str, int] = {}
         for i, (node, depth) in enumerate(self._get_all_nodes_depth()):
             order[node.id] = i
-            is_branch = bool(node.children)
+            is_branch = bool(node.children) or not node.loaded
             prefix = prefixes.get(node.id, "")
             expanded = node.id in self._expanded
-            if node.buttons:
-                row: Widget = ActionRow(node, depth=depth, prefix=prefix)
-            else:
-                row = TreeRow(
-                    node, depth=depth, is_branch=is_branch,
-                    prefix=prefix, expanded=expanded,
-                )
-                if node.id == self.selected_id:
-                    row.is_selected = True
+            row = TreeRow(
+                node, depth=depth, is_branch=is_branch,
+                prefix=prefix, expanded=expanded,
+            )
+            if node.id == self.selected_id:
+                row.is_selected = True
             self.mount(row)
 
         # Sort into depth-first order.
@@ -300,12 +324,12 @@ class Tree(VerticalScroll, can_focus=True):
         )
 
     def _remove_all_rows(self) -> None:
-        for row in list(self.query("TreeRow, ActionRow")):
+        for row in list(self.query(TreeRow)):
             row.remove()
 
     def _orphan_content_widgets(self) -> None:
         """Detach content widgets from rows so they aren't destroyed on remove."""
-        for row in self.query("TreeRow"):
+        for row in self.query(TreeRow):
             row.node.content = None
 
     def _refresh_visibility(self) -> None:
@@ -314,13 +338,13 @@ class Tree(VerticalScroll, can_focus=True):
         indicator on branch rows.
         """
         visible_ids = {node.id for node, _ in self._get_visible_nodes()}
-        for row in self.query("TreeRow, ActionRow"):
+        for row in self.query(TreeRow):
             if row.node.id in visible_ids:
                 row.remove_class("-hidden")
             else:
                 row.add_class("-hidden")
             # Update ▼ / ▶ toggle on branch rows
-            if isinstance(row, TreeRow) and row.is_branch:
+            if row.is_branch:
                 row.set_expanded(row.node.id in self._expanded)
 
     def _update_selection(self) -> None:
@@ -340,8 +364,8 @@ class Tree(VerticalScroll, can_focus=True):
         msg.stop()
         self.toggle_node(msg.node.id)
 
-    def on_action_row_button_pressed(self, msg: ActionRow.ButtonPressed) -> None:
-        """Re-bubble ActionRow.ButtonPressed so owners can listen.
+    def on_tree_row_button_pressed(self, msg: TreeRow.ButtonPressed) -> None:
+        """Re-bubble TreeRow.ButtonPressed so owners can listen.
 
-        The message is NOT stopped — it bubbles up to the vault panel.
+        The message is NOT stopped — it bubbles up to the panel.
         """

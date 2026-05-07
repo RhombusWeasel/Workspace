@@ -26,7 +26,7 @@ class TreeTestApp(App):
         height: 100%;
         width: 100%;
     }
-    TreeRow.-hidden, ActionRow.-hidden {
+    TreeRow.-hidden {
         display: none;
     }
     """
@@ -66,9 +66,10 @@ def _visible_rows(tree: Tree) -> list[TreeRow]:
     return [r for r in tree.query(TreeRow) if not r.has_class("-hidden")]
 
 
-def _visible_action_rows(tree: Tree) -> list[ActionRow]:
-    """Return ActionRow widgets that are NOT hidden."""
-    return [r for r in tree.query(ActionRow) if not r.has_class("-hidden")]
+def _visible_action_rows(tree: Tree) -> list[TreeRow]:
+    """Return TreeRow widgets with buttons that are NOT hidden."""
+    return [r for r in tree.query(TreeRow)
+            if r.node.buttons and not r.has_class("-hidden")]
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +335,7 @@ class TestTreePrefixes:
 
             # Root row — branch node, expanded (has ▼ toggle)
             root_row = [r for r in tree.query(TreeRow) if r.node.id == "root"][0]
-            label = root_row._label.render().plain
+            label = root_row.label_text
             assert "root" in label
             assert "\u25bc" in label  # ▼ expanded
             # Root has no prefix (empty string)
@@ -351,21 +352,21 @@ class TestTreePrefixes:
 
             # Initially collapsed
             assert a_row.expanded is False
-            label = a_row._label.render().plain
+            label = a_row.label_text
             assert "\u25b6" in label  # ▶ collapsed
 
             # Expand
             tree.expand_node("a")
             await pilot.pause()
             assert a_row.expanded is True
-            label = a_row._label.render().plain
+            label = a_row.label_text
             assert "\u25bc" in label  # ▼ expanded
 
             # Collapse
             tree.collapse_node("a")
             await pilot.pause()
             assert a_row.expanded is False
-            label = a_row._label.render().plain
+            label = a_row.label_text
             assert "\u25b6" in label  # ▶ collapsed again
 
 

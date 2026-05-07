@@ -5,7 +5,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Label, Static
 
 from ui.tree.tree import Tree
-from ui.tree.tree_row import ActionRow, TreeNode
+from ui.tree.tree_row import TreeRow, TreeNode
 
 
 # ---------------------------------------------------------------------------
@@ -199,13 +199,13 @@ class TestVaultPanel:
             trees = panel.query(Tree)
             assert len(trees) == 2
 
-            # Global tree should have credential ActionRows with buttons
+            # Global tree should have credential rows with buttons
             global_tree = panel.query_one("#global-tree", Tree)
-            action_rows = global_tree.query(ActionRow)
+            action_rows = [r for r in global_tree.query(TreeRow) if r.node.buttons]
             assert len(action_rows) >= 3  # ollama + openai + reminder
 
-            # Each ActionRow should have a Copy, Edit, Del button
-            first_row = action_rows.first()
+            # Each row should have a Copy, Edit, Del button
+            first_row = action_rows[0]
             buttons = first_row.query(Button)
             btn_labels = {b.label.plain for b in buttons}
             assert "Copy" in btn_labels
@@ -265,7 +265,7 @@ class TestVaultPanel:
 
             # Local tree should have content
             local_tree = panel.query_one("#local-tree", Tree)
-            action_rows = local_tree.query(ActionRow)
+            action_rows = [r for r in local_tree.query(TreeRow) if r.node.buttons]
             assert len(action_rows) >= 1  # project-key
 
             # Panel should have has-local class
