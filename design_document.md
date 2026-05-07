@@ -703,6 +703,69 @@ with fixtures that leverage `AppContext` for dependency injection.
  - **DONE** — no separate ``app.py`` needed; wiring lives in ``main.py``
  - **REMAINING:** app-wide CSS, theme registration, smoke test
 
+### Step 20: File Browser + Workspace Tabs
+
+A sidebar panel for browsing the project directory with inline action buttons,
+plus a custom tabbed container in the workspace for opening files.
+
+Phase 1: Icon Registry (`utils/icons.py`)
+ - Nerd Font icon constants for file types, actions, folders
+ - `get_file_icon(filename)` mapping extension → icon, unknown fallback
+ - Test: `tests/test_icons.py`
+
+Phase 2: Merge ActionRow into TreeRow + Lazy Loading
+ - `TreeNode` gets `loaded: bool = True` field — `False` means children not yet fetched
+ - `TreeRow` absorbs all `ActionRow` functionality: `ButtonPressed` message, inline buttons,
+   branch toggle with ▼/▶ for nodes that have both children AND buttons
+ - `Tree` always creates `TreeRow` (no more ActionRow branch)
+ - `Tree.on_tree_row_toggled` handles lazy nodes: posts `NodeNeedsChildren` instead of expanding
+ - `NodeNeedsChildren(Message)` — new message posted when a `loaded=False` node is expanded
+ - Delete `ActionRow` class; update all references (VaultPanel, ConfigPanel, Tree internals)
+ - `is_branch` computed as `bool(node.children) or not node.loaded`
+ - Click guard: TreeRow.on_click skips if click originated on a Button child
+ - CSS: merge ActionRow styles into TreeRow; Button styles scoped via `.tree-row-buttons`
+ - Tests: update `tests/test_tree.py`, `tests/test_sidebar.py`, `tests/test_config_panel.py`,
+   `tests/test_chat_display.py`; add lazy loading and button-on-branch tests
+
+Phase 3: Custom WorkspaceTabs (`ui/workspace/tabs.py`)
+ - `WorkspaceTabs` widget: horizontal tab bar with label buttons + close (×) buttons
+ - `TabInfo` dataclass: id, label, content Widget
+ - `open_tab(id, label, content)` — add or switch to tab
+ - `close_tab(id)` — remove tab, switch to neighbor
+ - `switch_tab(id)` — activate tab, show content, hide others
+ - Posts `TabClosed`, `TabSwitched` messages
+ - CSS: `ui/workspace/tabs.tcss` — tab bar, active tab, close buttons
+ - Test: `tests/test_workspace_tabs.py`
+
+Phase 4: File Browser Panel (`ui/sidebar/panels/file_browser.py`)
+ - Registered via `@register_sidebar_tab(name="files", icon="📁", side="left")`
+ - Scans `working_directory` lazily (one level at root, NodeNeedsChildren on expand)
+ - Directories → branch TreeNode with buttons: +File, +Dir, Rename, Del
+ - Files → leaf TreeNode with buttons: Open, Rename, Del
+ - Section buttons: + New File, + New Folder, ⟳ Refresh
+ - File actions use InputModal; Delete uses confirmation
+ - Open posts `CodyEvent("files.open", {"path": ...})`
+ - Ignores: `__pycache__`, `.git`, `node_modules`, `.venv`, `*.egg-info`
+ - File icons via `utils/icons.py`
+ - CSS: `ui/sidebar/panels/file_browser.tcss`
+ - Test: `tests/test_file_browser.py`
+
+Phase 5: File Viewer + Workspace Integration
+ - `ui/workspace/file_view.py` — `FileView(Widget)` reads file on mount, renders content
+ - `WorkspaceTabs` placed inside `PaneContainer` when first file is opened
+ - Event handler for `files.open` creates/switches to tab with `FileView(filepath)`
+ - CSS: `ui/workspace/file_view.tcss`
+ - Test: `tests/test_file_view.py`
+
+Files created: `utils/icons.py`, `ui/workspace/tabs.py`, `ui/workspace/tabs.tcss`,
+ `ui/workspace/file_view.py`, `ui/workspace/file_view.tcss`,
+ `ui/sidebar/panels/file_browser.py`, `ui/sidebar/panels/file_browser.tcss`
+Files modified: `ui/tree/tree_row.py`, `ui/tree/tree.py`, `ui/tree/tree_row.tcss`,
+ `ui/sidebar/panels/vault_panel.py`, `ui/sidebar/panels/config_panel.py`,
+ `main.py`, `tests/test_tree.py`, `tests/test_sidebar.py`, `tests/test_config_panel.py`
+Tests created: `tests/test_icons.py`, `tests/test_workspace_tabs.py`,
+ `tests/test_file_browser.py`, `tests/test_file_view.py`
+
 ### Step 19: Bundled Content + E2E
 
  - Basic skills: coding, git, todo, brave_search
