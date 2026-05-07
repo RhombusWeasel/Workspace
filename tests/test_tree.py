@@ -142,10 +142,10 @@ class TestTreeRow:
             statics = row.query(Static)
             assert "▶" in statics[0].render().plain
 
-    async def test_row_indent_increases_with_depth(self):
-        """Deeper rows have more indentation."""
+    async def test_row_uses_prefix_for_indent(self):
+        """Row renders its prefix string before the label."""
         node = TreeNode("x", "Deep")
-        row = TreeRow(node, depth=3, is_branch=False)
+        row = TreeRow(node, depth=3, is_branch=False, prefix="│       ")
 
         app = App()
         async with app.run_test() as pilot:
@@ -153,7 +153,8 @@ class TestTreeRow:
             await pilot.pause()
             statics = row.query(Static)
             plain = statics[0].render().plain
-            assert plain.startswith("      ")  # 2 * 3 depth = 6 spaces
+            assert plain.startswith("│")
+            assert "Deep" in plain
 
     async def test_row_with_content_mounts_widget(self):
         """When node has content, the widget is mounted in the row."""
@@ -171,21 +172,22 @@ class TestTreeRow:
             content_labels = [l for l in labels if "I am content!" in l.render().plain]
             assert len(content_labels) == 1
 
-    async def test_row_with_content_still_shows_indent(self):
-        """Even with content widget, indent prefix is rendered."""
+    async def test_row_with_content_still_shows_prefix(self):
+        """Even with content widget, prefix is rendered."""
         content_widget = Label("Content")
         node = TreeNode("x", "Label", content=content_widget)
-        row = TreeRow(node, depth=2, is_branch=False)
+        row = TreeRow(node, depth=2, is_branch=False, prefix="├── ")
 
         app = App()
         async with app.run_test() as pilot:
             await pilot.app.mount(row)
             await pilot.pause()
             statics = row.query(Static)
-            # First static is the indent prefix
+            # First static contains the prefix + label
             assert len(statics) >= 1
             plain = statics[0].render().plain
-            assert plain.startswith("    ")  # 2 * 2 depth = 4 spaces
+            assert plain.startswith("├──")
+            assert "Label" in plain
 
     async def test_row_with_markdown_content(self):
         """TreeRow can host a Markdown widget for streaming."""
@@ -206,14 +208,165 @@ class TestTreeRow:
         content_widget = Label("Content")
         node = TreeNode("x", "Branch", children=[TreeNode("c", "Child")],
                         content=content_widget)
-        row = TreeRow(node, depth=0, is_branch=True)
+        row = TreeRow(node, depth=0, is_branch=True, expanded=False)
 
         app = App()
         async with app.run_test() as pilot:
             await pilot.app.mount(row)
             await pilot.pause()
             statics = row.query(Static)
-            assert "▶" in statics[0].render().plain
+            assert "\u25b6" in statics[0].render().plain  # ▶ collapsed
+
+    async def test_row_toggle_updates_on_expand(self):
+        """set_expanded(True) changes the indicator to ▼."""
+        node = TreeNode("x", "Branch", children=[TreeNode("c", "Child")])
+        row = TreeRow(node, depth=0, is_branch=True, expanded=False)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+            statics = row.query(Static)
+            assert "\u25b6" in statics[0].render().plain  # ▶ collapsed
+
+            row.set_expanded(True)
+            await pilot.pause()
+            assert "\u25bc" in statics[0].render().plain  # ▼ expanded
+
+            row.set_expanded(False)
+            await pilot.pause()
+            assert "\u25b6" in statics[0].render().plain  # ▶ collapsed again
+
+    async def test_row_leaf_has_no_toggle(self):
+        """Leaf nodes do not show a toggle indicator."""
+        node = TreeNode("x", "Leaf")
+        row = TreeRow(node, depth=0, is_branch=False, prefix="├── ")
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+            statics = row.query(Static)
+            plain = statics[0].render().plain
+            # No toggle character, just prefix + label
+            assert plain.startswith("├── Leaf")
+
+
+# ---------------------------------------------------------------------------
+# Tree — prefix computation (box-drawing lines)
+# ---------------------------------------------------------------------------
+
+
+class TestTreePrefixes:
+    def test_root_has_no_prefix(self):
+        """Root node has an empty prefix."""
+        root = _make_tree()
+        tree = Tree(root)
+        prefixes = tree._compute_prefixes()
+        assert prefixes["root"] == ""
+
+    def test_first_child_gets_branch(self):
+        """First child (not last) gets ├── prefix."""
+        root = _make_tree()
+        tree = Tree(root)
+        prefixes = tree._compute_prefixes()
+        # 'a' is the first of two children of root, so ├──
+        assert prefixes["a"].startswith("├──")
+
+    def test_last_child_gets_last_branch(self):
+        """Last child gets └── prefix."""
+        root = _make_tree()
+        tree = Tree(root)
+        prefixes = tree._compute_prefixes()
+        # 'b' is the last child of root
+        assert prefixes["b"].startswith("└──")
+
+    def test_grandchild_of_first_sibling_has_vertical_line(self):
+        """Children of a non-last sibling have │ continuation."""
+        root = _make_tree()
+        tree = Tree(root)
+        prefixes = tree._compute_prefixes()
+        # a1 and a2 are under 'a' (not last sibling of root)
+        # Their prefix should start with │
+        assert prefixes["a1"].startswith("│")
+        assert prefixes["a2"].startswith("│")
+
+    def test_grandchild_of_last_sibling_has_indent(self):
+        """Children of a last sibling use blank indent (no vertical line)."""
+        root = TreeNode("root", "root", children=[
+            TreeNode("a", "A", children=[
+                TreeNode("a1", "A1"),
+            ]),
+        ])
+        tree = Tree(root)
+        prefixes = tree._compute_prefixes()
+        # 'a' is the last (only) child of root, so a1's prefix uses
+        # blank indent for the root level + └── for a1 itself
+        assert prefixes["a1"] == "    └── "
+        # 'a' itself is the last child, so it gets └──
+        assert prefixes["a"].startswith("└──")
+
+    def test_deep_nesting_prefixes(self):
+        """Deep nesting creates proper stacked prefixes."""
+        root = TreeNode("r", "R", children=[
+            TreeNode("a", "A", children=[
+                TreeNode("a1", "A1", children=[
+                    TreeNode("deep", "Deep"),
+                ]),
+                TreeNode("a2", "A2"),
+            ]),
+            TreeNode("b", "B"),
+        ])
+        tree = Tree(root)
+        prefixes = tree._compute_prefixes()
+        # deep is under a1 (which is not last child of a? actually a2 exists)
+        # a1 is first child of a, so deep gets │ prefix then └──
+        assert "└──" in prefixes["deep"] or "├──" in prefixes["deep"]
+        # The prefix for 'deep' should have the │ line from 'a' level
+        # because 'a' is not the last sibling (b follows)
+
+    async def test_tree_rows_have_box_drawing_prefixes(self):
+        """Full tree renders with box-drawing prefixes on rows."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            await pilot.pause()
+
+            # Root row — branch node, expanded (has ▼ toggle)
+            root_row = [r for r in tree.query(TreeRow) if r.node.id == "root"][0]
+            label = root_row._label.render().plain
+            assert "root" in label
+            assert "\u25bc" in label  # ▼ expanded
+            # Root has no prefix (empty string)
+            assert root_row.prefix == ""
+
+    async def test_toggle_indicator_updates_on_expand_collapse(self):
+        """Branch rows show ▼ when expanded and ▶ when collapsed."""
+        root = _make_tree()
+        async with TreeTestApp(root).run_test() as pilot:
+            tree = pilot.app.tree
+            await pilot.pause()
+
+            a_row = [r for r in tree.query(TreeRow) if r.node.id == "a"][0]
+
+            # Initially collapsed
+            assert a_row.expanded is False
+            label = a_row._label.render().plain
+            assert "\u25b6" in label  # ▶ collapsed
+
+            # Expand
+            tree.expand_node("a")
+            await pilot.pause()
+            assert a_row.expanded is True
+            label = a_row._label.render().plain
+            assert "\u25bc" in label  # ▼ expanded
+
+            # Collapse
+            tree.collapse_node("a")
+            await pilot.pause()
+            assert a_row.expanded is False
+            label = a_row._label.render().plain
+            assert "\u25b6" in label  # ▶ collapsed again
 
 
 # ---------------------------------------------------------------------------

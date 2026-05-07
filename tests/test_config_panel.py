@@ -682,3 +682,56 @@ class TestConfigPanelEditing:
             await pilot.pause()
 
             assert cfg.get("maybe") is None
+
+
+class TestConfigPanelAppContext:
+    """Test that ConfigPanel populates the tree when config is wired
+    from AppContext during on_mount (the real-app lifecycle).
+
+    Previous bug: on_mount() called set_config(), which checked
+    is_mounted before rebuilding.  During on_mount(), is_mounted
+    is False, so _rebuild() was never called and the tree stayed
+    empty.
+    """
+
+    async def test_config_from_app_context_shows_tree(self, tmp_path):
+        """Config wired via AppContext in on_mount() should populate the tree."""
+        from context import AppContext
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config(
+            {"session": {"provider": "ollama", "model": "deepseek"},
+             "ui": {"theme": "haxor"}},
+            tmp_path,
+        )
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def __init__(self, context):
+                self.context = context
+                context.app = self
+                super().__init__()
+
+            def compose(self):
+                # NOTE: do NOT call set_config() here — imitate real app
+                # where the panel gets its config from AppContext.on_mount()
+                yield ConfigPanel()
+
+        ctx = AppContext(config=cfg)
+
+        async with TestApp(ctx).run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.query_one(ConfigPanel)
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            # Root node exists
+            assert tree.root.label == "Configuration"
+            # Config data should appear as children (not just an empty root)
+            assert len(tree.root.children) > 0
+            # Should have branch nodes for top-level keys
+            branch_labels = [c.label for c in tree.root.children]
+            assert any("session" in l for l in branch_labels)
+            assert any("ui" in l for l in branch_labels)

@@ -70,6 +70,16 @@ class TreeNode:
 
 
 # ---------------------------------------------------------------------------
+# Constants — box-drawing characters for tree lines
+# ---------------------------------------------------------------------------
+
+_LINE_VERTICAL = "│   "
+_BRANCH = "├── "
+_LAST_BRANCH = "└── "
+_INDENT = "    "
+
+
+# ---------------------------------------------------------------------------
 # TreeRow
 # ---------------------------------------------------------------------------
 
@@ -77,8 +87,9 @@ class TreeNode:
 class TreeRow(Widget):
     """A single visible row in the tree.
 
-    Composes an indent prefix, optional expand/collapse indicator, and
-    either the node label (plain text) or the node's ``content`` widget.
+    Composes a tree-line prefix (using box-drawing characters), an
+    expand/collapse indicator for branch nodes, and either the node
+    label (plain text) or the node's ``content`` widget.
 
     Posts ``Selected`` on click and ``Toggled`` on expand-indicator click.
     """
@@ -99,18 +110,41 @@ class TreeRow(Widget):
             super().__init__()
             self.node = node
 
-    def __init__(self, node: TreeNode, *, depth: int = 0, is_branch: bool = False):
+    def __init__(
+        self,
+        node: TreeNode,
+        *,
+        depth: int = 0,
+        is_branch: bool = False,
+        prefix: str = "",
+        expanded: bool = False,
+    ):
         super().__init__()
         self.node = node
         self.depth = depth
         self.is_branch = is_branch
+        self.prefix = prefix
+        self.expanded = expanded
+
+    def _render_label(self) -> str:
+        """Build the full display string for this row."""
+        if self.is_branch:
+            toggle = "\u25bc " if self.expanded else "\u25b6 "  # ▼ / ▶
+        else:
+            toggle = ""
+        return f"{self.prefix}{toggle}{self.node.label}"
 
     def compose(self) -> ComposeResult:
-        indent = "  " * self.depth
-        toggle = "▶ " if self.is_branch else "  "
-        yield Static(f"{indent}{toggle}{self.node.label}")
+        self._label = Static(self._render_label())
+        yield self._label
         if self.node.content is not None:
             yield self.node.content
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Update the expand/collapse indicator and re-render the label."""
+        self.expanded = expanded
+        if hasattr(self, "_label"):
+            self._label.update(self._render_label())
 
     def on_click(self, event) -> None:
         """Mouse click — if branch, toggle; always select."""
@@ -142,14 +176,14 @@ class ActionRow(Widget):
             self.action_id = action_id
             self.node = node
 
-    def __init__(self, node: TreeNode, *, depth: int = 0):
+    def __init__(self, node: TreeNode, *, depth: int = 0, prefix: str = ""):
         super().__init__()
         self.node = node
         self.depth = depth
+        self.prefix = prefix
 
     def compose(self) -> ComposeResult:
-        indent = "  " * self.depth
-        label_text = f"{indent}  {self.node.label}"
+        label_text = f"{self.prefix}{self.node.label}"
         with Horizontal():
             yield Static(label_text)
             for btn in self.node.buttons:

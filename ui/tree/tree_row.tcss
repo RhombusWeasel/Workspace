@@ -23,3 +23,12 @@ ActionRow > Horizontal {
 ActionRow Static {
     width: 1fr;
 }
+
+ActionRow Button {
+    width: 6;
+    height: 1;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: $primary;
+}

@@ -15,7 +15,16 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 
-from ui.tree.tree_row import TreeNode, TreeRow, RowButton, ActionRow
+from ui.tree.tree_row import (
+    TreeNode,
+    TreeRow,
+    RowButton,
+    ActionRow,
+    _LINE_VERTICAL,
+    _BRANCH,
+    _LAST_BRANCH,
+    _INDENT,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +62,10 @@ class Tree(VerticalScroll, can_focus=True):
 
     Supports expand/collapse, keyboard navigation, and selection.
     Rows are mounted once — expand/collapse toggles CSS visibility.
+
+    Tree lines use box-drawing characters (│ ├── └──) to show
+    hierarchical structure.  Branch nodes display a ▼ / ▶ toggle
+    that updates dynamically with expand/collapse state.
     """
 
     selected_id: reactive[str | None] = reactive(None)
@@ -108,6 +121,7 @@ class Tree(VerticalScroll, can_focus=True):
                 row.remove()
 
         # Mount rows for new nodes.
+        prefixes = self._compute_prefixes()
         existing_ids = {row.node.id for row in self.query("TreeRow, ActionRow")}
         order: dict[str, int] = {}
         for i, (node, depth) in enumerate(self._get_all_nodes_depth()):
@@ -115,10 +129,15 @@ class Tree(VerticalScroll, can_focus=True):
             if node.id in existing_ids:
                 continue
             is_branch = bool(node.children)
+            prefix = prefixes.get(node.id, "")
+            expanded = node.id in self._expanded
             if node.buttons:
-                row: Widget = ActionRow(node, depth=depth)
+                row: Widget = ActionRow(node, depth=depth, prefix=prefix)
             else:
-                row = TreeRow(node, depth=depth, is_branch=is_branch)
+                row = TreeRow(
+                    node, depth=depth, is_branch=is_branch,
+                    prefix=prefix, expanded=expanded,
+                )
                 if node.id == self.selected_id:
                     row.is_selected = True
             self.mount(row)
@@ -201,6 +220,32 @@ class Tree(VerticalScroll, can_focus=True):
         for child in node.children:
             self._build_node_map(child)
 
+    def _compute_prefixes(self) -> dict[str, str]:
+        """Compute box-drawing tree-line prefixes for every node.
+
+        Uses ``│   `` for ancestor levels with more siblings below,
+        ``    `` for ancestor levels that were the last sibling,
+        ``├── `` for non-last children, and ``└── `` for last children.
+
+        The root node has an empty prefix.
+        """
+        prefixes: dict[str, str] = {}
+        # Root has no prefix
+        prefixes[self._root.id] = ""
+
+        def walk(parent: TreeNode, parent_indent: str) -> None:
+            children = parent.children
+            for i, child in enumerate(children):
+                is_last = (i == len(children) - 1)
+                connector = _LAST_BRANCH if is_last else _BRANCH
+                prefixes[child.id] = parent_indent + connector
+                # For grandchildren: vertical line or blank indent
+                child_indent = parent_indent + (_INDENT if is_last else _LINE_VERTICAL)
+                walk(child, child_indent)
+
+        walk(self._root, "")
+        return prefixes
+
     def _get_all_nodes_depth(self) -> list[tuple[TreeNode, int]]:
         """Walk the entire tree (ignoring expand state) and return
         (node, depth) for every node in depth-first order."""
@@ -230,14 +275,20 @@ class Tree(VerticalScroll, can_focus=True):
 
     def _mount_all_rows(self) -> None:
         """Mount a row for every node in the entire tree."""
+        prefixes = self._compute_prefixes()
         order: dict[str, int] = {}
         for i, (node, depth) in enumerate(self._get_all_nodes_depth()):
             order[node.id] = i
             is_branch = bool(node.children)
+            prefix = prefixes.get(node.id, "")
+            expanded = node.id in self._expanded
             if node.buttons:
-                row: Widget = ActionRow(node, depth=depth)
+                row: Widget = ActionRow(node, depth=depth, prefix=prefix)
             else:
-                row = TreeRow(node, depth=depth, is_branch=is_branch)
+                row = TreeRow(
+                    node, depth=depth, is_branch=is_branch,
+                    prefix=prefix, expanded=expanded,
+                )
                 if node.id == self.selected_id:
                     row.is_selected = True
             self.mount(row)
@@ -259,15 +310,18 @@ class Tree(VerticalScroll, can_focus=True):
 
     def _refresh_visibility(self) -> None:
         """Toggle the ``-hidden`` CSS class on every row based on
-        the current expand state.  Rows for nodes that are not in the
-        visible set get ``-hidden`` (``display: none``); visible rows
-        have the class removed."""
+        the current expand state.  Also updates the ▼ / ▶ toggle
+        indicator on branch rows.
+        """
         visible_ids = {node.id for node, _ in self._get_visible_nodes()}
         for row in self.query("TreeRow, ActionRow"):
             if row.node.id in visible_ids:
                 row.remove_class("-hidden")
             else:
                 row.add_class("-hidden")
+            # Update ▼ / ▶ toggle on branch rows
+            if isinstance(row, TreeRow) and row.is_branch:
+                row.set_expanded(row.node.id in self._expanded)
 
     def _update_selection(self) -> None:
         """Update is_selected on all rows to match selected_id."""
