@@ -19,6 +19,7 @@ from core.providers.base import (
     TokenUsage,
     ToolCall,
 )
+from core.config import register_defaults
 
 if TYPE_CHECKING:
     from core.config import Config
@@ -26,6 +27,12 @@ if TYPE_CHECKING:
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_MODEL = "deepseek-v4-pro:cloud"
+
+# Register config defaults so they flow through bootstrap → Config.apply_defaults()
+register_defaults({
+    "session": {"provider": "ollama", "model": _DEFAULT_MODEL},
+    "ollama": {"base_url": _DEFAULT_BASE_URL},
+})
 
 
 class OllamaProvider:
@@ -120,11 +127,25 @@ class OllamaProvider:
     # -- message formatting ------------------------------------------------
 
     @staticmethod
-    def _to_ollama_message(msg: Message) -> dict[str, str]:
-        return {"role": msg.role, "content": msg.content}
+    def _to_ollama_message(msg: Message) -> dict[str, Any]:
+        result: dict[str, Any] = {"role": msg.role, "content": msg.content}
+        if msg.tool_calls:
+            result["tool_calls"] = [
+                {
+                    "function": {
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    }
+                }
+                for tc in msg.tool_calls
+            ]
+        if msg.name:
+            # Ollama uses `tool_name` for tool-role messages.
+            result["tool_name"] = msg.name
+        return result
 
     @classmethod
-    def _to_ollama_messages(cls, messages: list[Message]) -> list[dict[str, str]]:
+    def _to_ollama_messages(cls, messages: list[Message]) -> list[dict[str, Any]]:
         return [cls._to_ollama_message(m) for m in messages]
 
     # -- tool formatting ---------------------------------------------------
@@ -148,7 +169,7 @@ class OllamaProvider:
         if getattr(msg, "tool_calls", None):
             tool_calls = [
                 ToolCall(
-                    id=tc.id,
+                    id=getattr(tc, "id", ""),
                     name=tc.function.name,
                     arguments=tc.function.arguments,
                 )
@@ -162,14 +183,21 @@ class OllamaProvider:
                 + (getattr(raw, "eval_count", 0) or 0)
             ),
         )
-        return ChatResponse(content=content, usage=usage, tool_calls=tool_calls, thinking=thinking)
+        return ChatResponse(
+            content=content,
+            usage=usage,
+            tool_calls=tool_calls,
+            thinking=thinking,
+        )
 
     @staticmethod
     def _normalise_stream_chunk(raw: Any) -> StreamChunk:
-        content = raw.message.content or ""
-        thinking = getattr(raw.message, "thinking", None) or None
+        msg = raw.message
+        content = msg.content or ""
+        thinking = getattr(msg, "thinking", None) or None
         done = bool(raw.done)
         usage = None
+        tool_calls = None
         if done:
             usage = TokenUsage(
                 prompt_tokens=getattr(raw, "prompt_eval_count", 0) or 0,
@@ -179,4 +207,21 @@ class OllamaProvider:
                     + (getattr(raw, "eval_count", 0) or 0)
                 ),
             )
-        return StreamChunk(content=content, done=done, usage=usage, thinking=thinking)
+        # Extract tool calls from any chunk — they may arrive on
+        # non-done chunks depending on the Ollama server version.
+        if getattr(msg, "tool_calls", None):
+            tool_calls = [
+                ToolCall(
+                    id=getattr(tc, "id", ""),
+                    name=tc.function.name,
+                    arguments=tc.function.arguments,
+                )
+                for tc in msg.tool_calls
+            ]
+        return StreamChunk(
+            content=content,
+            done=done,
+            usage=usage,
+            thinking=thinking,
+            tool_calls=tool_calls,
+        )

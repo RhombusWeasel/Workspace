@@ -119,7 +119,24 @@ class Agent:
             Message(role="system", content=self.system_prompt)
         ]
         for entry in history:
-            msg = Message(role=entry["role"], content=entry.get("content", ""))
+            # Reconstruct ToolCall objects from history dicts.
+            tc_list: list[ToolCall] | None = None
+            raw_tcs = entry.get("tool_calls")
+            if raw_tcs:
+                tc_list = [
+                    ToolCall(
+                        id=tc.get("id", ""),
+                        name=tc["name"],
+                        arguments=tc["arguments"],
+                    )
+                    for tc in raw_tcs
+                ]
+            msg = Message(
+                role=entry["role"],
+                content=entry.get("content", ""),
+                tool_calls=tc_list,
+                name=entry.get("tool_name"),
+            )
             messages.append(msg)
         messages.append(Message(role="user", content=user_text))
         return messages
@@ -157,12 +174,16 @@ class Agent:
 
             # Execute tools and append results
             messages.append(
-                Message(role="assistant", content=response.content or "")
+                Message(
+                    role="assistant",
+                    content=response.content or "",
+                    tool_calls=response.tool_calls,
+                )
             )
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc)
                 messages.append(
-                    Message(role="tool", content=result)
+                    Message(role="tool", content=result, name=tc.name)
                 )
 
         # Hit max iterations — return the last response
@@ -189,7 +210,7 @@ class Agent:
 
         messages = self.build_messages(history, user_text)
 
-        for iteration in range(self._max_tool_iterations + 1):
+        for _ in range(self._max_tool_iterations + 1):
             self._check_abort()
 
             # Stream chunks from the provider, yielding them immediately
@@ -223,17 +244,21 @@ class Agent:
             # and continue the loop.
             assistant_content = "".join(collected_content)
             messages.append(
-                Message(role="assistant", content=assistant_content)
+                Message(
+                    role="assistant",
+                    content=assistant_content,
+                    tool_calls=tool_calls,
+                )
             )
             for tc in tool_calls:
                 result = await self._execute_tool_call(tc)
-                messages.append(Message(role="tool", content=result))
+                messages.append(
+                    Message(role="tool", content=result, name=tc.name)
+                )
 
             # Yield the tool-call info so the UI can display it.
             if last_chunk is not None:
                 yield last_chunk
-
-        # Hit max iterations — nothing left to yield
 
     # ------------------------------------------------------------------
     # Abort
@@ -255,6 +280,13 @@ class Agent:
     async def _execute_tool_call(self, tc: ToolCall) -> str:
         from core.tools import execute_tool
 
+        if self._ctx is not None and self._ctx.app is not None:
+            self._ctx.app.notify(
+                f"🔧 {tc.name}({_brief_args(tc.arguments)})",
+                title="Tool call",
+                timeout=3,
+            )
+
         try:
             result = execute_tool(tc.name, tc.arguments, ctx=self._ctx)
             if inspect.iscoroutine(result):
@@ -262,3 +294,25 @@ class Agent:
             return str(result)
         except Exception as exc:
             return f"Error executing {tc.name}: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _brief_args(args: dict[str, Any], max_len: int = 40) -> str:
+    """Return a compact string repr of tool arguments for notifications."""
+    items = [f"{k}={_brief_val(v)}" for k, v in args.items()]
+    joined = ", ".join(items)
+    if len(joined) > max_len:
+        joined = joined[:max_len - 3] + "..."
+    return joined
+
+
+def _brief_val(v: Any) -> str:
+    """Brief string for a single argument value."""
+    s = str(v)
+    if len(s) > 20:
+        s = s[:17] + "..."
+    return s

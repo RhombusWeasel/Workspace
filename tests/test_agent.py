@@ -191,6 +191,60 @@ class TestMessageBuilding:
         assert messages[2].role == "assistant" and messages[2].content == "A1"
         assert messages[5].role == "user" and messages[5].content == "Q3"
 
+    def test_builds_messages_carries_tool_calls_from_history(self):
+        """History entries with tool_calls are reconstructed as ToolCall objects."""
+        from core.agent import Agent
+
+        agent = Agent(
+            provider=MockProvider([]),
+            template="System.",
+        )
+        history = [
+            {"role": "user", "content": "Read the file"},
+            {
+                "role": "assistant",
+                "content": "Let me read that file.",
+                "tool_calls": [
+                    {"name": "read_file", "arguments": {"path": "/tmp/x"}},
+                ],
+                "tool_name": None,
+            },
+        ]
+        messages = agent.build_messages(history, "Thanks")
+
+        # The assistant message from history should have tool_calls.
+        asst = messages[2]
+        assert asst.role == "assistant"
+        assert asst.tool_calls is not None
+        assert len(asst.tool_calls) == 1
+        assert asst.tool_calls[0].name == "read_file"
+        assert asst.tool_calls[0].arguments == {"path": "/tmp/x"}
+
+        # The user message should not have tool_calls.
+        assert messages[3].tool_calls is None
+
+    def test_builds_messages_carries_tool_name_from_history(self):
+        """History entries for tool-role messages preserve the name field."""
+        from core.agent import Agent
+
+        agent = Agent(
+            provider=MockProvider([]),
+            template="System.",
+        )
+        history = [
+            {
+                "role": "tool",
+                "content": "file contents here",
+                "tool_name": "read_file",
+            },
+        ]
+        messages = agent.build_messages(history, "Thanks")
+
+        tool_msg = messages[1]
+        assert tool_msg.role == "tool"
+        assert tool_msg.name == "read_file"
+        assert tool_msg.content == "file contents here"
+
 
 # ---------------------------------------------------------------------------
 # Simple chat (no tool calls)
@@ -281,6 +335,51 @@ class TestToolCallingLoop:
             for m in second_messages
         )
         assert has_tool_result
+
+    async def test_tool_call_messages_include_tool_calls_and_name(self):
+        """Messages sent back to the provider after tool execution include
+        tool_calls on assistant messages and name on tool messages."""
+        from core.agent import Agent
+        from core.tools import register_tool
+
+        @register_tool(
+            name="echo",
+            tags=["test"],
+            description="Echo input",
+            parameters={"type": "object", "properties": {}},
+        )
+        def echo(text: str = "") -> str:
+            return text
+
+        mock = MockProvider([
+            ChatResponse(
+                content="",
+                tool_calls=[ToolCall(id="1", name="echo", arguments={"text": "hi"})],
+            ),
+            ChatResponse(content="Done"),
+        ])
+
+        agent = Agent(provider=mock, template=".")
+        tools = [{
+            "type": "function",
+            "function": {"name": "echo", "description": "Echo", "parameters": {}}
+        }]
+        await agent.chat([], "test", tools=tools)
+
+        # Inspect the second call's messages — the ones sent with tool results.
+        second_messages = mock.last_messages
+
+        # Find the assistant message that carries the tool call.
+        assistant_msgs = [m for m in second_messages if m.role == "assistant" and m.tool_calls]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0].tool_calls[0].name == "echo"
+        assert assistant_msgs[0].tool_calls[0].arguments == {"text": "hi"}
+
+        # Find the tool message — must have name set.
+        tool_msgs = [m for m in second_messages if m.role == "tool"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0].name == "echo"
+        assert "hi" in tool_msgs[0].content
 
     async def test_max_tool_iterations_prevents_infinite_loop(self):
         """Agent stops after max_iterations even if LLM keeps returning tools."""

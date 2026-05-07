@@ -156,7 +156,12 @@ class ConfigPanel(Container):
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
-        self._rebuild()
+        # Wire config from the running app's AppContext
+        app = self.app
+        if hasattr(app, "context") and app.context is not None:
+            self.set_config(app.context.config)
+        else:
+            self._rebuild()
 
     # ------------------------------------------------------------------
     # Rebuild

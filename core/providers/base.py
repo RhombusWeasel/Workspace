@@ -49,10 +49,17 @@ class StreamChunk:
 
 @dataclass
 class Message:
-    """A chat message with role and content."""
+    """A chat message with role and content.
+
+    For assistant messages that make tool calls, set ``tool_calls``.
+    For tool-result messages, set ``name`` to the tool name (maps to
+    Ollama's ``tool_name`` field).
+    """
 
     role: str
     content: str
+    tool_calls: list[ToolCall] | None = None
+    name: str | None = None
 
 
 @dataclass

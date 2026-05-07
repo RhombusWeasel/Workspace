@@ -13,6 +13,32 @@ import os
 from copy import deepcopy
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Module-level defaults registry
+# ---------------------------------------------------------------------------
+
+_registered_defaults: dict[str, Any] = {}
+
+
+def register_defaults(d: dict) -> None:
+    """Register default config values at the module level.
+
+    Modules call this at import time to declare their config defaults.
+    Accumulated defaults are applied during bootstrap via
+    ``config.defaults()`` + ``config.apply_defaults()``.
+    """
+    _deep_merge(_registered_defaults, d)
+
+
+def get_registered_defaults() -> dict:
+    """Return a deep copy of all accumulated module-level defaults."""
+    return deepcopy(_registered_defaults)
+
+
+def reset_registered_defaults() -> None:
+    """Clear all accumulated module-level defaults (for test isolation)."""
+    _registered_defaults.clear()
+
 
 def _deep_merge(dst: dict, src: dict) -> dict:
     """Merge *src* into *dst* in-place.  *src* wins on conflict.

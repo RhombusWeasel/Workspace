@@ -1,8 +1,9 @@
 """Chat display — a Tree-backed conversation view with streaming Markdown sections.
 
-Each assistant turn is a **branch** node with up to three collapsible
-section branches (Thinking, Tools, Response), each holding a ``Markdown``
-widget that can be updated independently during streaming.
+Each assistant turn is a **branch** node with dynamically-created section
+branches.  Sections are added on demand via :meth:`add_section` as their
+content arrives during streaming, producing a natural sequential layout
+(e.g. Thinking → Tools → Thinking → Response).
 """
 
 from __future__ import annotations
@@ -23,9 +24,9 @@ from ui.tree.tree_row import TreeNode
 
 _VALID_SECTIONS = frozenset({"thinking", "tools", "response"})
 _SECTION_ICONS: dict[str, str] = {
-    "thinking": "  󰟶 Thinking",
-    "tools": "  󱁤 Tools",
-    "response": "  󰭹 Response",
+    "thinking": "  \U000f0df6 Thinking",
+    "tools": "  \U000f1074 Tools",
+    "response": "  \U000f0b79 Response",
 }
 
 
@@ -35,20 +36,22 @@ class ChatDisplay(Widget):
     Provides a high-level API for building and updating a conversation:
 
     * ``add_user_message(text)`` → leaf node for user text.
-    * ``begin_assistant_turn()`` → branch node with empty section children.
-    * ``update_section(section, text)`` → streaming update to a Markdown widget.
-    * ``finalize_turn()`` → removes empty sections, clears internal state.
+    * ``begin_assistant_turn()`` → empty assistant branch node.
+    * ``add_section(section_type)`` → new section branch, returns ID.
+    * ``update_section(section_id, text)`` → streaming update.
+    * ``finalize_turn()`` → removes any empty sections, clears state.
     """
 
     def __init__(self):
         super().__init__()
         self._root = TreeNode("chat-display-root", "Conversation")
         self._turn_count = 0
+        self._section_count = 0
         self._active_asst_id: str | None = None
 
-        # Populated by begin_assistant_turn, cleared by finalize_turn.
+        # Populated by add_section, cleared by finalize_turn.
+        # Maps section_id → Markdown widget.
         self._section_md: dict[str, Markdown] = {}
-        self._active_sections: set[str] = set()
 
     # ------------------------------------------------------------------
     # Composition
@@ -76,67 +79,89 @@ class ChatDisplay(Widget):
     # ------------------------------------------------------------------
 
     def begin_assistant_turn(self) -> str:
-        """Create an assistant branch with three empty section children.
+        """Create an assistant branch node with **no** section children.
 
-        Returns the assistant branch node ID.  After calling this, use
-        ``update_section()`` to stream content and ``finalize_turn()``
-        to clean up.
+        Sections are added on demand via :meth:`add_section` as their
+        content arrives during streaming.  Returns the assistant branch
+        node ID.
         """
         self._turn_count += 1
         asst_id = f"msg-{self._turn_count}"
 
-        # Build three section branches, each with a Markdown leaf.
-        section_branches: list[TreeNode] = []
-        md_map: dict[str, Markdown] = {}
-
-        for section in ("thinking", "tools", "response"):
-            md = Markdown("", id=f"md-{section}-{asst_id}")
-            md_map[section] = md
-            leaf = TreeNode(
-                f"{section}-leaf-{asst_id}", "",
-                content=md,
-            )
-            branch = TreeNode(
-                f"{section}-{asst_id}", _SECTION_ICONS.get(section, section),
-                data={"section": section},
-                children=[leaf],
-            )
-            section_branches.append(branch)
-
         asst_node = TreeNode(
             asst_id, "\uf4ad  [green]Assistant[/green]",
-            children=section_branches,
             data={"role": "assistant", "type": "branch"},
         )
         self._root.children.append(asst_node)
 
         self._active_asst_id = asst_id
-        self._section_md = md_map
-        self._active_sections = set()
+        self._section_md = {}
 
         self._rebuild()
 
-        # Auto-expand section branches so Markdown children are visible.
+        # Expand the assistant branch.
         tree = self.query_one(Tree)
-        for section in ("thinking", "tools", "response"):
-            tree.expand_node(f"{section}-{asst_id}")
+        tree.expand_node(asst_id)
 
         return asst_id
 
-    async def update_section(self, section: str, text: str) -> None:
-        """Update the Markdown for *section*.
+    def add_section(self, section_type: str) -> str:
+        """Add a new section branch to the current assistant turn.
 
-        *section* must be one of ``'thinking'``, ``'tools'``, ``'response'``.
-        The section is marked as active so ``finalize_turn()`` preserves it.
+        *section_type* must be one of ``'thinking'``, ``'tools'``, or
+        ``'response'``.  Returns the section ID for use with
+        :meth:`update_section`.
         """
-        if section not in _VALID_SECTIONS:
+        if section_type not in _VALID_SECTIONS:
             raise ValueError(
-                f"Unknown section {section!r}; must be one of {sorted(_VALID_SECTIONS)}"
+                f"Unknown section type {section_type!r}; "
+                f"must be one of {sorted(_VALID_SECTIONS)}"
             )
-        md = self._section_md.get(section)
+        if self._active_asst_id is None:
+            raise RuntimeError(
+                "No active assistant turn — call begin_assistant_turn first"
+            )
+
+        self._section_count += 1
+        section_id = f"{section_type}-sec{self._section_count}"
+
+        md = Markdown("", id=f"md-{section_id}")
+        self._section_md[section_id] = md
+
+        leaf = TreeNode(
+            f"{section_id}-leaf", "",
+            content=md,
+        )
+        branch = TreeNode(
+            section_id,
+            _SECTION_ICONS.get(section_type, section_type),
+            data={"section": section_type},
+            children=[leaf],
+        )
+
+        # Append to the current assistant node.
+        asst_node = self._find_node(self._active_asst_id)
+        if asst_node is not None:
+            asst_node.children.append(branch)
+
+        self._rebuild()
+
+        # Expand the new section and its parent.
+        tree = self.query_one(Tree)
+        tree.expand_node(section_id)
+        tree.expand_node(self._active_asst_id)
+
+        return section_id
+
+    async def update_section(self, section_id: str, text: str) -> None:
+        """Update the Markdown for the section identified by *section_id*.
+
+        The section must have been created by a prior :meth:`add_section`
+        call during the current assistant turn.
+        """
+        md = self._section_md.get(section_id)
         if md is None:
-            return  # No active turn.
-        self._active_sections.add(section)
+            return  # Unknown section — no-op.
         await md.update(text)
         # Guard: if Markdown._markdown wasn't set (race with mount),
         # store the text directly so it can be recovered.
@@ -153,7 +178,7 @@ class ChatDisplay(Widget):
         if node is not None:
             keep = [
                 c for c in node.children
-                if c.data.get("section") in self._active_sections
+                if not self._is_empty_section(c)
             ]
             if len(keep) != len(node.children):
                 node.children = keep
@@ -161,11 +186,17 @@ class ChatDisplay(Widget):
 
         self._active_asst_id = None
         self._section_md = {}
-        self._active_sections = set()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _is_empty_section(self, branch: TreeNode) -> bool:
+        """Return True if the section branch's Markdown widget has no content."""
+        md = self._section_md.get(branch.id)
+        if md is None:
+            return True
+        return not md._markdown
 
     def _find_node(self, node_id: str) -> TreeNode | None:
         for child in self._root.children:

@@ -1,7 +1,8 @@
 """Tests for the ChatDisplay widget.
 
 ChatDisplay wraps a Tree and provides a streaming API:
-add_user_message, begin_assistant_turn, update_section, finalize_turn.
+add_user_message, begin_assistant_turn, add_section, update_section,
+finalize_turn.
 """
 
 import pytest
@@ -39,7 +40,6 @@ class ChatDisplayTestApp(App):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 async def _settle(pilot, n: int = 2) -> None:
     for _ in range(n):
@@ -142,8 +142,8 @@ class TestBeginAssistantTurn:
             assert node.data["role"] == "assistant"
             assert node.data["type"] == "branch"
 
-    async def test_has_three_section_children(self):
-        """Assistant branch has three children: thinking, tools, response."""
+    async def test_starts_with_no_section_children(self):
+        """Assistant branch starts with no section children (lazy creation)."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
@@ -152,29 +152,10 @@ class TestBeginAssistantTurn:
 
             tree = pilot.app._chat_display.query_one(Tree)
             asst_node = tree._node_map[asst_id]
-            assert len(asst_node.children) == 3
-
-            sections = {c.data.get("section") for c in asst_node.children}
-            assert sections == {"thinking", "tools", "response"}
-
-    async def test_each_section_has_markdown_leaf(self):
-        """Each section branch has one leaf child holding a Markdown widget."""
-        async with ChatDisplayTestApp().run_test() as pilot:
-            await pilot.pause()
-
-            asst_id = pilot.app._chat_display.begin_assistant_turn()
-            await _settle(pilot)
-
-            tree = pilot.app._chat_display.query_one(Tree)
-            asst_node = tree._node_map[asst_id]
-
-            for section_branch in asst_node.children:
-                assert len(section_branch.children) == 1
-                leaf = section_branch.children[0]
-                assert isinstance(leaf.content, Markdown)
+            assert len(asst_node.children) == 0
 
     async def test_multiple_turns_are_independent(self):
-        """Multiple assistant turns create distinct branch nodes and Markdowns."""
+        """Multiple assistant turns create distinct branch nodes."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
@@ -183,13 +164,119 @@ class TestBeginAssistantTurn:
             await _settle(pilot)
 
             tree = pilot.app._chat_display.query_one(Tree)
-            node1 = tree._node_map[id1]
-            node2 = tree._node_map[id2]
+            assert id1 != id2
+            assert tree._node_map[id1] is not tree._node_map[id2]
 
-            # Children should point to different Markdown instances.
-            leaf1 = node1.children[2].children[0].content
-            leaf2 = node2.children[2].children[0].content
-            assert leaf1 is not leaf2
+
+# ---------------------------------------------------------------------------
+# add_section
+# ---------------------------------------------------------------------------
+
+
+class TestAddSection:
+    async def test_adds_thinking_section(self):
+        """add_section('thinking') creates a thinking section branch."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("thinking")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            asst_node = tree._node_map[asst_id]
+            assert len(asst_node.children) == 1
+            assert asst_node.children[0].data["section"] == "thinking"
+
+    async def test_adds_tools_section(self):
+        """add_section('tools') creates a tools section branch."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("tools")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            asst_node = tree._node_map[asst_id]
+            assert len(asst_node.children) == 1
+            assert asst_node.children[0].data["section"] == "tools"
+
+    async def test_adds_response_section(self):
+        """add_section('response') creates a response section branch."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("response")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            asst_node = tree._node_map[asst_id]
+            assert len(asst_node.children) == 1
+            assert asst_node.children[0].data["section"] == "response"
+
+    async def test_returns_unique_section_ids(self):
+        """Each add_section call returns a unique section ID."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            pilot.app._chat_display.begin_assistant_turn()
+            id1 = pilot.app._chat_display.add_section("thinking")
+            id2 = pilot.app._chat_display.add_section("tools")
+            id3 = pilot.app._chat_display.add_section("response")
+            assert id1 != id2 != id3
+
+    async def test_section_has_markdown_leaf(self):
+        """Each section branch has one leaf child holding a Markdown widget."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("thinking")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            section_branch = tree._node_map[section_id]
+            assert len(section_branch.children) == 1
+            leaf = section_branch.children[0]
+            assert isinstance(leaf.content, Markdown)
+
+    async def test_multiple_sections_of_same_type(self):
+        """Multiple sections of the same type can be added sequentially."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            s1 = pilot.app._chat_display.add_section("thinking")
+            s2 = pilot.app._chat_display.add_section("tools")
+            s3 = pilot.app._chat_display.add_section("thinking")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            asst_node = tree._node_map[asst_id]
+            assert len(asst_node.children) == 3
+            # First and third are thinking, second is tools.
+            assert asst_node.children[0].data["section"] == "thinking"
+            assert asst_node.children[1].data["section"] == "tools"
+            assert asst_node.children[2].data["section"] == "thinking"
+
+    async def test_add_section_invalid_type_raises(self):
+        """add_section with an unknown type raises ValueError."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            pilot.app._chat_display.begin_assistant_turn()
+            with pytest.raises(ValueError, match="Unknown section type"):
+                pilot.app._chat_display.add_section("nope")
+
+    async def test_add_section_without_turn_raises(self):
+        """add_section before begin_assistant_turn raises RuntimeError."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            with pytest.raises(RuntimeError, match="No active assistant turn"):
+                pilot.app._chat_display.add_section("thinking")
 
 
 # ---------------------------------------------------------------------------
@@ -199,56 +286,58 @@ class TestBeginAssistantTurn:
 
 class TestUpdateSection:
     async def test_update_thinking(self):
-        """update_section('thinking', ...) updates the thinking Markdown."""
+        """update_section updates the thinking section's Markdown."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
-            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("thinking")
             await _settle(pilot)
 
-            await pilot.app._chat_display.update_section("thinking", "I need to think...")
+            await pilot.app._chat_display.update_section(section_id, "I need to think...")
             await _settle(pilot)
 
             tree = pilot.app._chat_display.query_one(Tree)
-            asst_node = tree._node_map[asst_id]
-            thought_branch = asst_node.children[0]
-            md = thought_branch.children[0].content
+            section_branch = tree._node_map[section_id]
+            md = section_branch.children[0].content
             assert "I need to think..." in (md._markdown or "")
 
     async def test_update_tools(self):
-        """update_section('tools', ...) updates the tools Markdown."""
+        """update_section updates the tools section's Markdown."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
-            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("tools")
             await _settle(pilot)
 
             await pilot.app._chat_display.update_section(
-                "tools", "🔧 `read_file(path='x.txt')`"
+                section_id, "🔧 `read_file(path='x.txt')`"
             )
             await _settle(pilot)
 
             tree = pilot.app._chat_display.query_one(Tree)
-            asst_node = tree._node_map[asst_id]
-            tools_branch = asst_node.children[1]
-            md = tools_branch.children[0].content
+            section_branch = tree._node_map[section_id]
+            md = section_branch.children[0].content
             assert "read_file" in (md._markdown or "")
 
     async def test_update_response(self):
-        """update_section('response', ...) updates the response Markdown."""
+        """update_section updates the response section's Markdown."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
-            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("response")
             await _settle(pilot)
 
-            await pilot.app._chat_display.update_section("response", "The answer is 42.")
+            await pilot.app._chat_display.update_section(
+                section_id, "The answer is 42."
+            )
             await _settle(pilot)
 
             tree = pilot.app._chat_display.query_one(Tree)
-            asst_node = tree._node_map[asst_id]
-            resp_branch = asst_node.children[2]
-            md = resp_branch.children[0].content
+            section_branch = tree._node_map[section_id]
+            md = section_branch.children[0].content
             assert "The answer is 42." in (md._markdown or "")
 
     async def test_update_replaces_content(self):
@@ -257,41 +346,26 @@ class TestUpdateSection:
             await pilot.pause()
 
             pilot.app._chat_display.begin_assistant_turn()
+            section_id = pilot.app._chat_display.add_section("response")
             await _settle(pilot)
 
-            await pilot.app._chat_display.update_section("response", "Hello")
-            await pilot.app._chat_display.update_section("response", " world!")
+            await pilot.app._chat_display.update_section(section_id, "Hello")
+            await pilot.app._chat_display.update_section(section_id, " world!")
             await _settle(pilot)
 
-            section_md = pilot.app._chat_display._section_md.get("response")
-            assert section_md is not None
+            md = pilot.app._chat_display._section_md.get(section_id)
+            assert md is not None
             # Last update wins — display replaces, caller accumulates.
-            assert " world!" in (section_md._markdown or "")
+            assert " world!" in (md._markdown or "")
 
-    async def test_update_marks_section_active(self):
-        """update_section adds the section to _active_sections tracking."""
+    async def test_update_unknown_section_id_no_ops(self):
+        """update_section with an unknown section ID does nothing."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
             pilot.app._chat_display.begin_assistant_turn()
-
-            await pilot.app._chat_display.update_section("thinking", "Hmm")
-            assert "thinking" in pilot.app._chat_display._active_sections
-
-            await pilot.app._chat_display.update_section("response", "OK")
-            assert "response" in pilot.app._chat_display._active_sections
-
-            assert "tools" not in pilot.app._chat_display._active_sections
-
-    async def test_update_invalid_section_raises(self):
-        """update_section with unknown section name raises ValueError."""
-        async with ChatDisplayTestApp().run_test() as pilot:
-            await pilot.pause()
-
-            pilot.app._chat_display.begin_assistant_turn()
-
-            with pytest.raises(ValueError, match="Unknown section"):
-                await pilot.app._chat_display.update_section("nope", "text")
+            # Should not raise.
+            await pilot.app._chat_display.update_section("nonexistent-id", "text")
 
 
 # ---------------------------------------------------------------------------
@@ -306,10 +380,12 @@ class TestFinalizeTurn:
             await pilot.pause()
 
             asst_id = pilot.app._chat_display.begin_assistant_turn()
+            # Add sections: only response gets content.
+            s_think = pilot.app._chat_display.add_section("thinking")
+            s_resp = pilot.app._chat_display.add_section("response")
             await _settle(pilot)
 
-            # Only response gets content.
-            await pilot.app._chat_display.update_section("response", "Hello!")
+            await pilot.app._chat_display.update_section(s_resp, "Hello!")
             pilot.app._chat_display.finalize_turn()
             await _settle(pilot)
 
@@ -318,19 +394,21 @@ class TestFinalizeTurn:
             sections = {c.data["section"] for c in asst_node.children}
             assert sections == {"response"}
             assert "thinking" not in sections
-            assert "tools" not in sections
 
-    async def test_keeps_all_when_all_active(self):
-        """When all three sections have content, none are removed."""
+    async def test_keeps_all_when_all_have_content(self):
+        """When all sections have content, none are removed."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
             asst_id = pilot.app._chat_display.begin_assistant_turn()
+            s1 = pilot.app._chat_display.add_section("thinking")
+            s2 = pilot.app._chat_display.add_section("tools")
+            s3 = pilot.app._chat_display.add_section("response")
             await _settle(pilot)
 
-            await pilot.app._chat_display.update_section("thinking", "Hmm")
-            await pilot.app._chat_display.update_section("tools", "🔧 tool()")
-            await pilot.app._chat_display.update_section("response", "Done.")
+            await pilot.app._chat_display.update_section(s1, "Hmm")
+            await pilot.app._chat_display.update_section(s2, "🔧 tool()")
+            await pilot.app._chat_display.update_section(s3, "Done.")
             pilot.app._chat_display.finalize_turn()
             await _settle(pilot)
 
@@ -339,8 +417,8 @@ class TestFinalizeTurn:
             sections = {c.data["section"] for c in asst_node.children}
             assert sections == {"thinking", "tools", "response"}
 
-    async def test_handles_no_active_sections(self):
-        """When no sections received content, all children are removed."""
+    async def test_handles_no_sections(self):
+        """When no sections were added, the assistant branch stays empty."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
@@ -355,16 +433,65 @@ class TestFinalizeTurn:
             assert len(asst_node.children) == 0
 
     async def test_resets_internal_state(self):
-        """finalize_turn clears _section_md and _active_sections."""
+        """finalize_turn clears _section_md and _active_asst_id."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
             pilot.app._chat_display.begin_assistant_turn()
-            await pilot.app._chat_display.update_section("response", "OK")
+            s = pilot.app._chat_display.add_section("response")
+            await pilot.app._chat_display.update_section(s, "OK")
             pilot.app._chat_display.finalize_turn()
 
             assert pilot.app._chat_display._section_md == {}
-            assert pilot.app._chat_display._active_sections == set()
+            assert pilot.app._chat_display._active_asst_id is None
+
+
+# ---------------------------------------------------------------------------
+# Sequential section layout
+# ---------------------------------------------------------------------------
+
+
+class TestSequentialSections:
+    async def test_thinking_tools_response_sequence(self):
+        """A typical flow: thinking → tools → response."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            s1 = pilot.app._chat_display.add_section("thinking")
+            s2 = pilot.app._chat_display.add_section("tools")
+            s3 = pilot.app._chat_display.add_section("response")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            asst_node = tree._node_map[asst_id]
+            assert len(asst_node.children) == 3
+            assert asst_node.children[0].data["section"] == "thinking"
+            assert asst_node.children[1].data["section"] == "tools"
+            assert asst_node.children[2].data["section"] == "response"
+
+    async def test_thinking_tools_thinking_response_sequence(self):
+        """Multi-round: thinking → tools → more thinking → response."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            asst_id = pilot.app._chat_display.begin_assistant_turn()
+            s1 = pilot.app._chat_display.add_section("thinking")
+            s2 = pilot.app._chat_display.add_section("tools")
+            s3 = pilot.app._chat_display.add_section("thinking")
+            s4 = pilot.app._chat_display.add_section("response")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            asst_node = tree._node_map[asst_id]
+            assert len(asst_node.children) == 4
+            section_types = [c.data["section"] for c in asst_node.children]
+            assert section_types == ["thinking", "tools", "thinking", "response"]
+
+            # Each section has its own Markdown widget.
+            for child in asst_node.children:
+                assert len(child.children) == 1
+                assert isinstance(child.children[0].content, Markdown)
 
 
 # ---------------------------------------------------------------------------
@@ -380,16 +507,20 @@ class TestConversationTree:
 
             # Turn 1: thinking + response
             pilot.app._chat_display.add_user_message("What is 2+2?")
-            asst1 = pilot.app._chat_display.begin_assistant_turn()
-            await pilot.app._chat_display.update_section("thinking", "Let me calculate")
-            await pilot.app._chat_display.update_section("response", "The answer is 4.")
+            pilot.app._chat_display.begin_assistant_turn()
+            s1 = pilot.app._chat_display.add_section("thinking")
+            s2 = pilot.app._chat_display.add_section("response")
+            await pilot.app._chat_display.update_section(s1, "Let me calculate")
+            await pilot.app._chat_display.update_section(s2, "The answer is 4.")
             pilot.app._chat_display.finalize_turn()
 
             # Turn 2: tools + response
             pilot.app._chat_display.add_user_message("Read file")
-            asst2 = pilot.app._chat_display.begin_assistant_turn()
-            await pilot.app._chat_display.update_section("tools", "🔧 `read_file()`")
-            await pilot.app._chat_display.update_section("response", "Done.")
+            pilot.app._chat_display.begin_assistant_turn()
+            s3 = pilot.app._chat_display.add_section("tools")
+            s4 = pilot.app._chat_display.add_section("response")
+            await pilot.app._chat_display.update_section(s3, "🔧 `read_file()`")
+            await pilot.app._chat_display.update_section(s4, "Done.")
             pilot.app._chat_display.finalize_turn()
 
             await _settle(pilot)

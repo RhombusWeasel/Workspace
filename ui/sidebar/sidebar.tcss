@@ -2,6 +2,7 @@ Sidebar {
     width: 1fr;
     height: 1fr;
     overflow-y: auto;
+    border: round $surface-lighten-1;
 }
 
 Sidebar TabbedContent {

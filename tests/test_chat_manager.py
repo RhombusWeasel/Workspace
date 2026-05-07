@@ -41,7 +41,6 @@ class ChatManagerTestApp(App):
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 async def _settle(pilot, n: int = 2) -> None:
     for _ in range(n):
         await pilot.pause()
@@ -155,12 +154,12 @@ class TestChatManagerStreaming:
 
             # Assistant node should have thinking and response sections.
             asst_node = root.children[-1]
-            sections = {c.data["section"] for c in asst_node.children}
-            assert "thinking" in sections
-            assert "response" in sections
+            section_types = [c.data["section"] for c in asst_node.children]
+            assert "thinking" in section_types
+            assert "response" in section_types
 
     async def test_streaming_with_tool_calls(self):
-        """Tool calls are routed to the tools section."""
+        """Tool calls create a tools section."""
         chunks = [
             type('C', (), {
                 'thinking': '', 'content': '',
@@ -204,10 +203,69 @@ class TestChatManagerStreaming:
             tree = display.query_one(Tree)
             root = tree._node_map["chat-display-root"]
             asst_node = root.children[-1]
-            sections = {c.data["section"] for c in asst_node.children}
-            assert "tools" in sections
-            assert "response" in sections
-            assert "thinking" not in sections
+            section_types = [c.data["section"] for c in asst_node.children]
+            assert "tools" in section_types
+            assert "response" in section_types
+            assert "thinking" not in section_types
+
+    async def test_streaming_with_thinking_then_tools_then_more_thinking(self):
+        """Multi-round: thinking → tools → thinking → response creates
+        sequential sections."""
+        chunks = [
+            # First round: thinking then tool call
+            type('C', (), {'thinking': 'I need to', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': ' check the file', 'content': '', 'tool_calls': None})(),
+            type('C', (), {
+                'thinking': '', 'content': '',
+                'tool_calls': [
+                    type('TC', (), {'name': 'read_file', 'arguments': {'path': 'x.txt'}})()
+                ]
+            })(),
+            # Second round: thinking then response
+            type('C', (), {'thinking': 'Now I', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': ' know the answer', 'content': '', 'tool_calls': None})(),
+            type('C', (), {'thinking': '', 'content': 'The file contains hello.', 'tool_calls': None})(),
+        ]
+
+        class FakeAgent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    yield chunk
+
+        async with ChatManagerTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            mgr = pilot.app.manager
+            mgr.set_agent(FakeAgent(chunks))
+
+            chat_input = mgr.query_one(ChatInput)
+            inp = chat_input.query_one(Input)
+            inp.value = "Read x.txt"
+            inp.post_message(Input.Submitted(inp, "Read x.txt"))
+            await _settle(pilot, n=15)
+
+            display = mgr.query_one(ChatDisplay)
+            tree = display.query_one(Tree)
+            root = tree._node_map["chat-display-root"]
+            asst_node = root.children[-1]
+
+            # Should have the sequential layout:
+            # thinking, tools, thinking, response
+            section_types = [c.data["section"] for c in asst_node.children]
+            assert section_types == ["thinking", "tools", "thinking", "response"]
+
+            # Thinking content is preserved — not cleared when tools arrive.
+            thinking_sections = [c for c in asst_node.children
+                                if c.data["section"] == "thinking"]
+            assert len(thinking_sections) == 2
+
+            # All thinking text should be persisted.
+            asst_msg = mgr._history[1]
+            assert "I need to check the file" in (asst_msg.get("thinking") or "")
+            assert "Now I know the answer" in (asst_msg.get("thinking") or "")
 
     async def test_error_during_streaming_shown_in_response(self):
         """If the agent raises, the error is shown in the response section."""
@@ -226,7 +284,7 @@ class TestChatManagerStreaming:
             inp = chat_input.query_one(Input)
             inp.value = "Cause error"
             inp.post_message(Input.Submitted(inp, "Cause error"))
-            await _settle(pilot, n=8)
+            await _settle(pilot, n=15)
 
             display = mgr.query_one(ChatDisplay)
             tree = display.query_one(Tree)
@@ -253,7 +311,7 @@ class TestChatManagerStreaming:
             inp = chat_input.query_one(Input)
             inp.value = "Hi"
             inp.post_message(Input.Submitted(inp, "Hi"))
-            await _settle(pilot, n=8)
+            await _settle(pilot, n=15)
 
             display = mgr.query_one(ChatDisplay)
             tree = display.query_one(Tree)

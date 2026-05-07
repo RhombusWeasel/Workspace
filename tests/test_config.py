@@ -126,6 +126,62 @@ class TestDefaults:
         assert cfg.get("x") == "second"
 
 
+class TestModuleDefaults:
+    """Tests for module-level register_defaults() / get_registered_defaults()."""
+
+    def test_register_defaults_empty_by_default(self):
+        from core.config import get_registered_defaults, reset_registered_defaults
+        reset_registered_defaults()
+        assert get_registered_defaults() == {}
+
+    def test_register_defaults_accumulates(self):
+        from core.config import (
+            get_registered_defaults,
+            register_defaults,
+            reset_registered_defaults,
+        )
+        reset_registered_defaults()
+        register_defaults({"session": {"provider": "ollama"}})
+        register_defaults({"session": {"model": "llama3"}})
+        defaults = get_registered_defaults()
+        assert defaults["session"]["provider"] == "ollama"
+        assert defaults["session"]["model"] == "llama3"
+
+    def test_register_defaults_later_overrides_earlier(self):
+        from core.config import (
+            get_registered_defaults,
+            register_defaults,
+            reset_registered_defaults,
+        )
+        reset_registered_defaults()
+        register_defaults({"x": "first"})
+        register_defaults({"x": "second"})
+        assert get_registered_defaults()["x"] == "second"
+
+    def test_get_registered_defaults_returns_deep_copy(self):
+        from core.config import (
+            get_registered_defaults,
+            register_defaults,
+            reset_registered_defaults,
+        )
+        reset_registered_defaults()
+        register_defaults({"a": {"b": 1}})
+        copy1 = get_registered_defaults()
+        copy2 = get_registered_defaults()
+        copy1["a"]["b"] = 999
+        assert copy2["a"]["b"] == 1  # second copy unaffected
+
+    def test_reset_registered_defaults_clears_all(self):
+        from core.config import (
+            get_registered_defaults,
+            register_defaults,
+            reset_registered_defaults,
+        )
+        register_defaults({"a": 1})
+        reset_registered_defaults()
+        assert get_registered_defaults() == {}
+
+
 class TestSave:
     def test_save_writes_to_last_path(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
+import ollama._types as _ollama_types
 import pytest
 
 from core.config import Config
@@ -84,7 +85,7 @@ class TestModelResolution:
     def test_default_model_when_nothing_configured(self, tmp_path):
         config = _make_config(tmp_path)
         provider = OllamaProvider(config=config)
-        assert provider.model == "llama3.2"
+        assert provider.model == "deepseek-v4-pro:cloud"
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +188,48 @@ class TestMessageMapping:
             {"role": "user", "content": "Hi"},
         ]
 
+    def test_maps_assistant_message_with_tool_calls(self, tmp_path):
+        """Assistant messages with tool_calls include them in the Ollama dict."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+        msg = Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(id="", name="read_file", arguments={"path": "/tmp/x"}),
+            ],
+        )
+        result = provider._to_ollama_message(msg)
+        assert result == {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "read_file", "arguments": {"path": "/tmp/x"}}}
+            ],
+        }
+
+    def test_maps_tool_message_with_name(self, tmp_path):
+        """Tool-role messages include tool_name in the Ollama dict."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+        msg = Message(role="tool", content="file contents", name="read_file")
+        result = provider._to_ollama_message(msg)
+        assert result == {
+            "role": "tool",
+            "content": "file contents",
+            "tool_name": "read_file",
+        }
+
+    def test_plain_assistant_message_omits_tool_fields(self, tmp_path):
+        """Assistant messages without tool_calls don't include empty tool fields."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+        msg = Message(role="assistant", content="Hello!")
+        result = provider._to_ollama_message(msg)
+        assert result == {"role": "assistant", "content": "Hello!"}
+        assert "tool_calls" not in result
+        assert "tool_name" not in result
+
 
 # ---------------------------------------------------------------------------
 # Tool mapping
@@ -285,7 +328,7 @@ class TestResponseNormalisation:
             arguments = {"path": "/tmp/x"}
 
         class FakeToolCall:
-            id = "call_1"
+            # No 'id' attribute — matches real ollama library ToolCall (v0.6.2)
             function = FakeToolCallFunction()
 
         class FakeOllamaMsg:
@@ -302,9 +345,33 @@ class TestResponseNormalisation:
         assert result.content == ""
         assert result.tool_calls is not None
         assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].id == "call_1"
+        assert result.tool_calls[0].id == ""  # no id on ollama ToolCall
         assert result.tool_calls[0].name == "read_file"
         assert result.tool_calls[0].arguments == {"path": "/tmp/x"}
+
+    def test_normalises_response_with_tool_calls_real_type(self, tmp_path):
+        """Normaliser handles real ollama ToolCall objects correctly."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+
+        tc = _ollama_types.Message.ToolCall(
+            function=_ollama_types.Message.ToolCall.Function(
+                name="read_file", arguments={"path": "/tmp/x"}
+            )
+        )
+        msg = _ollama_types.Message(role="assistant", content="", tool_calls=[tc])
+
+        class FakeOllamaResponse:
+            message = msg
+            prompt_eval_count = 20
+            eval_count = 10
+
+        result = provider._normalise_response(FakeOllamaResponse())
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "read_file"
+        assert result.tool_calls[0].arguments == {"path": "/tmp/x"}
+        assert result.tool_calls[0].id == ""  # ollama ToolCall has no id
 
     def test_normalises_streaming_chunk(self, tmp_path):
         config = _make_config(tmp_path)
@@ -363,6 +430,115 @@ class TestResponseNormalisation:
         assert result.usage is not None
         assert result.usage.prompt_tokens == 5
         assert result.usage.completion_tokens == 3
+
+    def test_normalises_stream_chunk_with_tool_calls(self, tmp_path):
+        """Streaming chunk with tool_calls extracts them into ToolCall objects."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+
+        class FakeToolCallFunction:
+            name = "read_file"
+            arguments = {"path": "/tmp/data.txt"}
+
+        class FakeToolCall:
+            # No 'id' attribute — matches real ollama library ToolCall (v0.6.2)
+            function = FakeToolCallFunction()
+
+        class FakeOllamaMsg:
+            role = "assistant"
+            content = ""
+            tool_calls = [FakeToolCall()]
+
+        class FakeOllamaChunk:
+            message = FakeOllamaMsg()
+            done = True
+            prompt_eval_count = 12
+            eval_count = 8
+
+        result = provider._normalise_stream_chunk(FakeOllamaChunk())
+        assert isinstance(result, StreamChunk)
+        assert result.content == ""
+        assert result.done is True
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].id == ""  # no id on ollama ToolCall
+        assert result.tool_calls[0].name == "read_file"
+        assert result.tool_calls[0].arguments == {"path": "/tmp/data.txt"}
+        assert result.usage is not None
+        assert result.usage.prompt_tokens == 12
+        assert result.usage.completion_tokens == 8
+
+    def test_normalises_stream_chunk_with_tool_calls_real_type(self, tmp_path):
+        """Streaming normaliser handles real ollama ToolCall objects."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+
+        tc = _ollama_types.Message.ToolCall(
+            function=_ollama_types.Message.ToolCall.Function(
+                name="run_command", arguments={"command": "ls"}
+            )
+        )
+        msg = _ollama_types.Message(role="assistant", content="", tool_calls=[tc])
+
+        class FakeOllamaChunk:
+            message = msg
+            done = True
+            prompt_eval_count = 5
+            eval_count = 3
+
+        result = provider._normalise_stream_chunk(FakeOllamaChunk())
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "run_command"
+        assert result.tool_calls[0].arguments == {"command": "ls"}
+
+    def test_normalises_stream_chunk_without_tool_calls(self, tmp_path):
+        """Streaming chunk without tool_calls leaves the field as None."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+
+        class FakeOllamaMsg:
+            role = "assistant"
+            content = "some text"
+
+        class FakeOllamaChunk:
+            message = FakeOllamaMsg()
+            done = True
+            prompt_eval_count = 3
+            eval_count = 2
+
+        result = provider._normalise_stream_chunk(FakeOllamaChunk())
+        assert result.tool_calls is None
+
+    def test_normalises_stream_chunk_with_tool_calls_on_non_done_chunk(self, tmp_path):
+        """Tool calls are extracted even from non-done streaming chunks."""
+        config = _make_config(tmp_path)
+        provider = OllamaProvider(config=config)
+
+        class FakeToolCallFunction:
+            name = "read_file"
+            arguments = {"path": "/tmp/data.txt"}
+
+        class FakeToolCall:
+            function = FakeToolCallFunction()
+
+        class FakeOllamaMsg:
+            role = "assistant"
+            content = ""
+            tool_calls = [FakeToolCall()]
+
+        class FakeOllamaChunk:
+            message = FakeOllamaMsg()
+            done = False
+
+        result = provider._normalise_stream_chunk(FakeOllamaChunk())
+        assert result.done is False
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "read_file"
+        assert result.tool_calls[0].arguments == {"path": "/tmp/data.txt"}
+        # No usage on non-done chunks
+        assert result.usage is None
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +628,57 @@ class TestChatMethod:
             {"role": "system", "content": "Be brief."},
             {"role": "user", "content": "Hello"},
         ]
+
+    @pytest.mark.asyncio
+    async def test_chat_passes_tool_call_and_tool_messages(self, tmp_path):
+        """Messages with tool_calls and name are serialized to Ollama format."""
+        config = _make_config(tmp_path)
+
+        class FakeMsg:
+            role = "assistant"
+            content = "done"
+
+        class FakeResp:
+            message = FakeMsg()
+            prompt_eval_count = 0
+            eval_count = 0
+
+        fake_client = FakeOllamaAsyncClient(chat_return=FakeResp())
+
+        with patch(
+            "core.providers.ollama.AsyncClient", return_value=fake_client
+        ):
+            provider = OllamaProvider(config=config, model="llama3")
+            await provider.chat(
+                messages=[
+                    Message(role="user", content="Read foo.txt"),
+                    Message(
+                        role="assistant",
+                        content="",
+                        tool_calls=[
+                            ToolCall(id="", name="read_file", arguments={"path": "foo.txt"}),
+                        ],
+                    ),
+                    Message(role="tool", content="hello world", name="read_file"),
+                ],
+                model="llama3",
+            )
+
+        call = fake_client.chat_calls[0]
+        msgs = call["messages"]
+        assert msgs[0] == {"role": "user", "content": "Read foo.txt"}
+        assert msgs[1] == {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "read_file", "arguments": {"path": "foo.txt"}}}
+            ],
+        }
+        assert msgs[2] == {
+            "role": "tool",
+            "content": "hello world",
+            "tool_name": "read_file",
+        }
 
     @pytest.mark.asyncio
     async def test_chat_passes_tools_when_provided(self, tmp_path):
@@ -686,6 +913,53 @@ class TestStreamChat:
                 model="llama3",
             )
             assert isinstance(result, AsyncIterator)
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_yields_tool_calls(self, tmp_path):
+        """Streaming chat that returns tool calls populates them in the final chunk."""
+        config = _make_config(tmp_path)
+
+        class FakeToolCallFunction:
+            name = "run_command"
+            arguments = {"command": "ls -la"}
+
+        class FakeToolCall:
+            # No 'id' attribute — matches real ollama library ToolCall (v0.6.2)
+            function = FakeToolCallFunction()
+
+        class FakeMsg:
+            role = "assistant"
+            content = ""
+            tool_calls = [FakeToolCall()]
+
+        class FakeChunk:
+            message = FakeMsg()
+            done = True
+            prompt_eval_count = 15
+            eval_count = 10
+
+        fake_client = FakeOllamaAsyncClient(
+            chat_stream_items=[FakeChunk()]
+        )
+
+        with patch(
+            "core.providers.ollama.AsyncClient", return_value=fake_client
+        ):
+            provider = OllamaProvider(config=config, model="llama3")
+            chunks = []
+            async for chunk in provider.stream_chat(
+                messages=[Message(role="user", content="List files")],
+                model="llama3",
+            ):
+                chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert chunks[0].done is True
+        assert chunks[0].tool_calls is not None
+        assert len(chunks[0].tool_calls) == 1
+        assert chunks[0].tool_calls[0].name == "run_command"
+        assert chunks[0].tool_calls[0].arguments == {"command": "ls -la"}
+        assert chunks[0].tool_calls[0].id == ""  # ollama has no id
 
 
 # ---------------------------------------------------------------------------

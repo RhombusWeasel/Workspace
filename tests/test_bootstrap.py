@@ -167,6 +167,124 @@ class TestBootstrap:
         ctx.database.close()
         reset_tools2()
 
+    def test_defaults_applied_when_no_config_files(self, tmp_path, monkeypatch):
+        """Bootstrap applies bundled and registered defaults when no JSON files exist."""
+        from bootstrap import Bootstrap
+        from core.tools import reset as reset_tools
+        from core.commands import reset_commands
+        from core.config import (
+            register_defaults,
+            reset_registered_defaults,
+        )
+
+        reset_tools()
+        reset_commands()
+        reset_registered_defaults()
+
+        cody_dir = tmp_path / "cody"
+        agents_dir = tmp_path / "agents"
+        working_dir = tmp_path / "working"
+        os.makedirs(working_dir)  # needed for SQLite db creation
+
+        # Create a minimal bundled config.json with base defaults
+        cfg_dir = cody_dir / "config"
+        os.makedirs(cfg_dir)
+        _write_file(cfg_dir / "config.json", json.dumps({
+            "session": {"provider": "ollama", "model": "bundled-model"},
+            "ollama": {"base_url": "http://localhost:11434"},
+        }))
+
+        # Also register some module-level defaults (simulating module registration)
+        register_defaults({"skills": {"enabled": {"coding": True}}})
+        register_defaults({"ui": {"sidebar_width": 40}})
+
+        # Create a minimal tcss dir so collect_tcss doesn't fail
+        ui_dir = cody_dir / "ui" / "workspace"
+        os.makedirs(ui_dir)
+        _write_file(ui_dir / "styles.tcss", "Button {}")
+
+        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
+
+        b = Bootstrap(
+            working_directory=str(working_dir),
+            cody_dir=str(cody_dir),
+            agents_dir=str(agents_dir),
+        )
+        ctx = b.run()
+
+        # Bundled config provides these
+        assert ctx.config.get("session.provider") == "ollama"
+        assert ctx.config.get("session.model") == "bundled-model"
+        assert ctx.config.get("ollama.base_url") == "http://localhost:11434"
+
+        # Module-registered defaults fill these (not in bundled config)
+        assert ctx.config.get("skills.enabled") == {"coding": True}
+        assert ctx.config.get("ui.sidebar_width") == 40
+
+        ctx.database.close()
+        reset_tools()
+
+    def test_project_config_overrides_defaults(self, tmp_path, monkeypatch):
+        """Project-tier config overrides both bundled defaults and registered defaults."""
+        from bootstrap import Bootstrap
+        from core.tools import reset as reset_tools
+        from core.commands import reset_commands
+        from core.config import (
+            register_defaults,
+            reset_registered_defaults,
+        )
+
+        reset_tools()
+        reset_commands()
+        reset_registered_defaults()
+
+        cody_dir = tmp_path / "cody"
+        agents_dir = tmp_path / "agents"
+        working_dir = tmp_path / "working"
+        os.makedirs(working_dir)  # needed for SQLite db creation
+
+        # Bundled config
+        cfg_dir = cody_dir / "config"
+        os.makedirs(cfg_dir)
+        _write_file(cfg_dir / "config.json", json.dumps({
+            "session": {"provider": "ollama", "model": "bundled-model"},
+        }))
+
+        # Project config overrides
+        proj_cfg = working_dir / ".agents" / "config"
+        os.makedirs(proj_cfg)
+        _write_file(proj_cfg / "config.json", json.dumps({
+            "session": {"model": "project-override"},
+        }))
+
+        # Module registers a default that project does NOT override
+        register_defaults({"skills": {"enabled": {"coding": False}}})
+
+        ui_dir = cody_dir / "ui" / "workspace"
+        os.makedirs(ui_dir)
+        _write_file(ui_dir / "styles.tcss", "Button {}")
+
+        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
+
+        b = Bootstrap(
+            working_directory=str(working_dir),
+            cody_dir=str(cody_dir),
+            agents_dir=str(agents_dir),
+        )
+        ctx = b.run()
+
+        # Project overrides the bundled default for model
+        assert ctx.config.get("session.provider") == "ollama"  # from bundled
+        assert ctx.config.get("session.model") == "project-override"  # from project
+
+        # Module default still applies (project didn't override it)
+        assert ctx.config.get("skills.enabled") == {"coding": False}
+
+        ctx.database.close()
+        reset_tools()
+
 
 # ---------------------------------------------------------------------------
 # Autouse — reset registries
@@ -179,8 +297,10 @@ def _reset_registries():
     from core.commands import reset_commands
     from core.skills import skill_manager
     from core.leader import reset_leader
+    from core.config import reset_registered_defaults
 
     reset_tools()
     reset_commands()
     skill_manager.reset()
     reset_leader()
+    reset_registered_defaults()

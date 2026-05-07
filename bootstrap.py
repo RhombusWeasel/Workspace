@@ -19,7 +19,7 @@ import os
 import importlib.util
 from context import AppContext
 from core import paths
-from core.config import Config
+from core.config import Config, get_registered_defaults
 from core.skills import skill_manager
 from core.database import DatabaseManager
 from core.leader import leader as leader_registry
@@ -69,7 +69,11 @@ class Bootstrap:
     # ------------------------------------------------------------------
 
     def _init_config(self) -> Config:
-        """Load layered config: cody/ → ~/.agents/ → {wd}/.agents/."""
+        """Load layered config: cody/ → ~/.agents/ → {wd}/.agents/.
+
+        After loading JSON files, applies module-level defaults registered
+        via :func:`~core.config.register_defaults` for any keys still missing.
+        """
         cfg_paths: list[str] = []
 
         bundled = os.path.join(self._cody_dir, "config", "config.json")
@@ -84,7 +88,10 @@ class Bootstrap:
         if os.path.isfile(project):
             cfg_paths.append(project)
 
-        return Config(cfg_paths)
+        cfg = Config(cfg_paths)
+        cfg.defaults(get_registered_defaults())
+        cfg.apply_defaults()
+        return cfg
 
     # ------------------------------------------------------------------
     # Phase 2 — Skills

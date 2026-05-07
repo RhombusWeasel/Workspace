@@ -1,0 +1,12 @@
+{
+  "session": {
+    "provider": "ollama",
+    "model": "deepseek-v4-pro:cloud"
+  },
+  "ollama": {
+    "base_url": "http://localhost:11434"
+  },
+  "skills": {
+    "enabled": {}
+  }
+}

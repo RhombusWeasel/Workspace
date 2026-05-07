@@ -106,25 +106,34 @@ class ChatManager(Widget):
         self._chat_display.add_user_message(user_text)
         self._history.append({"role": "user", "content": user_text})
 
-        # Assistant branch.
-        asst_id = self._chat_display.begin_assistant_turn()
+        # Assistant branch (no sections yet — added on demand).
+        self._chat_display.begin_assistant_turn()
 
         # New rows were mounted synchronously; yield to the event loop
-        # so Markdown widgets finish their mount lifecycle before we
-        # call update() on them.
+        # so the assistant branch finishes its mount lifecycle before we
+        # add sections to it.
         self.refresh(layout=True)
         await asyncio.sleep(0)
 
         if self._agent is None:
-            await self._chat_display.update_section("response", "No agent configured.")
+            section_id = self._chat_display.add_section("response")
+            await self._chat_display.update_section(section_id, "No agent configured.")
             self._chat_display.finalize_turn()
             self._chat_input.focus()
             return
 
-        accumulated = ""
-        thinking_accumulated = ""
+        # Track the currently active display section.  When the
+        # content type transitions we close out the current section
+        # and open a new one — this produces the sequential layout
+        # (Thinking → Tools → Thinking → … → Response).
+        current_section_id: str | None = None
+        current_section_type: str | None = None
+        section_text: str = ""
+
+        # Persistence accumulators (independent of display sections).
+        all_thinking: str = ""
         all_tool_calls: list[dict[str, Any]] = []
-        tools_text = ""
+        final_response: str = ""
 
         try:
             async for chunk in self._agent.stream_chat(
@@ -134,54 +143,74 @@ class ChatManager(Widget):
             ):
                 # --- Thinking ---
                 if chunk.thinking:
-                    thinking_accumulated += chunk.thinking
+                    if current_section_type != "thinking":
+                        current_section_id = self._chat_display.add_section("thinking")
+                        current_section_type = "thinking"
+                        section_text = ""
+                    section_text += chunk.thinking
+                    all_thinking += chunk.thinking
                     await self._chat_display.update_section(
-                        "thinking", thinking_accumulated
+                        current_section_id, section_text
                     )
 
                 # --- Tool calls ---
                 if chunk.tool_calls:
-                    # Tool calls replace thinking display (agent stops thinking).
-                    if thinking_accumulated:
-                        await self._chat_display.update_section("thinking", "")
-                        thinking_accumulated = ""
-                    accumulated = ""
+                    # Tool calls mark a transition — close the current section
+                    # and open a new tools section.  Each round of tool calls
+                    # gets its own section in the display.
+                    current_section_id = None
+                    current_section_type = None
+                    section_text = ""
 
+                    tools_section_id = self._chat_display.add_section("tools")
+                    tools_text = ""
                     for tc in chunk.tool_calls:
                         all_tool_calls.append({
                             "name": tc.name,
                             "arguments": tc.arguments,
                         })
                         tools_text += (
-                            f"🔧 `{tc.name}("
+                            f"\U0001f527 `{tc.name}("
                             f"{_format_args(tc.arguments)})`\n"
                         )
-                    await self._chat_display.update_section("tools", tools_text)
+                    await self._chat_display.update_section(
+                        tools_section_id, tools_text
+                    )
 
                 # --- Response text ---
                 if chunk.content:
-                    accumulated += chunk.content
+                    if current_section_type != "response":
+                        current_section_id = self._chat_display.add_section("response")
+                        current_section_type = "response"
+                        section_text = ""
+                    section_text += chunk.content
+                    final_response = section_text
                     await self._chat_display.update_section(
-                        "response", accumulated
+                        current_section_id, section_text
                     )
 
         except Exception as exc:
+            if current_section_type != "response":
+                current_section_id = self._chat_display.add_section("response")
+                current_section_type = "response"
+                section_text = ""
+            section_text = f"Error: {exc}"
             await self._chat_display.update_section(
-                "response", f"Error: {exc}"
+                current_section_id, section_text
             )
 
         # --- Post-turn ---
-        if accumulated:
+        if final_response:
             self._history.append({
                 "role": "assistant",
-                "content": accumulated,
-                "thinking": thinking_accumulated,
+                "content": final_response,
+                "thinking": all_thinking or None,
                 "tool_calls": all_tool_calls if all_tool_calls else None,
             })
 
         self._save_turn(
-            user_text, accumulated,
-            thinking=thinking_accumulated,
+            user_text, final_response,
+            thinking=all_thinking,
             tool_calls=all_tool_calls if all_tool_calls else None,
         )
 
