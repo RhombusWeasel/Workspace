@@ -1,0 +1,21 @@
+WorkspaceTabs {
+    height: 1fr;
+    width: 1fr;
+}
+
+WorkspaceTabs .tab-bar {
+    height: 1;
+    width: 1fr;
+    background: $surface;
+}
+
+WorkspaceTabs .tab-item {
+    height: 1;
+    width: auto;
+}
+
+WorkspaceTabs .tab-content {
+    height: 1fr;
+    width: 1fr;
+    border: tall $surface-lighten-1;
+}
