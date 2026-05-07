@@ -21,6 +21,8 @@ from ui.workspace import Workspace
 
 # Import leader overlay early so its @register_handler("app.open_leader") runs.
 import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handler registration
+# Import file open handler so its @register_handler("files.open") runs.
+import ui.workspace.file_open_handler  # noqa: F401 — side-effect import for handler registration
 
 
 # ---------------------------------------------------------------------------
