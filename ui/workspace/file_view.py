@@ -13,8 +13,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from utils.icons import get_file_icon
-from ui.sidebar.panels.file_browser import _path_to_id
+from utils.dom_id import path_to_id
 
 
 class FileView(Widget):
@@ -36,7 +35,7 @@ class FileView(Widget):
     """
 
     def __init__(self, filepath: str):
-        super().__init__(id=_path_to_id(filepath))
+        super().__init__(id=path_to_id("fv", filepath))
         self._filepath = filepath
         self._content = ""
 

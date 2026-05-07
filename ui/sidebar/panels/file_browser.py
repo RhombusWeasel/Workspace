@@ -18,7 +18,8 @@ from core.events import CodyEvent
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeNeedsChildren
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
-from utils.icons import get_file_icon, get_folder_icon, ADD_FILE, ADD_DIR, RENAME, DELETE, EDIT, REFRESH, FOLDER_OPEN
+from utils.dom_id import path_to_id
+from utils.icons import get_file_icon, get_folder_icon, EDIT, RENAME, DELETE, REFRESH, FOLDER_OPEN
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -69,18 +70,6 @@ def _dir_buttons() -> list[RowButton]:
         RowButton(_RENAME, "Rename", "btn-rename"),
         RowButton(_DEL, "Del", "btn-del"),
     ]
-
-
-def _path_to_id(path: str) -> str:
-    """Convert an absolute path to a valid Textual DOM id.
-
-    Uses basename + short hash for uniqueness while staying readable.
-    """
-    name = os.path.basename(path) or "root"
-    h = hashlib.sha256(path.encode()).hexdigest()[:6]
-    # Sanitize for Textual DOM id: only letters, numbers, underscores, hyphens
-    safe = name.replace(".", "_").replace(" ", "_")
-    return f"fb-{safe}-{h}"
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +140,7 @@ class FileBrowserPanel(Container):
         root_label = os.path.basename(self._wd) or self._wd
         children = self._scan_dir(self._wd)
         root = TreeNode(
-            _path_to_id(self._wd),
+            path_to_id("fb", self._wd),
             f"{get_folder_icon(self._wd)}  {root_label}",
             children=children,
             data={"path": self._wd, "type": "dir", "name": root_label},
@@ -182,7 +171,7 @@ class FileBrowserPanel(Container):
                 continue
 
             is_dir = os.path.isdir(full_path)
-            node_id = _path_to_id(full_path)
+            node_id = path_to_id("fb", full_path)
 
             if is_dir:
                 icon = get_folder_icon(name)

@@ -16,6 +16,7 @@ from core.events import CodyEvent, register_handler
 from ui.workspace.file_view import FileView
 from ui.workspace.workspace import PaneContainer
 from ui.workspace.tabs import WorkspaceTabs
+from utils.dom_id import path_to_id
 
 
 @register_handler("files.open")
@@ -48,23 +49,19 @@ def _on_files_open(data: dict, ctx: AppContext) -> None:
     except Exception:
         pass
 
+    filename = os.path.basename(filepath)
+    tab_id = path_to_id("file", filepath)
+
     if existing_tabs is not None:
         # Open in existing tabs
-        filename = os.path.basename(filepath)
-        tab_id = f"file-{_path_to_tab_id(filepath)}"
         existing_tabs.open_tab(tab_id, filename, FileView(filepath))
     else:
         # Create new WorkspaceTabs and set as pane content
         tabs = WorkspaceTabs()
-        filename = os.path.basename(filepath)
-        tab_id = f"file-{_path_to_tab_id(filepath)}"
+
         async def _do() -> None:
             # Mount the tabs widget in the container
             await container.mount(tabs)
             tabs.open_tab(tab_id, filename, FileView(filepath))
+
         app.run_worker(_do())
-
-
-def _path_to_tab_id(filepath: str) -> str:
-    """Convert a filepath to a valid tab ID (no dots, no spaces)."""
-    return os.path.basename(filepath).replace(".", "_").replace(" ", "_")
