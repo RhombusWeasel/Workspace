@@ -4,6 +4,10 @@ The workspace owns a :class:`~core.pane_tree.Pane` tree and composes it
 into Textual ``Horizontal`` / ``Vertical`` containers.  Each leaf pane is
 wrapped in a :class:`PaneContainer` that draws a border and manages focus.
 
+Every pane launches with a :class:`~ui.workspace.tabs.WorkspaceTabs` so
+the user immediately sees a tabbed interface.  A "Welcome" tab is opened
+in the initial pane on startup.
+
 Navigation: vim-style ``Ctrl+hjkl`` or mouse click.
 Leader chords post :class:`~core.events.CodyEvent` messages.
 """
@@ -29,6 +33,7 @@ from core.pane_tree import (
     get_leaves,
 )
 from core.events import CodyEvent
+from ui.workspace.tabs import WorkspaceTabs
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +117,7 @@ class Workspace(Widget):
             self._tree = split(self._tree, self.focused_id, direction, ratio, new_id)
         except ValueError:
             return
-        await self.recompose()
+        await self._recompose_preserving_content()
 
     async def close_pane(self) -> None:
         """Close the currently focused pane."""
@@ -122,7 +127,7 @@ class Workspace(Widget):
             return
         leaves = get_leaves(self._tree)
         self.focused_id = leaves[0].id if leaves else ""
-        await self.recompose()
+        await self._recompose_preserving_content()
 
     def navigate(self, direction: str) -> None:
         """Move focus in *direction* (``"left"``, ``"right"``, ``"up"``, ``"down"``).
@@ -146,7 +151,7 @@ class Workspace(Widget):
             self._tree = set_content(self._tree, pane_id, content)
         except ValueError:
             return
-        await self.recompose()
+        await self._recompose_preserving_content()
 
     def get_leaf_ids(self) -> list[str]:
         return [leaf.id for leaf in get_leaves(self._tree)]
@@ -165,11 +170,11 @@ class Workspace(Widget):
             if pane.id == self.focused_id:
                 container.focused = True
             content = pane.content
-            if content is not None:
-                with container:
+            with container:
+                if content is not None:
                     yield content
-            else:
-                yield container
+                else:
+                    yield WorkspaceTabs()
         else:
             layout_cls = Horizontal if pane.direction == "h" else Vertical
             layout = layout_cls(id=f"split-{pane.id}")
@@ -186,6 +191,95 @@ class Workspace(Widget):
                 container.focused = (leaf.id == self.focused_id)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Content preservation around recomposition
+    # ------------------------------------------------------------------
+
+    def _save_pane_tab_states(self) -> dict[str, "SavedTabState"]:
+        """Collect tab state from every pane that has a WorkspaceTabs."""
+        from ui.workspace.tabs import WorkspaceTabs, SavedTabState
+
+        states: dict[str, SavedTabState] = {}
+        for leaf in get_leaves(self._tree):
+            try:
+                container = self.query_one(f"#pane-{leaf.id}", PaneContainer)
+                tabs = container.query_one(WorkspaceTabs)
+                states[leaf.id] = tabs.save_state()
+            except Exception:
+                pass
+        return states
+
+    def _restore_pane_tab_states(self, states: dict[str, "SavedTabState"]) -> None:
+        """Restore tab state into any pane that previously had tabs.
+
+        After a recompose, each ``PaneContainer`` whose leaf has no
+        direct content already contains a fresh ``WorkspaceTabs``
+        (yielded by ``_compose_tree``).  This method restores saved
+        tab state into that existing instance rather than creating a
+        redundant one.
+
+        Panes whose leaf has direct content (set via
+        :meth:`set_pane_content`) are skipped — they display a widget
+        directly, not a tabbed interface.
+        """
+        from ui.workspace.tabs import SavedTabState
+
+        # Panes with direct content don't use WorkspaceTabs.
+        direct_content_ids = {
+            leaf.id
+            for leaf in get_leaves(self._tree)
+            if leaf.content is not None
+        }
+
+        for pane_id, state in states.items():
+            if pane_id in direct_content_ids:
+                continue
+            try:
+                container = self.query_one(f"#pane-{pane_id}", PaneContainer)
+                try:
+                    tabs = container.query_one(WorkspaceTabs)
+                except Exception:
+                    # Fallback: create a new one if compose didn't
+                    tabs = WorkspaceTabs()
+                    container.mount(tabs)
+                tabs.restore_state(state)
+            except Exception:
+                pass
+
+    async def _recompose_preserving_content(self) -> None:
+        """Recompose the widget tree while preserving WorkspaceTabs content.
+
+        Saves all tab state before recomposing and restores it afterward
+        so that open files survive workspace splits and closes.
+        """
+        saved = self._save_pane_tab_states()
+        await self.recompose()
+        self._restore_pane_tab_states(saved)
+
+    # ------------------------------------------------------------------
+    # Initial welcome tab
+    # ------------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        """Open a Welcome tab in the initially focused pane."""
+        self.run_worker(self._open_welcome_tab())
+
+    async def _open_welcome_tab(self) -> None:
+        """Open the Welcome tab in the focused pane's WorkspaceTabs."""
+        from ui.workspace.welcome_view import WelcomeView
+
+        try:
+            container = self.query_one(f"#pane-{self.focused_id}", PaneContainer)
+            tabs = container.query_one(WorkspaceTabs)
+        except Exception:
+            return
+
+        tabs.open_tab(
+            "welcome",
+            "Welcome",
+            content_factory=lambda: WelcomeView(),
+        )
 
     # ------------------------------------------------------------------
     # Focus from click

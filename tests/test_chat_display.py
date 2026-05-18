@@ -74,8 +74,8 @@ class TestChatDisplay:
 
 
 class TestAddUserMessage:
-    async def test_creates_user_leaf_in_tree(self):
-        """add_user_message creates a leaf node in the tree root."""
+    async def test_creates_user_branch_in_tree(self):
+        """add_user_message creates a branch node with a Markdown leaf."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
@@ -85,10 +85,29 @@ class TestAddUserMessage:
             tree = pilot.app._chat_display.query_one(Tree)
             node = tree._node_map.get(node_id)
             assert node is not None
-            assert "Hello" in node.label
+            # It's now a branch with a Markdown child
+            assert len(node.children) == 1
+            leaf = node.children[0]
+            assert isinstance(leaf.content, Markdown)
 
-    async def test_user_node_has_role_data(self):
-        """User message node stores role='user' in data."""
+    async def test_user_branch_has_dual_labels(self):
+        """User branch shows truncated label by default, short label when expanded."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            node_id = pilot.app._chat_display.add_user_message("Hello, world!")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            node = tree._node_map[node_id]
+            # Collapsed label contains the message preview
+            assert "Hello" in node.label
+            # Expanded label is just "User"
+            assert node.label_expanded is not None
+            assert "User" in node.label_expanded
+
+    async def test_user_branch_has_role_data(self):
+        """User message branch stores role='user' in data."""
         async with ChatDisplayTestApp().run_test() as pilot:
             await pilot.pause()
 
@@ -120,6 +139,17 @@ class TestAddUserMessage:
             tree = pilot.app._chat_display.query_one(Tree)
             root = tree._node_map["chat-display-root"]
             assert len(root.children) == 2
+
+    async def test_user_branch_auto_expanded(self):
+        """User message branches are expanded by default."""
+        async with ChatDisplayTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            node_id = pilot.app._chat_display.add_user_message("Hello")
+            await _settle(pilot)
+
+            tree = pilot.app._chat_display.query_one(Tree)
+            assert tree.is_expanded(node_id)
 
 
 # ---------------------------------------------------------------------------
@@ -529,12 +559,23 @@ class TestConversationTree:
             root = tree._node_map["chat-display-root"]
             assert len(root.children) == 4  # user1, asst1, user2, asst2
 
-            # Turn 1 sections
+            # User branches each have a Markdown leaf child.
+            u1 = root.children[0]
+            assert u1.data["role"] == "user"
+            assert len(u1.children) == 1
+            assert isinstance(u1.children[0].content, Markdown)
+
+            u2 = root.children[2]
+            assert u2.data["role"] == "user"
+            assert len(u2.children) == 1
+            assert isinstance(u2.children[0].content, Markdown)
+
+            # Turn 1 assistant sections
             a1 = root.children[1]
             a1_sections = {c.data["section"] for c in a1.children}
             assert a1_sections == {"thinking", "response"}
 
-            # Turn 2 sections
+            # Turn 2 assistant sections
             a2 = root.children[3]
             a2_sections = {c.data["section"] for c in a2.children}
             assert a2_sections == {"tools", "response"}

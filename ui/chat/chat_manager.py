@@ -3,6 +3,10 @@
 Composes a :class:`~ui.chat.chat_input.ChatInput` and
 :class:`~ui.chat.chat_display.ChatDisplay`, catching ``ChatSubmitted``
 messages and driving the full streaming cycle through an LLM agent.
+
+Supports aborting an in-progress stream via the abort button or
+``Escape`` key.  When aborted, the partial response is preserved
+in the display and history.
 """
 
 from __future__ import annotations
@@ -13,9 +17,12 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widget import Widget
+from textual.widgets import Input
 
+from core.commands import execute_command, list_commands
 from ui.chat.chat_input import ChatInput
 from ui.chat.chat_display import ChatDisplay
+from ui.chat.command_palette import CommandPalette
 
 
 class ChatManager(Widget):
@@ -25,6 +32,12 @@ class ChatManager(Widget):
     ``ChatInput.ChatSubmitted``, runs the agent streaming loop, updates
     the display, tracks history, and optionally persists turns to a
     database.
+
+    Aborting:  When the user presses the abort button or Escape during
+    a stream, ``ChatInput.ChatAbortRequested`` is caught here.  The
+    agent's ``abort()`` method is called, the ``CancelledError``
+    exception from the streaming loop is handled gracefully, and the
+    partial response is saved.
     """
 
     def __init__(self):
@@ -34,6 +47,7 @@ class ChatManager(Widget):
         self._history: list[dict[str, Any]] = []
         self._db: Any = None
         self._chat_id: str | None = None
+        self._streaming_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
     # Composition
@@ -42,12 +56,16 @@ class ChatManager(Widget):
     def compose(self) -> ComposeResult:
         with Vertical():
             self._chat_display = ChatDisplay()
+            self._chat_palette = CommandPalette()
             self._chat_input = ChatInput()
             yield self._chat_display
+            yield self._chat_palette
             yield self._chat_input
 
     def on_mount(self) -> None:
         self._chat_input.focus()
+        # Wire up palette reference so ChatInput can control it
+        self._chat_input.set_palette(self._chat_palette)
 
     # ------------------------------------------------------------------
     # Setup
@@ -92,13 +110,56 @@ class ChatManager(Widget):
         self._tools = get_tools()
 
     # ------------------------------------------------------------------
+    # Command palette selection
+    # ------------------------------------------------------------------
+
+    def on_command_palette_command_selected(
+        self, event: CommandPalette.CommandSelected
+    ) -> None:
+        """Handle selection from the command palette — fill the input."""
+        event.stop()
+        self._chat_palette.hide()
+        # Suppress the on_input_changed that setting value triggers,
+        # otherwise the palette re-shows because the text starts with /.
+        self._chat_input._suppress_palette_update = True
+        try:
+            inp = self._chat_input.query_one(Input)
+            inp.value = f"/{event.command_name} "
+            inp.cursor_end = True
+            inp.focus()
+        finally:
+            self._chat_input._suppress_palette_update = False
+
+    # ------------------------------------------------------------------
     # Message handling → streaming cycle
     # ------------------------------------------------------------------
 
     def on_chat_input_chat_submitted(self, event: ChatInput.ChatSubmitted) -> None:
-        """Handle a user submission — kick off the streaming turn."""
+        """Handle a user submission — detect slash commands or kick off streaming."""
+        event.stop()
+        text = event.text
+
+        # Slash command dispatch
+        if text.startswith("/"):
+            self._chat_input.clear()
+            self.run_worker(self._handle_command(text))
+            return
+
         self._chat_input.clear()
-        self.run_worker(self._handle_submit(event.text))
+        self._streaming_task = self.run_worker(self._handle_submit(text))
+
+    def on_chat_input_chat_abort_requested(
+        self, event: ChatInput.ChatAbortRequested
+    ) -> None:
+        """Handle abort request — cancel the streaming task."""
+        event.stop()
+        if self._streaming_task is not None and not self._streaming_task.is_finished:
+            self._agent.abort()
+            self._streaming_task.cancel()
+
+    # ------------------------------------------------------------------
+    # Streaming turn
+    # ------------------------------------------------------------------
 
     async def _handle_submit(self, user_text: str) -> None:
         """Full streaming turn: display user msg, stream assistant, save."""
@@ -122,10 +183,10 @@ class ChatManager(Widget):
             self._chat_input.focus()
             return
 
-        # Track the currently active display section.  When the
-        # content type transitions we close out the current section
-        # and open a new one — this produces the sequential layout
-        # (Thinking → Tools → Thinking → … → Response).
+        # Enter streaming mode.
+        self._chat_input.set_streaming(True)
+
+        # Track the currently active display section.
         current_section_id: str | None = None
         current_section_type: str | None = None
         section_text: str = ""
@@ -156,8 +217,7 @@ class ChatManager(Widget):
                 # --- Tool calls ---
                 if chunk.tool_calls:
                     # Tool calls mark a transition — close the current section
-                    # and open a new tools section.  Each round of tool calls
-                    # gets its own section in the display.
+                    # and open a new tools section.
                     current_section_id = None
                     current_section_type = None
                     section_text = ""
@@ -189,6 +249,28 @@ class ChatManager(Widget):
                         current_section_id, section_text
                     )
 
+        except asyncio.CancelledError:
+            # Aborted — preserve partial response.
+            # If we have some content, mark it as aborted.
+            if final_response or all_thinking or all_tool_calls:
+                # Add an "[aborted]" marker to the response if we have one.
+                if current_section_type == "response" and current_section_id:
+                    section_text += "\n\n*[aborted]*"
+                    await self._chat_display.update_section(
+                        current_section_id, section_text
+                    )
+                    final_response = section_text
+                else:
+                    # We haven't started a response section yet.
+                    abort_id = self._chat_display.add_section("response")
+                    await self._chat_display.update_section(abort_id, "*[aborted]*")
+                    final_response = "*[aborted]*"
+            else:
+                # Nothing received yet — show aborted marker.
+                abort_id = self._chat_display.add_section("response")
+                await self._chat_display.update_section(abort_id, "*[aborted]*")
+                final_response = "*[aborted]*"
+
         except Exception as exc:
             if current_section_type != "response":
                 current_section_id = self._chat_display.add_section("response")
@@ -214,12 +296,70 @@ class ChatManager(Widget):
             tool_calls=all_tool_calls if all_tool_calls else None,
         )
 
+        # Exit streaming mode.
+        self._chat_input.set_streaming(False)
         self._chat_display.finalize_turn()
         self._chat_input.focus()
 
     # ------------------------------------------------------------------
-    # Persistence
+    # Slash command dispatch
     # ------------------------------------------------------------------
+
+    async def _handle_command(self, text: str) -> None:
+        """Parse a slash command from *text* and execute it.
+
+        The format is ``/command_name [args]``.  If the command is not
+        found, a system message is shown with the error.
+        """
+        # Strip the leading slash and split into name + args.
+        without_slash = text[1:]
+        parts = without_slash.split(None, 1)
+        if not parts:
+            # Bare / with no command name — ignore.
+            self._chat_display.add_system_message(
+                "Type / followed by a command name."
+            )
+            self._chat_input.focus()
+            return
+        command_name = parts[0].lower()
+        command_args = parts[1] if len(parts) > 1 else ""
+
+        # Show what the user typed in the display.
+        self._chat_display.add_user_message(text)
+
+        try:
+            result = await execute_command(command_name, self.app, command_args)
+            # Command succeeded — show the result as a system message.
+            result_text = str(result) if result is not None else ""
+            if result_text:
+                self._chat_display.add_system_message(result_text)
+        except KeyError:
+            # Unknown command.
+            available = ", ".join(f"/{n}" for n in list_commands())
+            self._chat_display.add_system_message(
+                f"Unknown command: /{command_name}"
+                + (f"\nAvailable commands: {available}" if available else "")
+            )
+        except Exception as exc:
+            # Command raised an error.
+            self._chat_display.add_system_message(f"Error: {exc}")
+
+        self._chat_input.focus()
+
+    # ------------------------------------------------------------------
+    # New conversation
+    # ------------------------------------------------------------------
+
+    def new_conversation(self) -> None:
+        """Start a fresh conversation: clear display, reset history, create
+        a new database chat.
+        """
+        self._chat_display.clear()
+        self._history = []
+        if self._db is not None:
+            self._chat_id = self._db.create_chat()
+        self._chat_display.add_system_message("New conversation started.")
+        self._chat_input.focus()
 
     def _save_turn(
         self,

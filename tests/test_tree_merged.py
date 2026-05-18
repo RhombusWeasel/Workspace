@@ -11,6 +11,7 @@ from textual.widgets import Button, Label, Markdown, Static
 
 from ui.tree.tree import Tree, NodeSelected, NodeToggled, NodeNeedsChildren
 from ui.tree.tree_row import TreeNode, TreeRow, RowButton
+from utils.icons import OPEN, EDIT, DELETE, RENAME, ADD_FILE, ADD_DIR
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +101,8 @@ class TestTreeRowWithButtons:
     async def test_row_with_buttons_shows_button_labels(self):
         """A TreeRow with buttons renders each button with its label."""
         node = TreeNode("x", "File.py", buttons=[
-            RowButton("open", "Open", "btn-open"),
-            RowButton("del", "Del", "btn-del"),
+            RowButton("open", OPEN, "btn-open"),
+            RowButton("del", DELETE, "btn-del"),
         ])
         row = TreeRow(node, depth=0, is_branch=False, prefix="├── ")
 
@@ -112,13 +113,13 @@ class TestTreeRowWithButtons:
             buttons = row.query(Button)
             assert len(buttons) == 2
             labels = {b.label.plain for b in buttons}
-            assert "Open" in labels
-            assert "Del" in labels
+            assert OPEN in labels
+            assert DELETE in labels
 
     async def test_button_id_contains_node_id_and_action(self):
         """Button IDs follow the pattern act-{node_id}-{action_id}."""
         node = TreeNode("file1", "file.txt", buttons=[
-            RowButton("edit", "Edit", "btn-edit"),
+            RowButton("edit", EDIT, "btn-edit"),
         ])
         row = TreeRow(node, depth=0, is_branch=False)
 
@@ -135,7 +136,7 @@ class TestTreeRowWithButtons:
         node = TreeNode("dir", "Dir", children=[
             TreeNode("child", "Child"),
         ], buttons=[
-            RowButton("add", "Add", "btn-add"),
+            RowButton("add", ADD_FILE, "btn-add"),
         ])
         row = TreeRow(node, depth=0, is_branch=True, expanded=False, prefix="")
 
@@ -153,7 +154,7 @@ class TestTreeRowWithButtons:
         node = TreeNode("dir", "Dir", children=[
             TreeNode("child", "Child"),
         ], buttons=[
-            RowButton("add", "Add", "btn-add"),
+            RowButton("add", ADD_FILE, "btn-add"),
         ])
         row = TreeRow(node, depth=0, is_branch=True, expanded=False)
 
@@ -172,7 +173,7 @@ class TestTreeRowWithButtons:
         """A row with both content widget and buttons renders both."""
         content = Label("Inner content")
         node = TreeNode("x", "Leaf", content=content, buttons=[
-            RowButton("edit", "Edit", "btn-edit"),
+            RowButton("edit", EDIT, "btn-edit"),
         ])
         row = TreeRow(node, depth=0, is_branch=False, prefix="├── ")
 
@@ -197,7 +198,7 @@ class TestTreeRowButtonPressed:
     async def test_button_press_posts_button_pressed(self):
         """Clicking a button in a TreeRow posts ButtonPressed."""
         node = TreeNode("x", "File", buttons=[
-            RowButton("edit", "Edit", "btn-edit"),
+            RowButton("edit", EDIT, "btn-edit"),
         ])
         row = TreeRow(node, depth=0, is_branch=False)
 
@@ -401,10 +402,10 @@ class TestTreeBranchButtons:
         root = TreeNode("root", "root", children=[
             TreeNode("dir", "Dir", children=[
                 TreeNode("file", "file.py", buttons=[
-                    RowButton("open", "Open", ""),
+                    RowButton("open", OPEN, ""),
                 ]),
             ], buttons=[
-                RowButton("add", "Add", ""),
+                RowButton("add", ADD_FILE, ""),
             ]),
         ])
         async with TreeTestApp(root).run_test() as pilot:
@@ -429,7 +430,7 @@ class TestTreeBranchButtons:
             TreeNode("dir", "Dir", children=[
                 TreeNode("f", "file.txt"),
             ], buttons=[
-                RowButton("add", "Add", ""),
+                RowButton("add", ADD_FILE, ""),
             ]),
         ])
         async with TreeTestApp(root).run_test() as pilot:
@@ -444,7 +445,7 @@ class TestTreeBranchButtons:
         """A leaf node with buttons renders as a leaf TreeRow."""
         root = TreeNode("root", "root", children=[
             TreeNode("file", "file.py", buttons=[
-                RowButton("edit", "Edit", ""),
+                RowButton("edit", EDIT, ""),
             ]),
         ])
         async with TreeTestApp(root).run_test() as pilot:
@@ -461,7 +462,7 @@ class TestTreeBranchButtons:
         """ButtonPressed message from TreeRow reaches the Tree."""
         root = TreeNode("root", "root", children=[
             TreeNode("file", "file.py", buttons=[
-                RowButton("edit", "Edit", "btn-edit"),
+                RowButton("edit", EDIT, "btn-edit"),
             ]),
         ])
         async with TreeTestApp(root).run_test() as pilot:

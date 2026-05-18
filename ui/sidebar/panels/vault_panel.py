@@ -24,6 +24,7 @@ from core.vault import VaultManager
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import NodeSelected, NodeToggled, Tree
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
+from utils.icons import COPY, EDIT, DELETE
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -36,9 +37,9 @@ _DEL = "del"
 
 def _action_buttons() -> list[RowButton]:
     return [
-        RowButton(_COPY, "Copy", "vault-copy"),
-        RowButton(_EDIT, "Edit", "vault-edit"),
-        RowButton(_DEL, "Del", "vault-del"),
+        RowButton(_COPY, COPY, "vault-copy"),
+        RowButton(_EDIT, EDIT, "vault-edit"),
+        RowButton(_DEL, DELETE, "vault-del"),
     ]
 
 

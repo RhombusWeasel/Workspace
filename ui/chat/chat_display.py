@@ -22,11 +22,12 @@ from ui.tree.tree_row import TreeNode
 # ChatDisplay
 # ---------------------------------------------------------------------------
 
-_VALID_SECTIONS = frozenset({"thinking", "tools", "response"})
+_VALID_SECTIONS = frozenset({"thinking", "tools", "response", "system"})
 _SECTION_ICONS: dict[str, str] = {
     "thinking": "  \U000f0df6 Thinking",
     "tools": "  \U000f1074 Tools",
     "response": "  \U000f0b79 Response",
+    "system": "  \U000f0e38 System",
 }
 
 
@@ -35,7 +36,7 @@ class ChatDisplay(Widget):
 
     Provides a high-level API for building and updating a conversation:
 
-    * ``add_user_message(text)`` → leaf node for user text.
+    * ``add_user_message(text)`` → branch node for user text (with Markdown leaf).
     * ``begin_assistant_turn()`` → empty assistant branch node.
     * ``add_section(section_type)`` → new section branch, returns ID.
     * ``update_section(section_id, text)`` → streaming update.
@@ -65,13 +66,40 @@ class ChatDisplay(Widget):
     # ------------------------------------------------------------------
 
     def add_user_message(self, text: str) -> str:
-        """Add a user message leaf node.  Returns the node ID."""
+        """Add a user message as a branch node with a Markdown leaf.
+
+        Creates an expandable **User** branch whose child is a Markdown
+        widget rendering the full message.  The branch auto-expands so
+        the user can see what they just typed.
+
+        When expanded the label shows ``\uf007  User``; when collapsed
+        it shows a truncated preview like ``\uf007  User: Hello there...``.
+
+        Returns the branch node ID.
+        """
         self._turn_count += 1
         node_id = f"msg-{self._turn_count}"
-        label = f"\uf007  [cyan]User:[/cyan] {_truncate(text, 60)}"
-        node = TreeNode(node_id, label, data={"role": "user"})
-        self._root.children.append(node)
+
+        # Markdown leaf for the full user text.
+        md = Markdown(text, id=f"md-{node_id}")
+        leaf = TreeNode(f"{node_id}-leaf", "", content=md)
+
+        # Branch — dual labels so collapsed state shows a preview.
+        preview = _truncate(text, 60)
+        branch = TreeNode(
+            node_id,
+            f"\uf007  [cyan]User:[/cyan] {preview}",
+            label_expanded="\uf007  [cyan]User[/cyan]",
+            data={"role": "user"},
+            children=[leaf],
+        )
+        self._root.children.append(branch)
         self._rebuild()
+
+        # Expand the new user branch by default.
+        tree = self.query_one(Tree)
+        tree.expand_node(node_id)
+
         return node_id
 
     # ------------------------------------------------------------------
@@ -186,6 +214,55 @@ class ChatDisplay(Widget):
 
         self._active_asst_id = None
         self._section_md = {}
+
+    # ------------------------------------------------------------------
+    # System messages (command feedback)
+    # ------------------------------------------------------------------
+
+    def add_system_message(self, text: str) -> str:
+        """Add a system message as a standalone branch with a Markdown leaf.
+
+        System messages are used for command feedback (e.g. "Chat cleared.").
+        They appear as a single branch with a Markdown child, similar to
+        user messages but styled differently.
+
+        Returns the branch node ID.
+        """
+        self._turn_count += 1
+        node_id = f"msg-{self._turn_count}"
+
+        md = Markdown(text, id=f"md-{node_id}")
+        leaf = TreeNode(f"{node_id}-leaf", "", content=md)
+
+        branch = TreeNode(
+            node_id,
+            "  \U000f0e38 [dim]System[/dim]",
+            data={"role": "system"},
+            children=[leaf],
+        )
+        self._root.children.append(branch)
+        self._rebuild()
+
+        tree = self.query_one(Tree)
+        tree.expand_node(node_id)
+
+        return node_id
+
+    # ------------------------------------------------------------------
+    # Reset
+    # ------------------------------------------------------------------
+
+    def clear(self) -> None:
+        """Remove all messages from the display and reset internal state.
+
+        Does not affect the database — only clears the visual tree.
+        """
+        self._root.children.clear()
+        self._turn_count = 0
+        self._section_count = 0
+        self._active_asst_id = None
+        self._section_md = {}
+        self._rebuild()
 
     # ------------------------------------------------------------------
     # Helpers

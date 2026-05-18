@@ -56,6 +56,13 @@ class TreeNode:
         Unique identifier for this node.
     label:
         Display text shown in the indent / toggle prefix area.
+        For branch nodes, this is the label used when **collapsed**.
+    label_expanded:
+        Optional alternative label shown when this branch node is
+        **expanded**.  When set, the tree row displays this label
+        instead of ``label`` while the branch is open — useful for
+        showing a short title when the content is visible and a
+        longer preview when the branch is collapsed.
     children:
         Child nodes (makes this a branch when non-empty).
     data:
@@ -77,6 +84,7 @@ class TreeNode:
 
     id: str
     label: str
+    label_expanded: str | None = None
     children: list[TreeNode] = field(default_factory=list)
     data: Any = None
     content: Widget | None = None
@@ -99,7 +107,7 @@ _INDENT = "    "
 # ---------------------------------------------------------------------------
 
 
-class _RowLabel(Widget):
+class _RowLabel(Static):
     """Label area within a :class:`TreeRow` that handles clicks for
     selection and toggle, independently of action buttons.
 
@@ -110,29 +118,25 @@ class _RowLabel(Widget):
     DEFAULT_CSS = """
     _RowLabel {
         width: 1fr;
-        height: auto;
-        min-height: 1;
+        height: 1;
+        overflow: hidden hidden;
     }
     """
 
-    def __init__(self, text: str, node: TreeNode, is_branch: bool):
-        super().__init__()
-        self._text = text
+    def __init__(
+        self, text: str, node: TreeNode, is_branch: bool, row: TreeRow
+    ):
+        super().__init__(text)
         self._node = node
         self._is_branch = is_branch
-
-    def compose(self) -> ComposeResult:
-        yield Static(self._text)
+        self._row = row
 
     def on_click(self, event) -> None:
         event.stop()
-        parent = self.ancestor(TreeRow)
-        if parent is None:
-            return
         if self._is_branch:
-            parent.post_message(TreeRow.Toggled(self._node))
+            self._row.post_message(TreeRow.Toggled(self._node))
         else:
-            parent.post_message(TreeRow.Selected(self._node))
+            self._row.post_message(TreeRow.Selected(self._node))
 
 
 # ---------------------------------------------------------------------------
@@ -198,29 +202,32 @@ class TreeRow(Widget):
         """Build the full display string for this row."""
         if self.is_branch:
             toggle = "\u25bc " if self.expanded else "\u25b6 "  # ▼ / ▶
+            label = (
+                self.node.label_expanded
+                if (self.expanded and self.node.label_expanded is not None)
+                else self.node.label
+            )
         else:
             toggle = ""
-        return f"{self.prefix}{toggle}{self.node.label}"
+            label = self.node.label
+        return f"{self.prefix}{toggle}{label}"
 
     def compose(self) -> ComposeResult:
         # Label area — handles clicks for select/toggle
         self._label = _RowLabel(
-            self._render_label(), self.node, self.is_branch
+            self._render_label(), self.node, self.is_branch, self
         )
         with Horizontal(classes="tree-row-inner"):
             yield self._label
             if self.node.content is not None:
                 yield self.node.content
-
-        # Buttons — handle their own clicks independently
-        if self.node.buttons:
-            with Horizontal(classes="tree-row-buttons"):
-                for btn in self.node.buttons:
-                    yield Button(
-                        btn.label,
-                        id=f"act-{self.node.id}-{btn.action_id}",
-                        classes=btn.style or "",
-                    )
+            # Buttons inline on the same row as the label
+            for btn in self.node.buttons:
+                yield Button(
+                    btn.label,
+                    id=f"act-{self.node.id}-{btn.action_id}",
+                    classes="tree-icon-btn " + (btn.style or ""),
+                )
 
     @property
     def label_text(self) -> str:
@@ -231,11 +238,7 @@ class TreeRow(Widget):
         """Update the expand/collapse indicator and re-render the label."""
         self.expanded = expanded
         if hasattr(self, "_label"):
-            self._label._text = self._render_label()
-            # Update the Static inside _RowLabel
-            statics = self._label.query(Static)
-            if statics:
-                statics[0].update(self._render_label())
+            self._label.update(self._render_label())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route button clicks to ``ButtonPressed`` message."""

@@ -6,6 +6,9 @@ hierarchically.  Leaf nodes display ``key: value`` and have an
 for inline editing.  Changes are applied immediately via
 :meth:`Config.set()`.
 
+Editing ``ui.theme`` also applies the theme live via ``app.theme``,
+which triggers ``CodyApp._watch_theme`` to persist the choice.
+
 Tree structure::
 
     Configuration
@@ -28,6 +31,7 @@ from core.config import Config
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
+from utils.icons import EDIT
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -37,7 +41,7 @@ _EDIT = "edit"
 
 
 def _edit_button() -> list[RowButton]:
-    return [RowButton(_EDIT, "Edit", "config-edit")]
+    return [RowButton(_EDIT, EDIT, "config-edit")]
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +121,7 @@ def _coerce_value(raw: str, original: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@register_sidebar_tab(name="config", icon="\ue795", side="left",
+@register_sidebar_tab(name="config", icon="", side="left",
                        tooltip="Config")
 class ConfigPanel(Container):
     """Sidebar panel showing configuration as an editable tree.
@@ -283,5 +287,10 @@ class ConfigPanel(Container):
             if self._config is not None:
                 self._config.set(dot_key, new_value)
                 self._rebuild()
+
+                # Live-apply config keys that have immediate UI effects.
+                if dot_key == "ui.theme" and isinstance(new_value, str):
+                    if new_value in self.app.available_themes:
+                        self.app.theme = new_value
 
         self.app.run_worker(do_edit())

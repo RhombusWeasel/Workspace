@@ -48,6 +48,7 @@ class Bootstrap:
         config = self._init_config()
         skills = self._discover_skills(config)
         self._load_tools(skills)
+        self._load_commands(skills)
         self._load_sidebar_panels(skills)
         database = self._init_database(config)
         vault = self._init_vault()
@@ -154,6 +155,26 @@ class Bootstrap:
         self._import_modules_from(core_panels)
 
         # Skill panels (future: discover from skill dirs)
+
+    # ------------------------------------------------------------------
+    # Phase 4b — Slash commands
+    # ------------------------------------------------------------------
+
+    def _load_commands(self, skills) -> None:
+        """Load slash commands: core cmd/ directory + skill cmd/ directories.
+
+        Uses ``load_commands_from_paths`` which imports every ``.py`` file
+        and triggers ``@register_command()`` decorators at import time.
+        """
+        from core.commands import load_commands_from_paths
+
+        # Core commands
+        core_cmd_dir = os.path.join(self._cody_dir, "cmd")
+
+        # Skill commands — each skill may have a cmd/ subdirectory
+        skill_cmd_dirs = skills.get_skill_cmd_dirs()
+
+        load_commands_from_paths([core_cmd_dir] + skill_cmd_dirs)
 
     # ------------------------------------------------------------------
     # Phase 5 — Database

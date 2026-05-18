@@ -15,14 +15,22 @@ from textual.widgets import Footer, Header
 
 from bootstrap import Bootstrap
 from context import AppContext
+from core.config import register_defaults
 from core.events import CodyEvent, dispatch
 from ui.sidebar.sidebar import Sidebar, SidebarContainer
 from ui.workspace import Workspace
 
+# ---------------------------------------------------------------------------
+# Config defaults — UI theme
+# ---------------------------------------------------------------------------
+
+_UI_DEFAULT_THEME = "textual-dark"
+register_defaults({"ui": {"theme": _UI_DEFAULT_THEME}})
+
 # Import leader overlay early so its @register_handler("app.open_leader") runs.
 import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handler registration
-# Import file open handler so its @register_handler("files.open") runs.
-import ui.workspace.file_open_handler  # noqa: F401 — side-effect import for handler registration
+# Import file edit handler so its @register_handler("files.edit") runs.
+import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for handler registration
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +61,36 @@ class CodyApp(App):
         self.CSS_PATH = context.css_paths
         self.context = context
         context.app = self
+        self._theme_loading = False
         super().__init__()
+
+    # ------------------------------------------------------------------
+    # Theme persistence
+    # ------------------------------------------------------------------
+
+    def _apply_theme_from_config(self) -> None:
+        """Set the Textual theme from the persisted config value."""
+        cfg = self.context.config
+        if cfg is None:
+            return
+        theme_name = cfg.get("ui.theme", _UI_DEFAULT_THEME)
+        if theme_name and theme_name in self.available_themes:
+            self._theme_loading = True
+            self.theme = theme_name
+            self._theme_loading = False
+
+    def _watch_theme(self, theme_name: str) -> None:
+        """Persist theme pick to config whenever the theme changes.
+
+        This covers every source of theme change:
+        * Textual's built-in theme picker (header → Change Theme).
+        * ``ConfigPanel`` editing ``ui.theme``.
+        * Any future action that sets ``self.theme``.
+        """
+        super()._watch_theme(theme_name)
+        if not self._theme_loading and self.context.config is not None:
+            self.context.config.set("ui.theme", theme_name)
+            self.context.config.save()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -74,6 +111,7 @@ class CodyApp(App):
         yield Footer()
 
     async def on_mount(self) -> None:
+        self._apply_theme_from_config()
         self.ws.focus()
 
     def action_open_leader(self) -> None:

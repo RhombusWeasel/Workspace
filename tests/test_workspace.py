@@ -5,6 +5,8 @@ from textual.app import App, ComposeResult
 from textual.widgets import Label, Static
 
 from ui.workspace.workspace import Workspace, PaneContainer
+from ui.workspace.tabs import WorkspaceTabs
+from ui.workspace.welcome_view import WelcomeView
 from core.pane_tree import get_leaves
 
 
@@ -42,12 +44,31 @@ class WorkspaceTestApp(App):
 
 
 class TestWorkspaceInitialState:
-    async def test_starts_with_one_empty_pane(self):
+    async def test_starts_with_single_pane(self):
+        """The workspace starts with one leaf pane ('main')."""
         async with WorkspaceTestApp().run_test() as pilot:
             ws = pilot.app.workspace
             leaves = get_leaves(ws.tree)
             assert len(leaves) == 1
             assert leaves[0].id == "main"
+
+    async def test_initial_pane_has_workspace_tabs(self):
+        """Each pane starts with a WorkspaceTabs widget (tabbed interface)."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            container = pilot.app.query_one("#pane-main", PaneContainer)
+            tabs = container.query_one(WorkspaceTabs)
+            assert tabs is not None
+
+    async def test_initial_pane_has_welcome_tab(self):
+        """The initial pane opens a Welcome tab on startup."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            tabs = pilot.app.query_one("#pane-main", PaneContainer).query_one(WorkspaceTabs)
+            # The welcome tab is opened asynchronously via run_worker
+            await pilot.pause()
+            assert tabs.tab_count >= 1
+            assert tabs.active_tab_id == "welcome"
 
     async def test_focused_id_is_main(self):
         async with WorkspaceTestApp().run_test() as pilot:
@@ -327,3 +348,109 @@ class TestGetLeafIds:
             ids = ws.get_leaf_ids()
             assert "main" in ids
             assert len(ids) == 2
+
+
+class TestTabbedWorkspace:
+    """Tests for the tabbed workspace feature.
+
+    Every pane starts with a WorkspaceTabs widget, and the initial pane
+    opens a Welcome tab on startup.
+    """
+
+    async def test_each_pane_has_workspace_tabs(self):
+        """Every pane composes a WorkspaceTabs inside its PaneContainer."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            container = pilot.app.query_one("#pane-main", PaneContainer)
+            tabs = container.query_one(WorkspaceTabs)
+            assert tabs is not None
+
+    async def test_welcome_tab_opens_on_startup(self):
+        """The initial pane opens a Welcome tab after mount."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            await pilot.pause()
+            tabs = pilot.app.query_one("#pane-main", PaneContainer).query_one(WorkspaceTabs)
+            assert tabs.tab_count >= 1
+            assert tabs.active_tab_id == "welcome"
+
+    async def test_new_pane_from_split_has_workspace_tabs(self):
+        """Splitting creates a new pane that also has a WorkspaceTabs."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            await ws.split_pane("h")
+            await pilot.pause()
+
+            leaves = get_leaves(ws.tree)
+            for leaf in leaves:
+                container = pilot.app.query_one(f"#pane-{leaf.id}", PaneContainer)
+                tabs = container.query_one(WorkspaceTabs)
+                assert tabs is not None
+
+    async def test_split_preserves_welcome_tab(self):
+        """Splitting preserves the welcome tab in the original pane."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            await pilot.pause()  # Wait for welcome tab
+
+            # Get the welcome tab before split
+            tabs_before = pilot.app.query_one("#pane-main", PaneContainer).query_one(WorkspaceTabs)
+            assert "welcome" in tabs_before._tabs
+
+            await ws.split_pane("h")
+            await pilot.pause()
+
+            # Welcome tab should still be in the main pane
+            tabs_after = pilot.app.query_one("#pane-main", PaneContainer).query_one(WorkspaceTabs)
+            assert "welcome" in tabs_after._tabs
+
+    async def test_close_welcome_tab(self):
+        """Closing the welcome tab leaves an empty WorkspaceTabs."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            await pilot.pause()  # Wait for welcome tab
+            tabs = pilot.app.query_one("#pane-main", PaneContainer).query_one(WorkspaceTabs)
+            assert tabs.tab_count >= 1
+
+            tabs.close_tab("welcome")
+            await pilot.pause()
+
+            assert tabs.tab_count == 0
+            assert tabs.active_tab_id is None
+
+    async def test_set_direct_content_replaces_tabs(self):
+        """Setting direct pane content replaces the tabbed interface."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            await ws.set_pane_content("main", Label("Direct content"))
+            await pilot.pause()
+
+            # The pane tree has direct content now
+            main_leaf = get_leaves(ws.tree)[0]
+            assert main_leaf.content is not None
+
+            # The DOM should have the label, not a WorkspaceTabs
+            container = pilot.app.query_one("#pane-main", PaneContainer)
+            labels = container.query(Label)
+            assert len(labels) >= 1
+
+    async def test_welcome_content_factory_survives_recompose(self):
+        """The welcome tab's content_factory survives a workspace recompose."""
+        async with WorkspaceTestApp().run_test() as pilot:
+            ws = pilot.app.workspace
+            await pilot.pause()  # Wait for welcome tab
+
+            # Split and then close the new pane to trigger recompose while
+            # keeping the original "main" pane intact.
+            await ws.split_pane("h")
+            leaves = get_leaves(ws.tree)
+            new_pane_id = next(leaf.id for leaf in leaves if leaf.id != "main")
+
+            # Focus the new pane and close it
+            ws.focused_id = new_pane_id
+            await ws.close_pane()
+            await pilot.pause()
+
+            # We should be back to one pane ("main")
+            assert len(get_leaves(ws.tree)) == 1
+            container = pilot.app.query_one("#pane-main", PaneContainer)
+            tabs = container.query_one(WorkspaceTabs)
+            assert "welcome" in tabs._tabs

@@ -12,29 +12,26 @@ TreeRow.-hidden {
     display: none;
 }
 
-TreeRow > Horizontal.tree-row-inner {
+.tree-row-inner {
     width: 1fr;
     height: auto;
 }
 
-TreeRow > Horizontal.tree-row-buttons {
-    height: 1;
-    width: auto;
-}
-
-TreeRow > Horizontal.tree-row-buttons Button {
-    width: 6;
+.tree-icon-btn {
+    width: 3;
+    min-width: 3;
     height: 1;
     border: none;
     padding: 0;
-    margin: 0 0 0 1;
-    background: $primary;
+    margin: 0;
+    color: $primary;
+    text-style: bold;
 }
 
 _RowLabel {
     width: 1fr;
-    height: auto;
-    min-height: 1;
+    height: 1;
+    overflow: hidden hidden;
 }
 
 _RowLabel:hover {
@@ -50,22 +47,4 @@ ActionRow {
 
 ActionRow.-hidden {
     display: none;
-}
-
-ActionRow > Horizontal.tree-row-inner {
-    width: 1fr;
-}
-
-ActionRow > Horizontal.tree-row-buttons {
-    height: 1;
-    width: auto;
-}
-
-ActionRow > Horizontal.tree-row-buttons Button {
-    width: 6;
-    height: 1;
-    border: none;
-    padding: 0;
-    margin: 0 0 0 1;
-    background: $primary;
 }

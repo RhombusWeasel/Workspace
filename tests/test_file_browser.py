@@ -175,8 +175,8 @@ class TestScanDirectory:
         finally:
             shutil.rmtree(tmpdir)
 
-    def test_scan_file_nodes_have_open_button(self):
-        """File nodes have an Open button."""
+    def test_scan_file_nodes_have_edit_button(self):
+        """File nodes have an Edit button."""
         from ui.sidebar.panels.file_browser import FileBrowserPanel
         tmpdir = _create_test_dir()
         try:
@@ -184,7 +184,7 @@ class TestScanDirectory:
             nodes = panel._scan_dir(tmpdir)
             readme_node = [n for n in nodes if "README" in n.label][0]
             action_ids = [b.action_id for b in readme_node.buttons]
-            assert "open" in action_ids
+            assert "edit" in action_ids
         finally:
             shutil.rmtree(tmpdir)
 

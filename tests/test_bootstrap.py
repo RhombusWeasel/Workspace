@@ -97,6 +97,18 @@ class TestBootstrap:
         os.makedirs(skill_tools)
         _write_tool_file(skill_tools, "code_tool.py", "code_review", ["skills"])
 
+        # Skill commands
+        skill_cmds = os.path.join(skills_dir, "coding", "cmd")
+        os.makedirs(skill_cmds)
+        _write_file(
+            os.path.join(skill_cmds, "test_cmd.py"),
+            'from core.commands import register_command\n'
+            '\n'
+            '@register_command(name="test_cmd", description="A test skill command")\n'
+            'async def test_cmd(app, args: str) -> str:\n'
+            '    return "test_cmd result"\n',
+        )
+
         # Set up tcss files in mock cody tier
         ui_dir = cody_dir / "ui" / "workspace"
         os.makedirs(ui_dir)
@@ -134,6 +146,12 @@ class TestBootstrap:
         tool_names = {t["function"]["name"] for t in all_tools}
         assert "echo" in tool_names
         assert "code_review" in tool_names
+
+        # Verify commands were loaded from core cmd/ and skill cmd/ dirs
+        from core.commands import get_commands
+        cmds = get_commands()
+        cmd_names = set(cmds.keys())
+        assert "test_cmd" in cmd_names  # loaded from skill cmd/ dir
 
         # Verify database
         assert ctx.database is not None

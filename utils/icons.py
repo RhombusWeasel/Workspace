@@ -11,26 +11,34 @@ import os
 # Action icons — used in RowButton labels, tab close buttons, etc.
 # ---------------------------------------------------------------------------
 
-FOLDER = "\uf07b"        # 󰉋  folder
-FILE = "\uf15b"          # 󰅛  generic file
-EDIT = "\uf040"          # 󰦊  pencil / edit
-DELETE = "\uf2ed"        # 󰆴  trash / delete
-RENAME = "\uf44d"        # 󰑕  rename / edit-alt
-ADD_FILE = "\uf15b"     # 󰝠  file-plus (using generic file + text)
-ADD_DIR = "\uf07b"       # 󰝔  folder-plus
-REFRESH = "\uf2f1"        # 󰑐  refresh / sync
-CLOSE = "\uf00d"          # 󰅖  times / close
-COPY = "\uf0c5"           # 󰆏  copy
-COLLAPSE = "\uf078"       # 󰅀  chevron-down
-EXPAND = "\uf054"         # 󰅁  chevron-right
-SEARCH = "\uf002"         # 󰍉  search / magnifying glass
+FOLDER = ""
+FILE = ""
+OPEN = ""           # 󰋗  eye / open
+EDIT = ""          # 󰦊  pencil / edit
+DELETE = ""        # 󰆴  trash / delete
+RENAME = "󰑕"        # 󰑕  rename / edit-alt
+ADD_FILE = ""     # 󰝠  file-plus (using generic file + text)
+ADD_DIR = ""       # 󰝔  folder-plus
+REFRESH = "󰑐"        # 󰑐  refresh / sync
+CLOSE = "󰅖"          # 󰅖  times / close
+COPY = "󰆏"           # 󰆏  copy
+COLLAPSE = "󰅀"       # 󰅀  chevron-down
+EXPAND = "󰅁"         # 󰅁  chevron-right
+SEARCH = "󰍉"         # 󰍉  search / magnifying glass
+
+# ---------------------------------------------------------------------------
+# Chat action icons
+# ---------------------------------------------------------------------------
+
+SEND = "󰁡"          # 󰁡  send / paper-plane
+ABORT = "󰿔"         # 󰿔  abort / stop-circle
 
 # ---------------------------------------------------------------------------
 # Folder icons
 # ---------------------------------------------------------------------------
 
-FOLDER_OPEN = "\uf07c"    # 󰉌  folder-open
-FOLDER_ICON = "\uf07b"    # 󰉋  same as FOLDER, used in tree labels
+FOLDER_OPEN = "󰉌"    # 󰉌  folder-open
+FOLDER_ICON = "󰉋"    # 󰉋  same as FOLDER, used in tree labels
 
 # ---------------------------------------------------------------------------
 # File type icons — extension → Nerd Font glyph
@@ -38,25 +46,25 @@ FOLDER_ICON = "\uf07b"    # 󰉋  same as FOLDER, used in tree labels
 
 _FILE_ICONS: dict[str, str] = {
     # Programming languages
-    ".py": "\ue73c",       # 󰌠  Python
-    ".js": "\ue74e",       # 󰌞  JavaScript
-    ".ts": "\ue628",       # 󰛦  TypeScript
-    ".jsx": "\ue7ba",      # 󰌺  React JSX
-    ".tsx": "\ue7ba",      # 󰌺  React TSX
-    ".rs": "\ue7a8",       # 󰚨  Rust
-    ".go": "\ue627",        # 󰛧  Go
-    ".rb": "\ue791",        # 󰞑  Ruby
-    ".java": "\ue738",      # 󰌸  Java
-    ".kt": "\ue634",        # 󰛴  Kotlin
-    ".swift": "\ue755",     # 󰝕  Swift
-    ".c": "\ue61e",         # 󰘞  C
-    ".cpp": "\ue61d",       # 󰘝  C++
-    ".h": "\uf0fd",         # 󰂽  header file
-    ".cs": "\ue627",        # 󰛧  C# (using .NET icon)
-    ".php": "\ue73d",       # 󰌽  PHP
-    ".lua": "\ue620",       # 󰘠  Lua
-    ".r": "\uf25d",         # 󰉝  R
-    ".scala": "\ue737",     # 󰌷  Scala
+    ".py": "",       # 󰌠  Python
+    ".js": "",       # 󰌞  JavaScript
+    ".ts": "",       # 󰛦  TypeScript
+    ".jsx": "",      # 󰌺  React JSX
+    ".tsx": "",      # 󰌺  React TSX
+    ".rs": "",       # 󰚨  Rust
+    ".go": "",        # 󰛧  Go
+    ".rb": "",        # 󰞑  Ruby
+    ".java": "",      # 󰌸  Java
+    ".kt": "",        # 󰛴  Kotlin
+    ".swift": "",     # 󰝕  Swift
+    ".c": "",         # 󰘞  C
+    ".cpp": "",       # 󰘝  C++
+    ".h": "",         # 󰂽  header file
+    ".cs": "",        # 󰛧  C# (using .NET icon)
+    ".php": "",       # 󰌽  PHP
+    ".lua": "",       # 󰘠  Lua
+    ".r": "",         # 󰉝  R
+    ".scala": "",     # 󰌷  Scala
 
     # Web / markup
     ".html": "\uf13b",      # 󰄻  HTML5

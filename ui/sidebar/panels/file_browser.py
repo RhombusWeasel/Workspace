@@ -19,13 +19,13 @@ from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeNeedsChildren
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
 from utils.dom_id import path_to_id
-from utils.icons import get_file_icon, get_folder_icon, EDIT, RENAME, DELETE, REFRESH, FOLDER_OPEN
+from utils.icons import get_file_icon, get_folder_icon, EDIT, RENAME, DELETE, ADD_FILE, ADD_DIR, REFRESH, FOLDER_OPEN
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_OPEN = "open"
+_EDIT = "edit"
 _ADD_FILE = "add_file"
 _ADD_DIR = "add_dir"
 _RENAME = "rename"
@@ -57,18 +57,18 @@ _IGNORED_NAMES: set[str] = {
 
 def _file_buttons() -> list[RowButton]:
     return [
-        RowButton(_OPEN, "Open", "btn-open"),
-        RowButton(_RENAME, "Rename", "btn-rename"),
-        RowButton(_DEL, "Del", "btn-del"),
+        RowButton(_EDIT, EDIT, "btn-edit"),
+        RowButton(_RENAME, RENAME, "btn-rename"),
+        RowButton(_DEL, DELETE, "btn-del"),
     ]
 
 
 def _dir_buttons() -> list[RowButton]:
     return [
-        RowButton(_ADD_FILE, "+File", "btn-add-file"),
-        RowButton(_ADD_DIR, "+Dir", "btn-add-dir"),
-        RowButton(_RENAME, "Rename", "btn-rename"),
-        RowButton(_DEL, "Del", "btn-del"),
+        RowButton(_ADD_FILE, ADD_FILE, "btn-add-file"),
+        RowButton(_ADD_DIR, ADD_DIR, "btn-add-dir"),
+        RowButton(_RENAME, RENAME, "btn-rename"),
+        RowButton(_DEL, DELETE, "btn-del"),
     ]
 
 
@@ -77,7 +77,7 @@ def _dir_buttons() -> list[RowButton]:
 # ---------------------------------------------------------------------------
 
 
-@register_sidebar_tab(name="files", icon="\ue795", side="left", tooltip="Files")
+@register_sidebar_tab(name="files", icon="󰉋", side="left", tooltip="Files")
 class FileBrowserPanel(Container):
     """Sidebar panel showing project directory structure.
 
@@ -87,7 +87,7 @@ class FileBrowserPanel(Container):
     directory, adding children, and refreshing the tree.
 
     Actions:
-    - **Open**: Posts ``CodyEvent("files.open")`` with the file path.
+    - **Edit**: Posts ``CodyEvent("files.edit")`` with the file path.
     - **Add File**: Creates an empty file in the selected directory.
     - **Add Dir**: Creates a new directory.
     - **Rename**: Renames a file or directory on disk.
@@ -192,7 +192,7 @@ class FileBrowserPanel(Container):
                     buttons=_file_buttons(),
                 ))
 
-        return nodes
+        return sorted(nodes, key=lambda n: (n.data.get("type", "") != "dir", n.label.lower()))
 
     # ------------------------------------------------------------------
     # Lazy loading handler
@@ -238,8 +238,8 @@ class FileBrowserPanel(Container):
         path = node.data.get("path", "")
         ntype = node.data.get("type", "")
 
-        if action == _OPEN:
-            self._open_file(path)
+        if action == _EDIT:
+            self._edit_file(path)
         elif action == _ADD_FILE and ntype == "dir":
             self._prompt_add_file(path)
         elif action == _ADD_DIR and ntype == "dir":
@@ -250,12 +250,12 @@ class FileBrowserPanel(Container):
             self._prompt_delete(path, node.data.get("name", ""))
 
     # ------------------------------------------------------------------
-    # Actions — Open
+    # Actions — Edit
     # ------------------------------------------------------------------
 
-    def _open_file(self, path: str) -> None:
-        """Post a files.open event with the file path."""
-        self.post_message(CodyEvent("files.open", {"path": path}))
+    def _edit_file(self, path: str) -> None:
+        """Post a files.edit event with the file path."""
+        self.post_message(CodyEvent("files.edit", {"path": path}))
 
     # ------------------------------------------------------------------
     # Actions — Add File

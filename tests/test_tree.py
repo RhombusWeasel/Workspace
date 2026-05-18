@@ -106,6 +106,16 @@ class TestTreeNode:
         assert node.content is widget
         assert len(node.children) == 1
 
+    def test_node_label_expanded_defaults_to_none(self):
+        """label_expanded defaults to None when not specified."""
+        node = TreeNode("x", "Label")
+        assert node.label_expanded is None
+
+    def test_node_label_expanded_can_be_set(self):
+        """label_expanded can be provided as an alternate label for expanded state."""
+        node = TreeNode("x", "Long preview text", label_expanded="Short")
+        assert node.label_expanded == "Short"
+
     def test_node_content_defaults_to_none(self):
         """content defaults to None when not specified."""
         node = TreeNode("x", "Label")
@@ -251,6 +261,46 @@ class TestTreeRow:
             plain = statics[0].render().plain
             # No toggle character, just prefix + label
             assert plain.startswith("├── Leaf")
+
+    async def test_row_label_expanded_when_expanded(self):
+        """Branch nodes show label_expanded when expanded."""
+        node = TreeNode("x", "Short preview", label_expanded="Short",
+                        children=[TreeNode("c", "Child")])
+        row = TreeRow(node, depth=0, is_branch=True, expanded=True)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+            statics = row.query(Static)
+            plain = statics[0].render().plain
+            assert "Short" in plain
+            assert "preview" not in plain
+
+    async def test_row_label_expanded_fallback_when_collapsed(self):
+        """Collapsed branch nodes fall back to label even if label_expanded is set."""
+        node = TreeNode("x", "Short preview", label_expanded="Short",
+                        children=[TreeNode("c", "Child")])
+        row = TreeRow(node, depth=0, is_branch=True, expanded=False)
+
+        app = App()
+        async with app.run_test() as pilot:
+            await pilot.app.mount(row)
+            await pilot.pause()
+            statics = row.query(Static)
+            plain = statics[0].render().plain
+            assert "preview" in plain
+
+    async def test_row_label_expanded_none_uses_label(self):
+        """When label_expanded is None, label is always used."""
+        node = TreeNode("x", "Always This", label_expanded=None,
+                        children=[TreeNode("c", "Child")])
+        row_expanded = TreeRow(node, depth=0, is_branch=True, expanded=True)
+        row_collapsed = TreeRow(node, depth=0, is_branch=True, expanded=False)
+
+        # Both should use "Always This" as the label
+        assert "Always This" in row_expanded._render_label()
+        assert "Always This" in row_collapsed._render_label()
 
 
 # ---------------------------------------------------------------------------

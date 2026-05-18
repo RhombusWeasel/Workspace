@@ -1,0 +1,9 @@
+FileEditor {
+    height: 1fr;
+    width: 1fr;
+}
+
+FileEditor TextArea {
+    height: 1fr;
+    width: 1fr;
+}

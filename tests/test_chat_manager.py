@@ -2,8 +2,12 @@
 
 ChatManager composes ChatInput + ChatDisplay and orchestrates the
 streaming loop, history tracking, and database persistence.
+
+Tests cover composition, setup, streaming orchestration (including
+abort), and persistence.
 """
 
+import asyncio
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Markdown
@@ -44,6 +48,18 @@ class ChatManagerTestApp(App):
 async def _settle(pilot, n: int = 2) -> None:
     for _ in range(n):
         await pilot.pause()
+
+
+def _make_chunk(**kwargs):
+    """Create a simple namespace chunk for fake agents."""
+    defaults = {"thinking": "", "content": "", "tool_calls": None}
+    defaults.update(kwargs)
+    return type("C", (), defaults)()
+
+
+def _make_tool_call(name, arguments):
+    """Create a simple namespace tool call."""
+    return type("TC", (), {"name": name, "arguments": arguments})()
 
 
 # ---------------------------------------------------------------------------
@@ -112,11 +128,11 @@ class TestChatManagerStreaming:
     async def test_full_streaming_flow_with_fake_agent(self):
         """A complete turn: user submit → streaming → tree updated."""
         chunks = [
-            type('C', (), {'thinking': 'Let me', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': ' think', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': '', 'content': 'Hello', 'tool_calls': None})(),
-            type('C', (), {'thinking': '', 'content': ' world', 'tool_calls': None})(),
-            type('C', (), {'thinking': '', 'content': '!', 'tool_calls': None})(),
+            _make_chunk(thinking="Let me"),
+            _make_chunk(thinking=" think"),
+            _make_chunk(content="Hello"),
+            _make_chunk(content=" world"),
+            _make_chunk(content="!"),
         ]
 
         class FakeAgent:
@@ -161,13 +177,10 @@ class TestChatManagerStreaming:
     async def test_streaming_with_tool_calls(self):
         """Tool calls create a tools section."""
         chunks = [
-            type('C', (), {
-                'thinking': '', 'content': '',
-                'tool_calls': [
-                    type('TC', (), {'name': 'get_weather', 'arguments': {'city': 'London'}})()
-                ]
-            })(),
-            type('C', (), {'thinking': '', 'content': 'The weather is sunny', 'tool_calls': None})(),
+            _make_chunk(tool_calls=[
+                _make_tool_call("get_weather", {"city": "London"})
+            ]),
+            _make_chunk(content="The weather is sunny"),
         ]
 
         class FakeAgent:
@@ -213,18 +226,15 @@ class TestChatManagerStreaming:
         sequential sections."""
         chunks = [
             # First round: thinking then tool call
-            type('C', (), {'thinking': 'I need to', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': ' check the file', 'content': '', 'tool_calls': None})(),
-            type('C', (), {
-                'thinking': '', 'content': '',
-                'tool_calls': [
-                    type('TC', (), {'name': 'read_file', 'arguments': {'path': 'x.txt'}})()
-                ]
-            })(),
+            _make_chunk(thinking="I need to"),
+            _make_chunk(thinking=" check the file"),
+            _make_chunk(tool_calls=[
+                _make_tool_call("read_file", {"path": "x.txt"})
+            ]),
             # Second round: thinking then response
-            type('C', (), {'thinking': 'Now I', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': ' know the answer', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': '', 'content': 'The file contains hello.', 'tool_calls': None})(),
+            _make_chunk(thinking="Now I"),
+            _make_chunk(thinking=" know the answer"),
+            _make_chunk(content="The file contains hello."),
         ]
 
         class FakeAgent:
@@ -328,6 +338,142 @@ class TestChatManagerStreaming:
 
 
 # ---------------------------------------------------------------------------
+# ChatManager — streaming toggle on ChatInput
+# ---------------------------------------------------------------------------
+
+
+class TestChatManagerStreamingToggle:
+    async def test_streaming_state_toggles_on_submit(self):
+        """ChatInput.set_streaming is called during a streaming turn."""
+        chunks = [
+            _make_chunk(content="Hi"),
+        ]
+
+        class SlowFakeAgent:
+            """Agent that yields slowly so we can observe streaming state."""
+            def __init__(self, chunks):
+                self._chunks = chunks
+                self._aborted = False
+
+            async def stream_chat(self, history, user_text, tools=None):
+                for chunk in self._chunks:
+                    await asyncio.sleep(0.05)
+                    yield chunk
+
+        async with ChatManagerTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            mgr = pilot.app.manager
+            mgr.set_agent(SlowFakeAgent(chunks))
+            chat_input = mgr.query_one(ChatInput)
+
+            # Before submitting, not streaming
+            assert chat_input.is_streaming is False
+
+            # Kick off submission
+            inp = chat_input.query_one(Input)
+            inp.value = "Hello?"
+            chat_input.post_message(ChatInput.ChatSubmitted("Hello?"))
+            await _settle(pilot)
+
+            # After completion, no longer streaming
+            assert chat_input.is_streaming is False
+
+
+# ---------------------------------------------------------------------------
+# ChatManager — abort
+# ---------------------------------------------------------------------------
+
+
+class TestChatManagerAbort:
+    async def test_abort_stops_streaming_and_shows_aborted_marker(self):
+        """Aborting a stream preserves partial content and shows [aborted]."""
+        # Use an agent that yields slowly and then a long pause, so we
+        # can abort mid-stream.
+        class AbortableAgent:
+            def __init__(self):
+                self._aborted = False
+
+            def abort(self):
+                self._aborted = True
+
+            async def stream_chat(self, history, user_text, tools=None):
+                # Yield a first chunk immediately
+                yield _make_chunk(content="Partial ")
+                # Then yield more; the task will be cancelled during sleep
+                await asyncio.sleep(0.1)
+                yield _make_chunk(content="should not appear")
+
+        async with ChatManagerTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            mgr = pilot.app.manager
+            agent = AbortableAgent()
+            mgr.set_agent(agent)
+            chat_input = mgr.query_one(ChatInput)
+
+            # Start streaming
+            inp = chat_input.query_one(Input)
+            inp.value = "Test abort"
+            chat_input.post_message(ChatInput.ChatSubmitted("Test abort"))
+            await pilot.pause()
+
+            # Now abort
+            chat_input.post_message(ChatInput.ChatAbortRequested())
+            await _settle(pilot, n=10)
+
+            # The partial content "Partial" should be in history
+            assert len(mgr._history) >= 2
+            asst_msg = mgr._history[1]
+            assert asst_msg["role"] == "assistant"
+            # Should contain the partial + aborted marker
+            assert "Partial" in asst_msg["content"]
+            assert "[aborted]" in asst_msg["content"]
+
+            # ChatInput should no longer be in streaming mode
+            assert chat_input.is_streaming is False
+
+    async def test_abort_when_no_content_received(self):
+        """Aborting before any content shows just [aborted]."""
+        class SlowStartAgent:
+            def __init__(self):
+                self._aborted = False
+
+            def abort(self):
+                self._aborted = True
+
+            async def stream_chat(self, history, user_text, tools=None):
+                # Long pause before any content — abort fires here
+                await asyncio.sleep(2.0)
+                yield _make_chunk(content="never")  # pragma: no cover
+
+        async with ChatManagerTestApp().run_test() as pilot:
+            await pilot.pause()
+
+            mgr = pilot.app.manager
+            agent = SlowStartAgent()
+            mgr.set_agent(agent)
+            chat_input = mgr.query_one(ChatInput)
+
+            inp = chat_input.query_one(Input)
+            inp.value = "Test"
+            chat_input.post_message(ChatInput.ChatSubmitted("Test"))
+            await pilot.pause()
+
+            # Abort immediately
+            chat_input.post_message(ChatInput.ChatAbortRequested())
+            await _settle(pilot, n=10)
+
+            # Should have [aborted] in response
+            assert len(mgr._history) >= 2
+            asst_msg = mgr._history[1]
+            assert "[aborted]" in asst_msg["content"]
+
+            # ChatInput should no longer be in streaming mode
+            assert chat_input.is_streaming is False
+
+
+# ---------------------------------------------------------------------------
 # ChatManager — persistence
 # ---------------------------------------------------------------------------
 
@@ -372,8 +518,8 @@ class TestChatManagerPersistence:
         import tempfile, os
 
         chunks = [
-            type('C', (), {'thinking': 'Hmm', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': '', 'content': 'Hi there!', 'tool_calls': None})(),
+            _make_chunk(thinking="Hmm"),
+            _make_chunk(content="Hi there!"),
         ]
 
         class FakeAgent:
@@ -429,9 +575,9 @@ class TestChatManagerPersistence:
         import tempfile, os
 
         chunks = [
-            type('C', (), {'thinking': 'Let me', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': ' think...', 'content': '', 'tool_calls': None})(),
-            type('C', (), {'thinking': '', 'content': 'The answer is 42.', 'tool_calls': None})(),
+            _make_chunk(thinking="Let me"),
+            _make_chunk(thinking=" think..."),
+            _make_chunk(content="The answer is 42."),
         ]
 
         class FakeAgent:
@@ -477,13 +623,10 @@ class TestChatManagerPersistence:
         import tempfile, os
 
         chunks = [
-            type('C', (), {
-                'thinking': '', 'content': '',
-                'tool_calls': [
-                    type('TC', (), {'name': 'read_file', 'arguments': {'path': 'test.txt'}})()
-                ]
-            })(),
-            type('C', (), {'thinking': '', 'content': 'Done.', 'tool_calls': None})(),
+            _make_chunk(tool_calls=[
+                _make_tool_call("read_file", {"path": "test.txt"})
+            ]),
+            _make_chunk(content="Done."),
         ]
 
         class FakeAgent:
