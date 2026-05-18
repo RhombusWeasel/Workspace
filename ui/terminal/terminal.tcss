@@ -1,0 +1,9 @@
+TerminalView {
+    height: 1fr;
+    width: 1fr;
+}
+
+TerminalView > Terminal {
+    height: 1fr;
+    width: 1fr;
+}

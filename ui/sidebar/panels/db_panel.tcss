@@ -1,0 +1,57 @@
+DBPanel {
+    height: 1fr;
+    padding: 0 1;
+}
+
+DBPanel Button {
+    min-width: 3;
+    border: none;
+    height: 1;
+}
+
+DBPanel .db-section-header {
+    text-style: bold;
+    color: $accent;
+    padding: 1 0 0 0;
+    height: 1;
+}
+
+DBPanel Tree {
+    height: auto;
+    max-height: 80%;
+    margin-bottom: 1;
+}
+
+DBPanel .db-actions {
+    height: 1;
+    margin-bottom: 1;
+}
+
+DBPanel .db-actions Button {
+    min-width: 8;
+}
+
+DBPanel .db-connection-open {
+    min-width: 3;
+    background: $success 30%;
+}
+
+DBPanel .db-connection-edit {
+    min-width: 3;
+    background: $warning 30%;
+}
+
+DBPanel .db-connection-del {
+    min-width: 3;
+    background: $error 30%;
+}
+
+DBPanel .db-connection-refresh {
+    min-width: 3;
+    background: $primary 30%;
+}
+
+DBPanel .db-table-select {
+    min-width: 3;
+    background: $accent 30%;
+}

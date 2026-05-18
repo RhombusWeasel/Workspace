@@ -33,6 +33,7 @@ from core.pane_tree import (
     get_leaves,
 )
 from core.events import CodyEvent
+from core.terminal_passthrough import register_terminal_passthrough
 from ui.workspace.tabs import WorkspaceTabs
 
 
@@ -210,7 +211,35 @@ class Workspace(Widget):
                 pass
         return states
 
-    def _restore_pane_tab_states(self, states: dict[str, "SavedTabState"]) -> None:
+    def _mark_terminals_preserving(
+        self, states: dict[str, "SavedTabState"]
+    ) -> None:
+        """Set the ``_preserving`` flag on every TerminalView in the DOM.
+
+        This prevents :meth:`TerminalView.on_unmount` from calling
+        ``stop()`` on the PtyTerminal during the DOM rebuild that
+        :meth:`recompose` performs.  The emulator has already been
+        detached by :meth:`TerminalView.detach_emulator` (called from
+        :meth:`save_state`), so ``stop()`` would be a no-op anyway,
+        but the flag adds an extra safety net.
+
+        The flag is cleared in :meth:`TerminalView.on_mount` once the
+        widget is back in the DOM.
+        """
+        from ui.terminal.terminal import TerminalView
+
+        # Query all TerminalViews directly from the DOM rather than
+        # from saved state, since SavedTab no longer carries widget
+        # references.
+        try:
+            for tv in self.query(TerminalView):
+                tv._preserving = True
+        except Exception:
+            pass
+
+    def _restore_pane_tab_states(
+        self, states: dict[str, "SavedTabState"]
+    ) -> set[str]:
         """Restore tab state into any pane that previously had tabs.
 
         After a recompose, each ``PaneContainer`` whose leaf has no
@@ -222,6 +251,8 @@ class Workspace(Widget):
         Panes whose leaf has direct content (set via
         :meth:`set_pane_content`) are skipped — they display a widget
         directly, not a tabbed interface.
+
+        Returns the set of pane IDs that were successfully restored.
         """
         from ui.workspace.tabs import SavedTabState
 
@@ -232,6 +263,7 @@ class Workspace(Widget):
             if leaf.content is not None
         }
 
+        restored: set[str] = set()
         for pane_id, state in states.items():
             if pane_id in direct_content_ids:
                 continue
@@ -244,18 +276,49 @@ class Workspace(Widget):
                     tabs = WorkspaceTabs()
                     container.mount(tabs)
                 tabs.restore_state(state)
+                restored.add(pane_id)
             except Exception:
                 pass
+        return restored
+
+    def _cleanup_orphaned_terminals(
+        self, states: dict[str, "SavedTabState"], restored: set[str]
+    ) -> None:
+        """Stop PTY emulators for terminals whose pane was closed.
+
+        When a pane is closed, its saved state is not restored (because
+        the pane no longer exists in the tree).  But the emulator, which
+        was detached by :meth:`TerminalView.detach_emulator` and not
+        adopted by any new terminal, is still alive with a running
+        shell.  This method stops those orphaned emulators.
+        """
+        for pane_id, state in states.items():
+            if pane_id in restored:
+                continue
+            for tab in state.tabs:
+                if tab.inherited_snapshot is not None:
+                    tab.inherited_snapshot.stop_emulator()
 
     async def _recompose_preserving_content(self) -> None:
         """Recompose the widget tree while preserving WorkspaceTabs content.
 
-        Saves all tab state before recomposing and restores it afterward
-        so that open files survive workspace splits and closes.
+        Saves all tab state (including live widget instances) before
+        recomposing and restores it afterward so that open files and
+        running terminals survive workspace splits and closes.
+
+        Terminals are kept alive across the DOM rebuild by setting their
+        ``_preserving`` flag, which stops ``on_unmount`` from killing the
+        PTY process.  After restoration the flag is cleared by
+        ``on_mount``.  The terminal's screen buffer and rendered display
+        are preserved in the :class:`TerminalSnapshot` so the user
+        doesn't lose their visible terminal output.  Orphaned terminals
+        (whose pane was closed) are cleaned up explicitly.
         """
         saved = self._save_pane_tab_states()
+        self._mark_terminals_preserving(saved)
         await self.recompose()
-        self._restore_pane_tab_states(saved)
+        restored = self._restore_pane_tab_states(saved)
+        self._cleanup_orphaned_terminals(saved, restored)
 
     # ------------------------------------------------------------------
     # Initial welcome tab
@@ -341,6 +404,11 @@ class Workspace(Widget):
 # ---------------------------------------------------------------------------
 # Leader chord registration
 # ---------------------------------------------------------------------------
+
+# These keys must not be consumed by the embedded terminal widget
+# so workspace navigation works even when the terminal has focus.
+register_terminal_passthrough({"ctrl+h", "ctrl+l", "ctrl+k", "ctrl+j", "ctrl+left", "ctrl+right", "ctrl+up", "ctrl+down"})
+
 
 def register_workspace_leader_chords() -> None:
     """Register workspace leader chords with the global leader registry.

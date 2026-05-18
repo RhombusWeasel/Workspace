@@ -1,0 +1,75 @@
+QueryEditor {
+    height: 100%;
+    width: 100%;
+}
+
+QueryEditor #query-header {
+    height: auto;
+    padding: 0 1;
+    background: $surface;
+    border-bottom: solid $primary;
+}
+
+QueryEditor #connection-label {
+    width: 1fr;
+    padding: 0 1;
+}
+
+QueryEditor #run-button {
+    margin: 0;
+    border: none;
+    background: $primary;
+    text-style: bold;
+    padding: 0;
+    height: 1;
+}
+
+QueryEditor #query-input {
+    height: 2fr;
+    border-bottom: solid $primary;
+}
+
+QueryEditor #results-area {
+    height: 1fr;
+}
+
+QueryEditor #results-header {
+    height: auto;
+    padding: 0 1;
+    background: $surface;
+}
+
+QueryEditor #results-status {
+    width: 1fr;
+}
+
+QueryEditor #results-table {
+    height: 1fr;
+}
+
+QueryEditor #pagination-bar {
+    height: auto;
+    padding: 0;
+    background: $surface;
+    dock: bottom;
+}
+
+QueryEditor #pagination-info {
+    width: 1fr;
+}
+
+QueryEditor #btn-prev {
+    border: none;
+    background: $primary;
+    text-style: bold;
+    padding: 0;
+    height: 1;
+}
+
+QueryEditor #btn-next {
+    border: none;
+    background: $primary;
+    text-style: bold;
+    padding: 0;
+    height: 1;
+}

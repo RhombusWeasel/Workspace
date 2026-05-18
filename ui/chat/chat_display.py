@@ -8,8 +8,6 @@ content arrives during streaming, producing a natural sequential layout
 
 from __future__ import annotations
 
-from typing import Any
-
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Markdown
@@ -292,8 +290,3 @@ def _truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 3] + "..."
-
-
-def _format_args(args: dict[str, Any]) -> str:
-    items = [f"{k}={v!r}" for k, v in args.items()]
-    return ", ".join(items)[:60]

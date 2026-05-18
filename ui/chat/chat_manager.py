@@ -6,12 +6,18 @@ messages and driving the full streaming cycle through an LLM agent.
 
 Supports aborting an in-progress stream via the abort button or
 ``Escape`` key.  When aborted, the partial response is preserved
-in the display and history.
+in the display and database.
+
+Section management is delegated to :class:`~ui.chat.stream_section.StreamSection`
+instances — one per display section (thinking, tool_call, response).
+The manager creates a new section each time the stream transitions
+to a different chunk type.
 """
 
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 from textual.app import ComposeResult
@@ -23,6 +29,8 @@ from core.commands import execute_command, list_commands
 from ui.chat.chat_input import ChatInput
 from ui.chat.chat_display import ChatDisplay
 from ui.chat.command_palette import CommandPalette
+from ui.chat.stream_section import StreamSection
+from ui.chat.tool_format import format_tool_call_display, format_tool_call_json
 
 
 class ChatManager(Widget):
@@ -30,8 +38,8 @@ class ChatManager(Widget):
 
     Composes a ``ChatInput`` and ``ChatDisplay``.  Listens for
     ``ChatInput.ChatSubmitted``, runs the agent streaming loop, updates
-    the display, tracks history, and optionally persists turns to a
-    database.
+    the display via :class:`StreamSection` watchers, and persists each
+    section to the database as it completes.
 
     Aborting:  When the user presses the abort button or Escape during
     a stream, ``ChatInput.ChatAbortRequested`` is caught here.  The
@@ -45,6 +53,9 @@ class ChatManager(Widget):
         self._agent: Any = None
         self._tools: list[dict[str, Any]] | None = None
         self._history: list[dict[str, Any]] = []
+        self._sections: list[dict[str, str]] = []
+        """In-memory mirror of flat sections — used to build history when
+        there is no database, and kept in sync for consistency."""
         self._db: Any = None
         self._chat_id: str | None = None
         self._streaming_task: asyncio.Task | None = None
@@ -163,9 +174,11 @@ class ChatManager(Widget):
 
     async def _handle_submit(self, user_text: str) -> None:
         """Full streaming turn: display user msg, stream assistant, save."""
-        # User message in display and history.
+        turn_id = uuid.uuid4().hex
+
+        # User message in display and database.
         self._chat_display.add_user_message(user_text)
-        self._history.append({"role": "user", "content": user_text})
+        self._persist_section(turn_id, "user", user_text)
 
         # Assistant branch (no sections yet — added on demand).
         self._chat_display.begin_assistant_turn()
@@ -177,8 +190,8 @@ class ChatManager(Widget):
         await asyncio.sleep(0)
 
         if self._agent is None:
-            section_id = self._chat_display.add_section("response")
-            await self._chat_display.update_section(section_id, "No agent configured.")
+            section = StreamSection(self._chat_display, "response")
+            await section.replace("No agent configured.")
             self._chat_display.finalize_turn()
             self._chat_input.focus()
             return
@@ -186,15 +199,7 @@ class ChatManager(Widget):
         # Enter streaming mode.
         self._chat_input.set_streaming(True)
 
-        # Track the currently active display section.
-        current_section_id: str | None = None
-        current_section_type: str | None = None
-        section_text: str = ""
-
-        # Persistence accumulators (independent of display sections).
-        all_thinking: str = ""
-        all_tool_calls: list[dict[str, Any]] = []
-        final_response: str = ""
+        watcher: StreamSection | None = None
 
         try:
             async for chunk in self._agent.stream_chat(
@@ -204,97 +209,92 @@ class ChatManager(Widget):
             ):
                 # --- Thinking ---
                 if chunk.thinking:
-                    if current_section_type != "thinking":
-                        current_section_id = self._chat_display.add_section("thinking")
-                        current_section_type = "thinking"
-                        section_text = ""
-                    section_text += chunk.thinking
-                    all_thinking += chunk.thinking
-                    await self._chat_display.update_section(
-                        current_section_id, section_text
-                    )
+                    if watcher is None or watcher.section_type != "thinking":
+                        # Close previous section and persist its text.
+                        if watcher is not None:
+                            self._persist_section(
+                                turn_id, watcher.section_type, watcher.text
+                            )
+                        watcher = StreamSection(self._chat_display, "thinking")
+                    await watcher.append(chunk.thinking)
 
                 # --- Tool calls ---
                 if chunk.tool_calls:
-                    # Tool calls mark a transition — close the current section
-                    # and open a new tools section.
-                    current_section_id = None
-                    current_section_type = None
-                    section_text = ""
-
-                    tools_section_id = self._chat_display.add_section("tools")
-                    tools_text = ""
-                    for tc in chunk.tool_calls:
-                        all_tool_calls.append({
-                            "name": tc.name,
-                            "arguments": tc.arguments,
-                        })
-                        tools_text += (
-                            f"\U0001f527 `{tc.name}("
-                            f"{_format_args(tc.arguments)})`\n"
+                    # Close previous section and persist its text.
+                    if watcher is not None:
+                        self._persist_section(
+                            turn_id, watcher.section_type, watcher.text
                         )
-                    await self._chat_display.update_section(
-                        tools_section_id, tools_text
-                    )
+                        watcher = None
+
+                    # Tool calls always get a fresh section.
+                    watcher = StreamSection(self._chat_display, "tools")
+                    tool_display = ""
+                    for tc in chunk.tool_calls:
+                        # Display-friendly markdown
+                        tool_display += format_tool_call_display(
+                            tc.name, tc.arguments
+                        )
+                        # Persist each tool call as a separate row (structured JSON).
+                        self._persist_section(
+                            turn_id,
+                            "tool_call",
+                            format_tool_call_json(tc.name, tc.arguments),
+                        )
+                    await watcher.replace(tool_display)
+                    # Tool section is a discrete display event — no additional
+                    # persistence needed here.  Each tool call was already
+                    # persisted as structured JSON above.
+                    watcher = None
 
                 # --- Response text ---
                 if chunk.content:
-                    if current_section_type != "response":
-                        current_section_id = self._chat_display.add_section("response")
-                        current_section_type = "response"
-                        section_text = ""
-                    section_text += chunk.content
-                    final_response = section_text
-                    await self._chat_display.update_section(
-                        current_section_id, section_text
-                    )
+                    if watcher is None or watcher.section_type != "response":
+                        # Close previous section and persist its text.
+                        if watcher is not None:
+                            self._persist_section(
+                                turn_id, watcher.section_type, watcher.text
+                            )
+                        watcher = StreamSection(self._chat_display, "response")
+                    await watcher.append(chunk.content)
 
         except asyncio.CancelledError:
-            # Aborted — preserve partial response.
-            # If we have some content, mark it as aborted.
-            if final_response or all_thinking or all_tool_calls:
-                # Add an "[aborted]" marker to the response if we have one.
-                if current_section_type == "response" and current_section_id:
-                    section_text += "\n\n*[aborted]*"
-                    await self._chat_display.update_section(
-                        current_section_id, section_text
+            # Aborted — persist whatever we have so far.
+            if watcher is not None:
+                replacement = await watcher.mark_aborted()
+                self._persist_section(
+                    turn_id, watcher.section_type, watcher.text
+                )
+                if replacement is not None:
+                    watcher = replacement
+                    self._persist_section(
+                        turn_id, watcher.section_type, watcher.text
                     )
-                    final_response = section_text
-                else:
-                    # We haven't started a response section yet.
-                    abort_id = self._chat_display.add_section("response")
-                    await self._chat_display.update_section(abort_id, "*[aborted]*")
-                    final_response = "*[aborted]*"
             else:
-                # Nothing received yet — show aborted marker.
-                abort_id = self._chat_display.add_section("response")
-                await self._chat_display.update_section(abort_id, "*[aborted]*")
-                final_response = "*[aborted]*"
+                watcher = StreamSection(self._chat_display, "response")
+                await watcher.replace("*[aborted]*")
+                self._persist_section(turn_id, "response", watcher.text)
 
         except Exception as exc:
-            if current_section_type != "response":
-                current_section_id = self._chat_display.add_section("response")
-                current_section_type = "response"
-                section_text = ""
-            section_text = f"Error: {exc}"
-            await self._chat_display.update_section(
-                current_section_id, section_text
-            )
+            if watcher is None or watcher.section_type != "response":
+                if watcher is not None:
+                    self._persist_section(
+                        turn_id, watcher.section_type, watcher.text
+                    )
+                watcher = StreamSection(self._chat_display, "response")
+            await watcher.replace(f"Error: {exc}")
+            self._persist_section(turn_id, watcher.section_type, watcher.text)
 
-        # --- Post-turn ---
-        if final_response:
-            self._history.append({
-                "role": "assistant",
-                "content": final_response,
-                "thinking": all_thinking or None,
-                "tool_calls": all_tool_calls if all_tool_calls else None,
-            })
+        else:
+            # Normal completion — persist the final section.
+            if watcher is not None:
+                self._persist_section(
+                    turn_id, watcher.section_type, watcher.text
+                )
 
-        self._save_turn(
-            user_text, final_response,
-            thinking=all_thinking,
-            tool_calls=all_tool_calls if all_tool_calls else None,
-        )
+        # Rebuild in-memory history from the database so it's always
+        # consistent with what was persisted.
+        self._rebuild_history()
 
         # Exit streaming mode.
         self._chat_input.set_streaming(False)
@@ -347,6 +347,98 @@ class ChatManager(Widget):
         self._chat_input.focus()
 
     # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
+
+    def _persist_section(
+        self, turn_id: str, content_type: str, content: str
+    ) -> None:
+        """Write a single section row to the database and in-memory list."""
+        # Always track in memory so history works without a database.
+        self._sections.append({
+            "turn_id": turn_id,
+            "content_type": content_type,
+            "content": content,
+        })
+
+        if self._db is None or self._chat_id is None:
+            return
+        try:
+            self._db.save_section(
+                self._chat_id, turn_id, content_type, content
+            )
+        except Exception:
+            pass  # Best-effort — don't crash the stream for a DB error.
+
+    def _rebuild_history(self) -> None:
+        """Rebuild in-memory LLM history from persisted or in-memory sections.
+
+        Prefers the database when available.  Falls back to the
+        in-memory ``_sections`` list when there is no database.
+        Called after every streaming turn so that ``self._history``
+        always reflects what was persisted.
+        """
+        if self._db is not None and self._chat_id is not None:
+            try:
+                self._history = self._db.reconstruct_history(self._chat_id)
+                return
+            except Exception:
+                pass
+
+        # No database (or DB error) — reconstruct from in-memory sections.
+        self._history = self._reconstruct_from_sections(self._sections)
+
+    @staticmethod
+    def _reconstruct_from_sections(
+        sections: list[dict[str, str]],
+    ) -> list[dict[str, Any]]:
+        """Reconstruct LLM-consumable history from a flat section list.
+
+        Mirrors :meth:`DatabaseManager.reconstruct_history` but works
+        on in-memory dicts instead of DB rows.
+        """
+        import json as _json
+
+        history: list[dict[str, Any]] = []
+        turn_order: list[str] = []
+        turns: dict[str, list[dict[str, str]]] = {}
+
+        for sec in sections:
+            tid = sec["turn_id"]
+            if tid not in turns:
+                turn_order.append(tid)
+                turns[tid] = []
+            turns[tid].append(sec)
+
+        for tid in turn_order:
+            for s in turns[tid]:
+                ct = s["content_type"]
+
+                if ct == "user":
+                    history.append({"role": "user", "content": s["content"]})
+
+                elif ct == "system":
+                    history.append({"role": "system", "content": s["content"]})
+
+                elif ct == "thinking":
+                    asst = _ensure_assistant(history, tid)
+                    asst["thinking"] = (asst.get("thinking") or "") + s["content"]
+
+                elif ct == "tool_call":
+                    asst = _ensure_assistant(history, tid)
+                    tc_list = asst.setdefault("tool_calls", [])
+                    try:
+                        tc_list.append(_json.loads(s["content"]))
+                    except (_json.JSONDecodeError, TypeError):
+                        pass
+
+                elif ct == "response":
+                    asst = _ensure_assistant(history, tid)
+                    asst["content"] = (asst.get("content") or "") + s["content"]
+
+        return history
+
+    # ------------------------------------------------------------------
     # New conversation
     # ------------------------------------------------------------------
 
@@ -356,33 +448,28 @@ class ChatManager(Widget):
         """
         self._chat_display.clear()
         self._history = []
+        self._sections = []
         if self._db is not None:
             self._chat_id = self._db.create_chat()
         self._chat_display.add_system_message("New conversation started.")
         self._chat_input.focus()
 
-    def _save_turn(
-        self,
-        user_text: str,
-        assistant_text: str,
-        thinking: str = "",
-        tool_calls: list[dict[str, Any]] | None = None,
-    ) -> None:
-        if self._db is None or self._chat_id is None:
-            return
-        try:
-            self._db.save_message(self._chat_id, "user", user_text)
-            self._db.save_message(
-                self._chat_id,
-                "assistant",
-                assistant_text,
-                tool_calls=tool_calls,
-                thinking=thinking,
-            )
-        except Exception:
-            pass
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
 
 
-def _format_args(args: dict[str, Any]) -> str:
-    items = [f"{k}={v!r}" for k, v in args.items()]
-    return ", ".join(items)[:60]
+def _ensure_assistant(
+    history: list[dict[str, Any]], turn_id: str
+) -> dict[str, Any]:
+    """Find or create the assistant message dict for *turn_id*.
+
+    The assistant dict is always the last entry in *history* when
+    it exists (because user always precedes assistant).
+    """
+    if history and history[-1].get("role") == "assistant" and history[-1].get("_turn_id") == turn_id:
+        return history[-1]
+    asst: dict[str, Any] = {"role": "assistant", "_turn_id": turn_id}
+    history.append(asst)
+    return asst

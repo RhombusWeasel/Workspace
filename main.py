@@ -19,6 +19,10 @@ from core.config import register_defaults
 from core.events import CodyEvent, dispatch
 from ui.sidebar.sidebar import Sidebar, SidebarContainer
 from ui.workspace import Workspace
+from core.terminal_passthrough import register_terminal_passthrough
+
+# App-level keys that must pass through the terminal widget.
+register_terminal_passthrough({"ctrl+q", "ctrl+space"})
 
 # ---------------------------------------------------------------------------
 # Config defaults — UI theme
@@ -31,6 +35,8 @@ register_defaults({"ui": {"theme": _UI_DEFAULT_THEME}})
 import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handler registration
 # Import file edit handler so its @register_handler("files.edit") runs.
 import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for handler registration
+# Import terminal handler so its @register_handler("terminal.open") runs.
+import ui.terminal.terminal_handler  # noqa: F401 — side-effect import for handler registration
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +68,10 @@ class CodyApp(App):
         self.context = context
         context.app = self
         self._theme_loading = False
+        # Keys that the terminal widget should never consume, so
+        # app-level and widget-level shortcuts still work.
+        from core.terminal_passthrough import get_terminal_passthrough_keys
+        self.terminal_passthrough_keys = get_terminal_passthrough_keys()
         super().__init__()
 
     # ------------------------------------------------------------------

@@ -21,6 +21,7 @@ Your AI-powered coding assistant, right in your terminal.
 ## Getting Started
 
 - **Open a file** — Browse files in the sidebar and press **Open**
+- **Open a terminal** — `Ctrl+Space ` `t` `o`
 - **Leader menu** — Press `Ctrl+Space` for all commands
 - **Split workspace** — `Ctrl+Space` `w` `s` `v` (vertical) or `h` (horizontal)
 - **Close pane** — `Ctrl+Space` `w` `c`
@@ -36,7 +37,12 @@ Your AI-powered coding assistant, right in your terminal.
 | `Ctrl+j` | Move to pane below |
 | `Ctrl+Space` | Open leader menu |
 
-Open a file from the sidebar to start editing.
+## Terminal
+
+- **Open** — `Ctrl+Space` `t` `o`
+- **Release focus** — Press `Ctrl+F1` inside the terminal to return to app navigation
+
+Open a file from the sidebar or a terminal to get started.
 """
 
 
@@ -45,19 +51,6 @@ class WelcomeView(Widget):
 
     Rendered inside the initial ``WorkspaceTabs`` tab so the user
     immediately sees a tabbed interface rather than an empty pane.
-    """
-
-    DEFAULT_CSS = """
-    WelcomeView {
-        height: 1fr;
-        width: 1fr;
-        padding: 1 2;
-        overflow-y: auto;
-    }
-    WelcomeView Markdown {
-        height: auto;
-        width: 1fr;
-    }
     """
 
     def compose(self) -> ComposeResult:

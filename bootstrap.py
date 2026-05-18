@@ -23,6 +23,7 @@ from core.config import Config, get_registered_defaults
 from core.skills import skill_manager
 from core.database import DatabaseManager
 from core.leader import leader as leader_registry
+from core.db_connections import ConnectionManager
 from core.vault import VaultManager
 
 
@@ -52,6 +53,7 @@ class Bootstrap:
         self._load_sidebar_panels(skills)
         database = self._init_database(config)
         vault = self._init_vault()
+        db_connections = self._init_db_connections(config, vault)
         self._init_leader()
         css_paths = self._collect_css()
 
@@ -59,6 +61,7 @@ class Bootstrap:
             config=config,
             skills=skills,
             database=database,
+            db_connections=db_connections,
             vault=vault,
             leader=leader_registry,
             working_directory=self.wd,
@@ -196,14 +199,24 @@ class Bootstrap:
         return VaultManager(master_path, self.wd)
 
     # ------------------------------------------------------------------
+    # Phase 6b — DB Connections
+    # ------------------------------------------------------------------
+
+    def _init_db_connections(self, config: Config, vault: VaultManager) -> ConnectionManager:
+        """Create a ConnectionManager backed by layered config and vault."""
+        return ConnectionManager(config, vault)
+
+    # ------------------------------------------------------------------
     # Phase 7 — Leader chords
     # ------------------------------------------------------------------
 
     def _init_leader(self) -> None:
-        """Register core leader chords from workspace (and later chat, terminal)."""
+        """Register core leader chords from workspace, terminal, etc."""
         from ui.workspace.workspace import register_workspace_leader_chords
+        from ui.terminal.terminal_handler import register_terminal_leader_chords
 
         register_workspace_leader_chords()
+        register_terminal_leader_chords()
 
     # ------------------------------------------------------------------
     # Phase 8 — CSS

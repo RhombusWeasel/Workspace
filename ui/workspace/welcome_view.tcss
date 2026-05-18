@@ -1,0 +1,11 @@
+WelcomeView {
+    height: 1fr;
+    width: 1fr;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+WelcomeView Markdown {
+    height: auto;
+    width: 1fr;
+}

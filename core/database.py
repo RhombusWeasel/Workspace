@@ -88,13 +88,12 @@ class SQLiteProvider(BaseDBProvider):
             );
 
             CREATE TABLE IF NOT EXISTS messages (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-                role       TEXT NOT NULL,
-                content    TEXT NOT NULL DEFAULT '',
-                thinking   TEXT NOT NULL DEFAULT '',
-                tool_calls TEXT,
-                created_at TEXT NOT NULL
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id      TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                turn_id      TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                content      TEXT NOT NULL DEFAULT '',
+                created_at   TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_chat
@@ -194,38 +193,134 @@ class DatabaseManager:
         self._provider.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
 
     # ------------------------------------------------------------------
-    # Message CRUD
+    # Message CRUD (flat schema)
     # ------------------------------------------------------------------
 
-    def save_message(
+    def save_section(
         self,
         chat_id: str,
-        role: str,
+        turn_id: str,
+        content_type: str,
         content: str,
-        tool_calls: list[dict[str, Any]] | None = None,
-        thinking: str = "",
     ) -> int:
-        tc_json = json.dumps(tool_calls) if tool_calls is not None else None
+        """Insert a single message section row.
+
+        Each section of a conversation turn (user text, thinking,
+        tool_call, response, system) is stored as its own row.
+        Rows are ordered by auto-incrementing ``id``.
+
+        Parameters
+        ----------
+        chat_id:
+            Conversation this section belongs to.
+        turn_id:
+            Groups sections into one exchange (user → assistant).
+        content_type:
+            One of ``"user"``, ``"thinking"``, ``"tool_call"``,
+            ``"response"``, ``"system"``.
+        content:
+            Text for this section.  For ``tool_call`` rows this is a
+            JSON-encoded dict ``{"name": ..., "arguments": ...}``.
+        """
         cur = self._provider.conn.execute(
-            "INSERT INTO messages (chat_id, role, content, thinking, tool_calls, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (chat_id, role, content, thinking, tc_json, _now()),
+            "INSERT INTO messages (chat_id, turn_id, content_type, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (chat_id, turn_id, content_type, content, _now()),
         )
         return cur.lastrowid
 
-    def get_messages(self, chat_id: str) -> list[dict[str, Any]]:
+    def load_sections(self, chat_id: str) -> list[dict[str, Any]]:
+        """Return all message sections for *chat_id* ordered by ``id``.
+
+        Each dict has keys ``id``, ``chat_id``, ``turn_id``,
+        ``content_type``, ``content``, ``created_at``.
+        """
         rows = self._provider.execute(
-            "SELECT id, chat_id, role, content, thinking, tool_calls, created_at "
+            "SELECT id, chat_id, turn_id, content_type, content, created_at "
             "FROM messages WHERE chat_id = ? ORDER BY id ASC",
             (chat_id,),
         )
-        result: list[dict[str, Any]] = []
-        for r in rows:
-            d = dict(r)
-            tc = d.get("tool_calls")
-            d["tool_calls"] = json.loads(tc) if tc is not None else None
-            result.append(d)
-        return result
+        return [dict(r) for r in rows]
+
+    def reconstruct_history(self, chat_id: str) -> list[dict[str, Any]]:
+        """Reconstruct LLM-consumable message list from flat sections.
+
+        Walks sections in ``id`` order, groups by ``turn_id``, and
+        builds the structured dicts that ``agent.stream_chat()``
+        expects:
+
+        * User sections → ``{"role": "user", "content": ...}``
+        * Assistant sections (thinking / tool_call / response) are
+          merged into one ``{"role": "assistant", ...}`` dict per turn.
+        * System sections → ``{"role": "system", "content": ...}``
+
+        Tool-call content is decoded from JSON.  Multiple thinking
+        or response sections within the same turn are concatenated.
+        """
+        sections = self.load_sections(chat_id)
+        history: list[dict[str, Any]] = []
+
+        # Bucket sections by turn_id, preserving order of first appearance.
+        turn_order: list[str] = []
+        turns: dict[str, list[dict[str, Any]]] = {}
+        for sec in sections:
+            tid = sec["turn_id"]
+            if tid not in turns:
+                turn_order.append(tid)
+                turns[tid] = []
+            turns[tid].append(sec)
+
+        for tid in turn_order:
+            turn_sections = turns[tid]
+            # Check if this turn contains assistant content.
+            has_assistant = any(
+                s["content_type"] in ("thinking", "tool_call", "response")
+                for s in turn_sections
+            )
+
+            for s in turn_sections:
+                ct = s["content_type"]
+
+                if ct == "user":
+                    history.append({"role": "user", "content": s["content"]})
+
+                elif ct == "system":
+                    history.append({"role": "system", "content": s["content"]})
+
+                elif ct == "thinking":
+                    # Find or create the assistant message for this turn.
+                    asst = self._ensure_assistant(history, tid)
+                    asst["thinking"] = (asst.get("thinking") or "") + s["content"]
+
+                elif ct == "tool_call":
+                    asst = self._ensure_assistant(history, tid)
+                    tc_list = asst.setdefault("tool_calls", [])
+                    try:
+                        tc_list.append(json.loads(s["content"]))
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Skip malformed entries
+
+                elif ct == "response":
+                    asst = self._ensure_assistant(history, tid)
+                    # Accumulate response text (may span multiple sections).
+                    asst["content"] = (asst.get("content") or "") + s["content"]
+
+        return history
+
+    @staticmethod
+    def _ensure_assistant(
+        history: list[dict[str, Any]], turn_id: str
+    ) -> dict[str, Any]:
+        """Find or create the assistant message dict for *turn_id*.
+
+        The assistant dict is always the last entry in *history* when
+        it exists (because user always precedes assistant).
+        """
+        if history and history[-1].get("role") == "assistant" and history[-1].get("_turn_id") == turn_id:
+            return history[-1]
+        asst: dict[str, Any] = {"role": "assistant", "_turn_id": turn_id}
+        history.append(asst)
+        return asst
 
     def delete_messages(self, chat_id: str) -> None:
         self._provider.execute(

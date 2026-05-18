@@ -10,6 +10,24 @@ from ui.tree.tree_row import TreeRow, TreeNode
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_edit_button(buttons) -> Button | None:
+    """Find an edit button by its id pattern (not label text).
+
+    Config panel edit buttons use Nerd Font icons as labels, so
+    we match on the ``-edit`` action_id suffix in the button id
+    (format: ``act-{node_id}-{action_id}``).
+    """
+    for b in buttons:
+        if hasattr(b, 'id') and b.id and b.id.endswith('-edit'):
+            return b
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Autouse — reset registries between tests
 # ---------------------------------------------------------------------------
 
@@ -311,7 +329,7 @@ class TestConfigPanelRendering:
 
 class TestConfigPanelEditing:
     async def test_edit_button_on_leaf_nodes(self, tmp_path):
-        """Each leaf node has an Edit button."""
+        """Each leaf node has an Edit button (shown as a Nerd Font icon)."""
         from ui.sidebar.panels.config_panel import ConfigPanel
         cfg = _make_config({"key": "val"}, tmp_path)
 
@@ -335,8 +353,9 @@ class TestConfigPanelEditing:
             assert len(action_rows) == 1  # one leaf with Edit button
             row = action_rows[0]
             buttons = row.query(Button)
-            btn_labels = {b.label.plain for b in buttons}
-            assert "Edit" in btn_labels
+            # Button uses an icon label; verify by action_id in the button id.
+            btn_ids = {b.id for b in buttons if b.id}
+            assert any(bid.endswith("-edit") for bid in btn_ids)
 
     async def test_edit_opens_modal_with_current_value(self, tmp_path):
         """Pressing Edit on a leaf node opens an InputModal pre-filled with the value."""
@@ -361,7 +380,7 @@ class TestConfigPanelEditing:
 
             # Click the Edit button on the leaf row
             all_btns = list(panel.query("Button"))
-            edit_btn = next((b for b in all_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            edit_btn = _find_edit_button(all_btns)
             assert edit_btn is not None
             edit_btn.press()
             await pilot.pause()
@@ -399,7 +418,7 @@ class TestConfigPanelEditing:
 
             # Press Edit
             all_btns = list(panel.query("Button"))
-            edit_btn = next((b for b in all_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            edit_btn = _find_edit_button(all_btns)
             edit_btn.press()
             await pilot.pause()
 
@@ -451,7 +470,7 @@ class TestConfigPanelEditing:
             await pilot.pause()
 
             all_btns = list(panel.query("Button"))
-            edit_btn = next((b for b in all_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            edit_btn = _find_edit_button(all_btns)
             edit_btn.press()
             await pilot.pause()
 
@@ -498,7 +517,7 @@ class TestConfigPanelEditing:
             # Press Edit on the port row
             port_row = [r for r in action_rows if "port" in r.node.label][0]
             port_btns = list(port_row.query(Button))
-            port_edit = next((b for b in port_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            port_edit = _find_edit_button(port_btns)
             port_edit.press()
             await pilot.pause()
 
@@ -586,7 +605,7 @@ class TestConfigPanelEditing:
             await pilot.pause()
 
             all_btns = list(panel.query("Button"))
-            edit_btn = next((b for b in all_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            edit_btn = _find_edit_button(all_btns)
             edit_btn.press()
             await pilot.pause()
 
@@ -628,7 +647,7 @@ class TestConfigPanelEditing:
             action_rows = list(tree.query(TreeRow))
             count_row = [r for r in action_rows if "count" in r.node.label][0]
             count_btns = list(count_row.query(Button))
-            count_edit = next((b for b in count_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            count_edit = _find_edit_button(count_btns)
             count_edit.press()
             await pilot.pause()
 
@@ -667,7 +686,7 @@ class TestConfigPanelEditing:
             await pilot.pause()
 
             all_btns = list(panel.query("Button"))
-            edit_btn = next((b for b in all_btns if hasattr(b, 'label') and b.label.plain == "Edit"), None)
+            edit_btn = _find_edit_button(all_btns)
             edit_btn.press()
             await pilot.pause()
 

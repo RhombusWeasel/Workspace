@@ -1,0 +1,11 @@
+LeaderOverlay {
+    align: center middle;
+}
+
+#leader-hint {
+    width: auto;
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border: round $primary;
+}

@@ -1,0 +1,39 @@
+ConfirmModal {
+    align: center middle;
+}
+
+#confirm-dialog {
+    width: 70%;
+    max-height: 80%;
+    padding: 1 2;
+    background: $surface;
+    border: thick $primary;
+}
+
+#confirm-title {
+    width: 100%;
+    text-align: center;
+    padding-bottom: 1;
+    text-style: bold;
+}
+
+#confirm-body {
+    width: 100%;
+    height: auto;
+    max-height: 20;
+    padding: 1;
+    background: $boost;
+    border: solid $panel;
+    overflow-y: auto;
+}
+
+#confirm-buttons {
+    width: 100%;
+    height: auto;
+    padding-top: 1;
+    align: center middle;
+}
+
+#confirm-buttons Button {
+    margin: 0 1;
+}

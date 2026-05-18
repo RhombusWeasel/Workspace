@@ -237,11 +237,13 @@ class TestChatPanelPersistence:
 
             chats = db.list_chats()
             assert len(chats) == 1
-            messages = db.get_messages(chats[0]["id"])
-            assert len(messages) == 2
-            assert messages[0]["role"] == "user"
-            assert messages[0]["content"] == "Hello!"
-            assert "Hi there!" in messages[1]["content"]
+            sections = db.load_sections(chats[0]["id"])
+            types = [s["content_type"] for s in sections]
+            assert "user" in types
+            user_sec = [s for s in sections if s["content_type"] == "user"][0]
+            assert user_sec["content"] == "Hello!"
+            resp_sec = [s for s in sections if s["content_type"] == "response"][0]
+            assert "Hi there!" in resp_sec["content"]
         finally:
             try:
                 db.close()

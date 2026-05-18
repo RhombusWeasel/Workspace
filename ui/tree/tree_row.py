@@ -115,14 +115,6 @@ class _RowLabel(Static):
     :class:`TreeRow.Toggled` (branch) messages.
     """
 
-    DEFAULT_CSS = """
-    _RowLabel {
-        width: 1fr;
-        height: 1;
-        overflow: hidden hidden;
-    }
-    """
-
     def __init__(
         self, text: str, node: TreeNode, is_branch: bool, row: TreeRow
     ):

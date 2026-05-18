@@ -50,6 +50,26 @@ async def _settle(pilot, n: int = 2) -> None:
         await pilot.pause()
 
 
+def _submit_input(chat_input: ChatInput, text: str) -> None:
+    """Set the Input value and post ChatSubmitted.
+
+    Setting ``inp.value`` programmatically triggers ``Input.Changed``
+    which shows the command palette when the text starts with ``/``.
+    Then ``Input.Submitted`` is caught by the "palette is visible"
+    branch instead of being dispatched as a command.
+
+    This helper suppresses the palette update during the value
+    assignment and posts ``ChatSubmitted`` directly.
+    """
+    inp = chat_input.query_one(Input)
+    chat_input._suppress_palette_update = True
+    try:
+        inp.value = text
+    finally:
+        chat_input._suppress_palette_update = False
+    chat_input.post_message(ChatInput.ChatSubmitted(text))
+
+
 def _make_chunk(**kwargs):
     defaults = {"thinking": "", "content": "", "tool_calls": None}
     defaults.update(kwargs)
@@ -84,8 +104,7 @@ class TestCommandDispatch:
                 inp = chat_input.query_one(Input)
 
                 # Simulate typing /testcmd hello
-                inp.value = "/testcmd hello"
-                inp.post_message(Input.Submitted(inp, "/testcmd hello"))
+                _submit_input(chat_input, "/testcmd hello")
                 await _settle(pilot, n=10)
 
                 # Command should have been called with args "hello"
@@ -106,8 +125,7 @@ class TestCommandDispatch:
             chat_input = mgr.query_one(ChatInput)
             inp = chat_input.query_one(Input)
 
-            inp.value = "/unknown"
-            inp.post_message(Input.Submitted(inp, "/unknown"))
+            _submit_input(chat_input, "/unknown")
             await _settle(pilot, n=10)
 
             # The display should have a system message with "Unknown command"
@@ -144,8 +162,7 @@ class TestCommandDispatch:
                 chat_input = mgr.query_one(ChatInput)
                 inp = chat_input.query_one(Input)
 
-                inp.value = "/ping"
-                inp.post_message(Input.Submitted(inp, "/ping"))
+                _submit_input(chat_input, "/ping")
                 await _settle(pilot, n=10)
 
                 assert captured_args == [""]
@@ -170,8 +187,7 @@ class TestCommandDispatch:
                 chat_input = mgr.query_one(ChatInput)
                 inp = chat_input.query_one(Input)
 
-                inp.value = "/greet World"
-                inp.post_message(Input.Submitted(inp, "/greet World"))
+                _submit_input(chat_input, "/greet World")
                 await _settle(pilot, n=10)
 
                 display = mgr.query_one(ChatDisplay)
@@ -204,8 +220,7 @@ class TestCommandDispatch:
                 chat_input = mgr.query_one(ChatInput)
                 inp = chat_input.query_one(Input)
 
-                inp.value = "/silent"
-                inp.post_message(Input.Submitted(inp, "/silent"))
+                _submit_input(chat_input, "/silent")
                 await _settle(pilot, n=10)
 
                 display = mgr.query_one(ChatDisplay)
@@ -237,8 +252,7 @@ class TestCommandDispatch:
                 chat_input = mgr.query_one(ChatInput)
                 inp = chat_input.query_one(Input)
 
-                inp.value = "/boom"
-                inp.post_message(Input.Submitted(inp, "/boom"))
+                _submit_input(chat_input, "/boom")
                 await _settle(pilot, n=10)
 
                 display = mgr.query_one(ChatDisplay)
@@ -268,8 +282,7 @@ class TestCommandDispatch:
             chat_input = mgr.query_one(ChatInput)
             inp = chat_input.query_one(Input)
 
-            inp.value = "Hello, not a command"
-            inp.post_message(Input.Submitted(inp, "Hello, not a command"))
+            _submit_input(chat_input, "Hello, not a command")
             await _settle(pilot, n=10)
 
             display = mgr.query_one(ChatDisplay)
@@ -301,8 +314,7 @@ class TestCommandDispatch:
             inp = chat_input.query_one(Input)
 
             # "/ help" with a space after slash — command name is empty string
-            inp.value = "/ help"
-            inp.post_message(Input.Submitted(inp, "/ help"))
+            _submit_input(chat_input, "/ help")
             await _settle(pilot, n=10)
 
             display = mgr.query_one(ChatDisplay)

@@ -139,14 +139,23 @@ class TestScanDirectory:
             shutil.rmtree(tmpdir)
 
     def test_scan_sorts_entries(self):
-        """Entries are sorted alphabetically."""
+        """Entries are sorted directories-first, then case-insensitive alphabetically."""
         from ui.sidebar.panels.file_browser import FileBrowserPanel
         tmpdir = _create_test_dir()
         try:
             panel = FileBrowserPanel.__new__(FileBrowserPanel)
             nodes = panel._scan_dir(tmpdir)
             names = [n.data.get("name", "") for n in nodes]
-            assert names == sorted(names)
+            # Dirs come first, then files. Within each group,
+            # case-insensitive alphabetical (matching .lower() sort).
+            dir_names = [n for n in names if os.path.isdir(os.path.join(tmpdir, n))]
+            file_names = [n for n in names if not os.path.isdir(os.path.join(tmpdir, n))]
+            assert dir_names == sorted(dir_names, key=str.casefold)
+            assert file_names == sorted(file_names, key=str.casefold)
+            # All dirs precede all files.
+            last_dir_idx = max(names.index(d) for d in dir_names) if dir_names else -1
+            first_file_idx = min(names.index(f) for f in file_names) if file_names else len(names)
+            assert last_dir_idx < first_file_idx
         finally:
             shutil.rmtree(tmpdir)
 

@@ -53,6 +53,23 @@ class SavedTab:
     id: str
     label: str
     content_factory: Callable[[], Widget | None] | None = None
+    inherited_snapshot: Any = None
+    """TerminalSnapshot from a previous TerminalView instance.
+
+    When set, the freshly-created TerminalView will adopt the live
+    emulator and restore the saved screen/display in
+    :meth:`~ui.terminal.terminal.TerminalView.on_mount`, keeping the
+    shell session alive and its visible output intact across workspace
+    recompositions.
+    """
+    editor_snapshot: Any = None
+    """QueryEditorSnapshot from a previous QueryEditor instance.
+
+    When set, the freshly-created QueryEditor will restore the query
+    text, results, and pagination state in
+    :meth:`~ui.workspace.query_editor.QueryEditor.on_mount`, keeping
+    the editor's content intact across workspace recompositions.
+    """
 
 
 @dataclass
@@ -71,26 +88,6 @@ class SavedTabState:
 class _TabLabelButton(Button):
     """Button representing a tab label in the tab bar."""
 
-    DEFAULT_CSS = """
-    _TabLabelButton {
-        height: 1;
-        width: auto;
-        min-width: 6;
-        max-width: 24;
-        padding: 0 1;
-        border: none !important;
-        background: $surface !important;
-        color: $text;
-    }
-    _TabLabelButton.-active {
-        background: $primary !important;
-        color: $text;
-    }
-    _TabLabelButton:hover {
-        background: $primary-lighten-1 !important;
-    }
-    """
-
     def __init__(self, tab_id: str, label: str):
         super().__init__(label, id=f"tab-label-{tab_id}")
         self.tab_id = tab_id
@@ -98,23 +95,6 @@ class _TabLabelButton(Button):
 
 class _TabCloseButton(Button):
     """Close (×) button for a tab."""
-
-    DEFAULT_CSS = """
-    _TabCloseButton {
-        height: 1;
-        width: 3;
-        min-width: 2;
-        max-width: 3;
-        border: none !important;
-        padding: 0;
-        background: transparent !important;
-        color: $text-muted !important;
-    }
-    _TabCloseButton:hover {
-        background: $error !important;
-        color: $text !important;
-    }
-    """
 
     def __init__(self, tab_id: str):
         super().__init__(CLOSE, id=f"tab-close-{tab_id}")
@@ -135,30 +115,6 @@ class WorkspaceTabs(Widget):
     Posts:
     - ``TabSwitched`` when the active tab changes.
     - ``TabClosed`` when a tab is removed.
-    """
-
-    DEFAULT_CSS = """
-    WorkspaceTabs {
-        height: 1fr;
-        width: 1fr;
-    }
-    WorkspaceTabs > Vertical {
-        height: 1fr;
-        width: 1fr;
-    }
-    WorkspaceTabs .tab-bar {
-        height: 1;
-        width: 1fr;
-        background: $surface;
-    }
-    WorkspaceTabs .tab-item {
-        height: 1;
-        width: auto;
-    }
-    WorkspaceTabs .tab-content {
-        height: 1fr;
-        width: 1fr;
-    }
     """
 
     class TabSwitched(Message):
@@ -290,12 +246,17 @@ class WorkspaceTabs(Widget):
     def save_state(self) -> SavedTabState:
         """Return a snapshot of all open tabs so they can be restored later.
 
-        The *content* widgets themselves cannot survive recomposition, so
-        ``content_factory`` callables are saved instead.  If a tab was
-        opened without a factory, we try to infer one from the widget type
-        (currently :class:`FileEditor` is supported).
+        ``content_factory`` callables are saved for all tab types.
+        For terminal tabs, the live PTY emulator is also extracted
+        (via :meth:`TerminalView.detach_emulator`) so the shell
+        session can be kept alive across the DOM rebuild.
+        For query editor tabs, the editor state (query text, results,
+        pagination) is captured via :meth:`QueryEditor.detach_state`
+        so the user doesn't lose their work across recomposition.
         """
         from ui.workspace.file_editor import FileEditor
+        from ui.terminal.terminal import TerminalView
+        from ui.workspace.query_editor import QueryEditor
 
         saved_tabs: list[SavedTab] = []
         for tab_id, info in self._tabs.items():
@@ -304,46 +265,108 @@ class WorkspaceTabs(Widget):
             if factory is None and isinstance(info.content, FileEditor):
                 filepath = info.content.filepath
                 factory = lambda fp=filepath: FileEditor(fp)
-            saved_tabs.append(SavedTab(id=tab_id, label=info.label, content_factory=factory))
+            # For terminal tabs, extract the live PTY emulator and
+            # screen/display so the shell session and its visible output
+            # survive workspace recomposition.
+            inherited_snapshot = None
+            if isinstance(info.content, TerminalView):
+                inherited_snapshot = info.content.detach_emulator()
+            # For query editor tabs, capture the query text, results,
+            # and pagination state so the editor survives recomposition.
+            editor_snapshot = None
+            if isinstance(info.content, QueryEditor):
+                editor_snapshot = info.content.detach_state()
+            saved_tabs.append(SavedTab(
+                id=tab_id,
+                label=info.label,
+                content_factory=factory,
+                inherited_snapshot=inherited_snapshot,
+                editor_snapshot=editor_snapshot,
+            ))
 
         return SavedTabState(tabs=saved_tabs, active_id=self._active)
 
     def restore_state(self, state: SavedTabState) -> None:
         """Rebuild tabs from a previously saved state.
 
-        Clears all existing tabs first, then recreates each tab using
-        the stored *content_factory* callables.
+        Preserves any content widgets that are already mounted and in the
+        ``_tabs`` dict — only the tab bar and content visibility are
+        updated.  Content widgets that no longer appear in the saved
+        state are removed; new content is created from factories.
         """
-        # Remove existing tabs
-        for tab_id in list(self._tabs):
-            info = self._tabs.pop(tab_id)
-            if info.content is not None:
-                try:
-                    info.content.remove()
-                except Exception:
-                    pass
-
-        # Clear the DOM
-        self._active = None
+        # Remove tab bar entries (will be rebuilt)
         if hasattr(self, "_tab_bar"):
             for child in list(self._tab_bar.children):
                 child.remove()
-            for child in list(self._content_area.children):
-                child.remove()
 
-        # Recreate tabs from saved state
+        # Remove content widgets that are NOT in the incoming state
+        new_tab_ids = {saved.id for saved in state.tabs}
+        for tab_id in list(self._tabs):
+            if tab_id not in new_tab_ids:
+                info = self._tabs.pop(tab_id)
+                if info.content is not None:
+                    try:
+                        info.content.remove()
+                    except Exception:
+                        pass
+
+        # Clear stale content-area widgets that aren't tracked by any tab
+        surviving_content = {
+            info.content
+            for info in self._tabs.values()
+            if info.content is not None and info.content.is_mounted
+        }
+        for child in list(self._content_area.children):
+            if child not in surviving_content:
+                try:
+                    child.remove()
+                except Exception:
+                    pass
+
+        # Rebuild _tabs from saved state, creating fresh content from
+        # factories.  Terminal tabs receive an inherited_emulator to keep
+        # the shell session alive.
+        rebuilt_tabs: dict[str, TabInfo] = {}
         for saved in state.tabs:
-            content = None
-            if saved.content_factory is not None:
-                content = saved.content_factory()
-            self._tabs[saved.id] = TabInfo(
-                id=saved.id,
-                label=saved.label,
-                content=content,
-                content_factory=saved.content_factory,
-            )
+            existing = self._tabs.get(saved.id)
+            if existing is not None and existing.content is not None:
+                # Keep the existing content widget (e.g. a running terminal)
+                rebuilt_tabs[saved.id] = TabInfo(
+                    id=saved.id,
+                    label=saved.label
+                    if saved.label is not None
+                    else existing.label,
+                    content=existing.content,
+                    content_factory=saved.content_factory
+                    if saved.content_factory is not None
+                    else existing.content_factory,
+                )
+            else:
+                # Create fresh content from the factory.
+                content = None
+                if saved.content_factory is not None:
+                    content = saved.content_factory()
+                # If this is a terminal tab with an inherited snapshot,
+                # transfer it so the shell session and visible output survive.
+                if saved.inherited_snapshot is not None:
+                    from ui.terminal.terminal import TerminalView
+                    if isinstance(content, TerminalView):
+                        content._inherited_snapshot = saved.inherited_snapshot
+                # If this is a query editor tab with a captured snapshot,
+                # transfer it so the query text and results survive.
+                if saved.editor_snapshot is not None:
+                    from ui.workspace.query_editor import QueryEditor
+                    if isinstance(content, QueryEditor):
+                        content._inherited_snapshot = saved.editor_snapshot
+                rebuilt_tabs[saved.id] = TabInfo(
+                    id=saved.id,
+                    label=saved.label,
+                    content=content,
+                    content_factory=saved.content_factory,
+                )
 
-        # Set active tab (don't use switch_tab to avoid posting messages)
+        self._tabs.clear()
+        self._tabs.update(rebuilt_tabs)
         self._active = state.active_id
         self._refresh()
 
@@ -380,16 +403,46 @@ class WorkspaceTabs(Widget):
             self._tab_bar.mount(Horizontal(lbl_btn, close_btn, classes="tab-item"))
 
     def _refresh_content(self) -> None:
-        """Show the active tab's content; hide all others."""
-        # Remove all existing content widgets from the content area
-        for child in list(self._content_area.children):
-            child.remove()
+        """Show the active tab's content; hide all others.
 
-        # Mount the active tab's content
-        if self._active and self._active in self._tabs:
-            info = self._tabs[self._active]
-            if info.content is not None:
+        Instead of removing and remounting content widgets on every tab
+        switch (which destroys terminal PTY processes), we keep all
+        content widgets mounted and toggle their visibility.  Widgets
+        that don't exist in the DOM yet are mounted; existing ones are
+        simply shown or hidden.
+        """
+        active_info = (
+            self._tabs.get(self._active) if self._active else None
+        )
+
+        for tab_id, info in self._tabs.items():
+            if info.content is None:
+                continue
+            is_active = tab_id == self._active
+            if info.content.is_mounted:
+                # Widget is already in the DOM — just toggle visibility.
+                # Using .display instead of .visible so hidden widgets
+                # are excluded from the layout.
+                info.content.display = is_active
+            elif is_active:
+                # Active tab's content isn't mounted yet — mount it.
                 self._content_area.mount(info.content)
+                # .display defaults to True so nothing else to do.
+
+        # Remove any children that don't belong to a tab (stale from
+        # a previous state that wasn't in _tabs when mounted).
+        active_content = (
+            active_info.content if active_info and active_info.content else None
+        )
+        for child in list(self._content_area.children):
+            if child is active_content:
+                continue
+            # Only remove children that aren't tracked in any tab
+            tracked = any(
+                t.content is child for t in self._tabs.values()
+            )
+            if not tracked:
+                child.remove()
 
     # ------------------------------------------------------------------
     # Button handlers

@@ -205,6 +205,8 @@ class TestTreeRowButtonPressed:
         messages = []
 
         class TestApp(App):
+            CSS = "TreeRow { width: 100%; height: auto; }"
+
             def compose(self) -> ComposeResult:
                 yield row
 
@@ -213,8 +215,10 @@ class TestTreeRowButtonPressed:
 
         async with TestApp().run_test() as pilot:
             await pilot.pause()
+            # Use press() directly on the button instead of pilot.click()
+            # which can fail with OutOfBounds if layout hasn't settled.
             buttons = row.query(Button)
-            await pilot.click(buttons[0])
+            buttons[0].press()
             await pilot.pause()
 
             assert len(messages) == 1

@@ -16,39 +16,6 @@ class CommandsHelp(ModalScreen[None]):
     Press ``Escape`` to dismiss.
     """
 
-    CSS = """
-    CommandsHelp {
-        align: center middle;
-    }
-
-    #commands-dialog {
-        width: 50;
-        height: auto;
-        max-height: 80%;
-        padding: 1 2;
-        background: $surface;
-        border: thick $primary;
-    }
-
-    #commands-title {
-        width: 100%;
-        text-style: bold;
-        margin-bottom: 1;
-        content-align: center middle;
-    }
-
-    #commands-content {
-        width: 100%;
-    }
-
-    #commands-hint {
-        width: 100%;
-        margin-top: 1;
-        text-style: dim;
-        content-align: center middle;
-    }
-    """
-
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="commands-dialog"):
             yield Label("Slash Commands", id="commands-title")

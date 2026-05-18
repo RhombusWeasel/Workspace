@@ -1,0 +1,1 @@
+"""Terminal — embedded terminal emulator for workspace panes."""

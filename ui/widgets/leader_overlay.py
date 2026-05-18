@@ -28,20 +28,6 @@ class LeaderOverlay(ModalScreen[None]):
     closes.
     """
 
-    CSS = """
-    LeaderOverlay {
-        align: center middle;
-    }
-
-    #leader-hint {
-        width: auto;
-        height: auto;
-        padding: 1 2;
-        background: $surface;
-        border: round $primary;
-    }
-    """
-
     def __init__(self, registry: LeaderRegistry, app) -> None:
         super().__init__()
         self._registry = registry

@@ -116,9 +116,9 @@ class TestChatCRUD:
 
     def test_delete_chat_cascades_messages(self, db):
         chat_id = db.create_chat("WithMessages")
-        db.save_message(chat_id, "user", "hello")
+        db.save_section(chat_id, "t1", "user", "hello")
         db.delete_chat(chat_id)
-        assert db.get_messages(chat_id) == []
+        assert db.load_sections(chat_id) == []
 
     def test_delete_chat_missing_does_not_raise(self, db):
         db.delete_chat("nonexistent")
@@ -130,48 +130,121 @@ class TestChatCRUD:
 
 
 class TestMessageCRUD:
-    def test_save_message_returns_id(self, db):
+    def test_save_section_returns_id(self, db):
         chat_id = db.create_chat()
-        msg_id = db.save_message(chat_id, "user", "hello")
+        msg_id = db.save_section(chat_id, "t1", "user", "hello")
         assert isinstance(msg_id, int)
 
-    def test_save_message_stores_data(self, db):
+    def test_save_section_stores_data(self, db):
         chat_id = db.create_chat()
-        db.save_message(chat_id, "user", "hello")
-        messages = db.get_messages(chat_id)
-        assert len(messages) == 1
-        assert messages[0]["role"] == "user"
-        assert messages[0]["content"] == "hello"
+        db.save_section(chat_id, "t1", "user", "hello")
+        sections = db.load_sections(chat_id)
+        assert len(sections) == 1
+        assert sections[0]["content_type"] == "user"
+        assert sections[0]["content"] == "hello"
+        assert sections[0]["turn_id"] == "t1"
 
-    def test_save_message_with_tool_calls(self, db):
+    def test_save_section_tool_call_json(self, db):
         chat_id = db.create_chat()
-        tool_calls = [{"id": "1", "name": "read_file", "arguments": {"path": "/x"}}]
-        db.save_message(chat_id, "assistant", "", tool_calls=tool_calls)
+        tc = '{"name": "read_file", "arguments": {"path": "/x"}}'
+        db.save_section(chat_id, "t1", "tool_call", tc)
 
-        messages = db.get_messages(chat_id)
-        assert messages[0]["tool_calls"] == tool_calls
+        sections = db.load_sections(chat_id)
+        assert sections[0]["content_type"] == "tool_call"
+        assert sections[0]["content"] == tc
 
-    def test_get_messages_empty_chat(self, db):
+    def test_load_sections_empty_chat(self, db):
         chat_id = db.create_chat()
-        assert db.get_messages(chat_id) == []
+        assert db.load_sections(chat_id) == []
 
-    def test_get_messages_ordered_by_creation(self, db):
+    def test_load_sections_ordered_by_id(self, db):
         chat_id = db.create_chat()
-        db.save_message(chat_id, "user", "first")
-        db.save_message(chat_id, "assistant", "second")
+        db.save_section(chat_id, "t1", "user", "first")
+        db.save_section(chat_id, "t1", "response", "second")
 
-        messages = db.get_messages(chat_id)
-        assert messages[0]["content"] == "first"
-        assert messages[1]["content"] == "second"
+        sections = db.load_sections(chat_id)
+        assert sections[0]["content"] == "first"
+        assert sections[1]["content"] == "second"
 
-    def test_get_messages_unknown_chat_returns_empty(self, db):
-        assert db.get_messages("nonexistent") == []
+    def test_load_sections_unknown_chat_returns_empty(self, db):
+        assert db.load_sections("nonexistent") == []
 
     def test_delete_messages(self, db):
         chat_id = db.create_chat()
-        db.save_message(chat_id, "user", "hello")
+        db.save_section(chat_id, "t1", "user", "hello")
         db.delete_messages(chat_id)
-        assert db.get_messages(chat_id) == []
+        assert db.load_sections(chat_id) == []
+
+    def test_reconstruct_history_basic_turn(self, db):
+        """reconstruct_history builds user + assistant dicts from flat sections."""
+        chat_id = db.create_chat()
+        db.save_section(chat_id, "t1", "user", "What is 2+2?")
+        db.save_section(chat_id, "t1", "thinking", "Hmm...")
+        db.save_section(chat_id, "t1", "response", "4")
+
+        history = db.reconstruct_history(chat_id)
+        assert len(history) == 2
+        assert history[0] == {"role": "user", "content": "What is 2+2?"}
+        asst = history[1]
+        assert asst["role"] == "assistant"
+        assert asst["content"] == "4"
+        assert asst["thinking"] == "Hmm..."
+
+    def test_reconstruct_history_tool_calls(self, db):
+        """Tool-call sections are decoded from JSON."""
+        chat_id = db.create_chat()
+        db.save_section(chat_id, "t1", "user", "Read foo.py")
+        db.save_section(
+            chat_id, "t1", "tool_call",
+            '{"name": "read_file", "arguments": {"path": "foo.py"}}'
+        )
+        db.save_section(chat_id, "t1", "response", "Here is the file.")
+
+        history = db.reconstruct_history(chat_id)
+        asst = history[1]
+        assert asst["tool_calls"] == [
+            {"name": "read_file", "arguments": {"path": "foo.py"}}
+        ]
+
+    def test_reconstruct_history_multiple_thinking_sections(self, db):
+        """Multiple thinking sections in one turn are concatenated."""
+        chat_id = db.create_chat()
+        db.save_section(chat_id, "t1", "user", "Go")
+        db.save_section(chat_id, "t1", "thinking", "First thought ")
+        db.save_section(chat_id, "t1", "tool_call", '{"name": "run", "arguments": {"cmd": "ls"}}')
+        db.save_section(chat_id, "t1", "thinking", "Second thought")
+        db.save_section(chat_id, "t1", "response", "Done.")
+
+        history = db.reconstruct_history(chat_id)
+        asst = history[1]
+        assert asst["thinking"] == "First thought Second thought"
+
+    def test_reconstruct_history_system_messages(self, db):
+        """System sections become system-role messages."""
+        chat_id = db.create_chat()
+        db.save_section(chat_id, "t1", "user", "Hello")
+        db.save_section(chat_id, "t1", "system", "Chat cleared.")
+
+        history = db.reconstruct_history(chat_id)
+        assert history[0]["role"] == "user"
+        assert history[1]["role"] == "system"
+        assert history[1]["content"] == "Chat cleared."
+
+    def test_reconstruct_history_empty_chat(self, db):
+        chat_id = db.create_chat()
+        assert db.reconstruct_history(chat_id) == []
+
+    def test_reconstruct_history_strips_internal_turn_id(self, db):
+        """The _turn_id field is internal and does not leak to callers."""
+        chat_id = db.create_chat()
+        db.save_section(chat_id, "t1", "user", "Hi")
+        db.save_section(chat_id, "t1", "response", "Hey")
+
+        history = db.reconstruct_history(chat_id)
+        asst = history[1]
+        assert "_turn_id" in asst  # internal, used for grouping
+        assert asst["role"] == "assistant"
+        assert asst["content"] == "Hey"
 
 
 # ---------------------------------------------------------------------------
@@ -355,22 +428,3 @@ class TestProvider:
         from core.database import SQLiteProvider
 
         assert isinstance(db._provider, SQLiteProvider)
-
-
-# ---------------------------------------------------------------------------
-# JSON serialization of tool_calls
-# ---------------------------------------------------------------------------
-
-
-class TestToolCallsSerialization:
-    def test_none_tool_calls_roundtrip(self, db):
-        chat_id = db.create_chat()
-        db.save_message(chat_id, "assistant", "ok", tool_calls=None)
-        msgs = db.get_messages(chat_id)
-        assert msgs[0]["tool_calls"] is None
-
-    def test_empty_list_tool_calls_roundtrip(self, db):
-        chat_id = db.create_chat()
-        db.save_message(chat_id, "assistant", "ok", tool_calls=[])
-        msgs = db.get_messages(chat_id)
-        assert msgs[0]["tool_calls"] == []

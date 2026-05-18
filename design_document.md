@@ -7,769 +7,788 @@ Ollama (local) and OpenAI as LLM backends, features a plugin architecture via "s
 and includes an encrypted password vault, multi-connection database management, git
 checkpointing, and a keyboard-driven leader menu system.
 
-This document captures the broad-strokes architecture of the current codebase and
-proposes a simplified target architecture for the rewrite.
+This document captures the architecture of the codebase, design decisions made along
+the way, and remaining work items.
 
 ---
 
-## 2. Current Architecture — What We Have
+## 2. Architecture
 
 ### 2.1 High-Level Component Map
 
 ```
-main.py  (entry point, app definition, orchestration)
-├── utils/
-│   ├── cfg_man.py          ← Config manager (layered JSON, dot-path, diff-save)
-│   ├── password_vault.py   ← Encrypted credential store (Fernet + PBKDF2)
-│   ├── skills.py           ← Skill discovery & catalog (SKILL.md, 3-tier search)
-│   ├── agent.py            ← LLM agent (system prompt, tool-calling loop, streaming)
-│   ├── tool.py             ← Tool registry (register, tag, enable/disable, execute)
-│   ├── db.py               ← Database manager (SQLite + Cosmos, chats/agents/todos)
-│   ├── paths.py            ← 3-tier path resolution ($CODY_DIR, ~/.agents, project)
-│   ├── leader_registry.py  ← Leader menu chord tree (core + skill-extensible)
-│   ├── cmd_loader.py       ← Slash-command loader (CommandBase subclasses)
-│   ├── fs.py               ← File utilities (CSS discovery, folder loading)
-│   ├── theme_man.py        ← Theme discovery (3-tier + legacy dir)
-│   ├── git.py              ← Git utilities (checkpoint, revert, status, stash)
-│   ├── interface_defaults.py ← Default UI config fragment
-│   ├── providers/
-│   │   ├── __init__.py     ← Provider registry + config defaults
-│   │   ├── base.py         ← BaseProvider protocol, ChatResponse, StreamChunk
-│   │   ├── ollama.py       ← Ollama provider implementation
-│   │   ├── ollama_vault.py ← Ollama API key vault integration
-│   │   ├── openai.py       ← OpenAI provider implementation
-│   │   └── openai_vault.py ← OpenAI API key vault integration
-│   └── db_providers/
-│       ├── base.py         ← Base DB provider
-│       ├── sqlite_provider.py
-│       └── cosmos_provider.py
-├── tools/
-│   ├── skills/
-│   │   ├── activate_skill.py  ← Load SKILL.md content into context
-│   │   └── run_skill.py       ← Execute skill scripts (subprocess)
-│   └── system/
-│       ├── read_file.py
-│       ├── write_file.py
-│       └── run_command.py
-├── components/
-│   ├── chat/          ← ChatTab, MsgBox, StreamingMsgBox, MessageInput, Message
-│   ├── workspace/     ← Workspace (split panes), EditorTab, OpenWorkspaceTab
-│   ├── sidebar/       ← Sidebar wrapper, ChatHistory, Settings, PasswordVault, ToolList
-│   ├── tabs/          ← Generic tab container (header, body, title button)
-│   ├── tree/          ← GenericTree, TreeRow, VaultTreeRow
-│   ├── db/            ← DB sidebar tab, DB tree, Results modal
-│   ├── fs/            ← File tree components
-│   ├── terminal/      ← Terminal sidebar (textual-terminal integration)
-│   └── utils/         ← Buttons, modals (Input, Form, CommandsHelp), LeaderGuideScreen
-├── skills/            ← Bundled skills (agents, brave_search, coding, git, todo, etc.)
-├── themes/            ← Bundled themes (haxor.py)
-├── cmd/               ← Core slash commands (clear.py, help.py)
-└── examples/          ← Example skills and components
-```
-
-### 2.2 Core Systems (Keep These)
-
-#### A. Config Manager (`cfg_man.py`)
-
-**What it does:**
-- Loads multiple JSON config files in order (global → project), deep-merging them.
-- Provides dot-path access: `cfg.get('session.provider')`, `cfg.set('a.b.c', val)`.
-- Saves only the diff vs. the baseline (files below the save path), keeping files clean.
-- Supports a "registered defaults" system — modules call `register_default_config({...})`
-  at import time, and `cfg.apply_registered_defaults()` fills in missing keys.
-
-**Key design points:**
-- `deep_update(d, u)` — recursive merge, `u` wins.
-- `deep_merge_missing(dst, src)` — only fills keys not already present.
-- `deep_overlay_diff(merged, baseline)` — computes what to write (only changed keys).
-- `Config.drill(path)` — walks dotted path through nested dicts/lists.
-- Singleton `cfg` instance created at module level with global + local paths.
-
-**Why keep:** Clean, well-isolated, no external dependencies beyond `json` and `os`.
-The diff-save approach is elegant. The defaults registration pattern is simple and effective.
-
-#### B. Password Vault (`password_vault.py`)
-
-**What it does:**
-- Encrypted JSON file at `~/.agents/cody_passwords_db.enc`.
-- Fernet symmetric encryption with PBKDF2HMAC key derivation (SHA-256, 480K iterations).
-- Two entry types: **credentials** (username + password) and **secure notes** (free text).
-- Session-based unlock: master password → derived key cached in memory.
-- TUI integration: `prompt_master_password()` pushes an `InputModal` for unlock.
-- Public API: `register_credential()`, `register_secure_note()`, `get_credential()`, `get_secure_note()`.
-- `get_credential()` / `get_secure_note()` are async — they await unlock if needed.
-- Clear hooks: providers can register callbacks for when the vault locks.
-
-**Key design points:**
-- Vault file is versioned (`VAULT_VERSION = 1`).
-- Salt stored in the file; key derived fresh each unlock.
-- Validation on unlock: attempts to decrypt all ciphertexts to detect wrong password.
-- Concurrent unlock callers are queued — only one modal at a time.
-
-**Why keep:** Well-designed, cryptographically sound, clean public API. The unlock flow
-with concurrent waiter queuing is thoughtful.
-
-#### C. Skills System (`skills.py`)
-
-**What it does:**
-- Discovers skills by scanning directories for `SKILL.md` files with YAML frontmatter
-  (requires `name` and `description` fields).
-- 3-tier search order: `$CODY_DIR/skills/` → `~/.agents/skills/` → `{wd}/.agents/skills/`.
-- Later tiers override earlier tiers for same-named skills.
-- Per-skill enable/disable via `skills.enabled` config.
-- Generates XML catalog for injection into the agent system prompt.
-- Provides helper functions for discovering skill `cmd/` and `tools/` directories.
-
-**Key design points:**
-- `SkillManager` is a singleton that re-discovers on every `get_catalog_xml()` call
-  (so config changes are hot-loaded).
-- Simple YAML frontmatter parser (no full YAML dependency — just `key: value` lines).
-- Skill structure: `{name, description, location, base_dir, body}`.
-
-**Why keep:** The skill system IS the extension mechanism. The 3-tier search,
-enable/disable, and catalog generation are all essential.
-
-#### D. Provider System (`providers/`)
-
-**What it does:**
-- `BaseProvider` protocol defining `chat()` and `stream_chat()` interfaces.
-- `ChatResponse`, `Message`, `StreamChunk`, `TokenUsage` dataclasses for normalization.
-- `OllamaProvider` and `OpenAIProvider` implementations.
-- Vault-integrated API key management (`openai_vault.py`, `ollama_vault.py`).
-- Provider selection via `session.provider` config key.
-
-**Key design points:**
-- Both providers normalize to the same response types.
-- Streaming uses generators yielding `StreamChunk` objects.
-- API keys resolved from: vault → config → environment variable.
-- `ensure_*_api_key_for_tui()` functions handle the unlock-and-prompt flow.
-
-**Why keep:** Clean abstraction. The protocol + dataclass approach is solid.
-
-#### E. Tool Registry (`tool.py`)
-
-**What it does:**
-- Register callables with a name and optional tags.
-- Tag-based grouping (e.g., `'skills'`, `'system'`).
-- Enable/disable individual tools or whole groups.
-- `get_tools(tags)` returns enabled tool functions for the given tags.
-- `execute_tool(name, args)` runs a tool by name.
-
-**Key design points:**
-- Module-level globals: `tools`, `groups`, `enabled_tools`.
-- Tools are plain Python functions (not wrapped in objects).
-- The agent passes tool functions directly to the provider.
-- `@register_tool()` decorator enables self-registration at import time —
-  skill authors drop a file and it just works. This pattern stays.
-
-**Why keep:** Simple, effective, and critically — the decorator pattern is the
-key to skill extensibility. No class wrapping needed (see §6.1).
-
-The tool registry serves a distinct purpose from slash commands (user-typed
-`/command`) and leader chords (`Ctrl+Space → key`). See §6.3.
-
-#### F. Database Manager (`db.py`)
-
-**What it does:**
-- Manages multiple database connections (SQLite files + Azure Cosmos DB).
-- Project database (`cody_data.db`) with tables: `chats`, `input_history`, `agents`, `todos`.
-- CRUD operations for chats and agents.
-- Bundled agent seeding from `skills/agents/bundled/*.json`.
-- Connection serialization to/from config.
-
-**Why keep:** Essential for persistence. The multi-provider approach is good.
-
-#### G. Leader Registry (`leader_registry.py`)
-
-**What it does:**
-- Tree of keyboard chords for the leader menu (Ctrl+Space).
-- `LeaderNode` dataclass: `label`, `children: dict[str, LeaderNode]`, `handler`.
-- `register_submenu()` and `register_action()` for building the tree.
-- Core chords registered from workspace, chat, and terminal modules.
-- Skill chords discovered from `components/leader_menu.py` in each skill.
-
-**Why keep:** Clean tree structure, extensible by skills. Distinct from tools (agent-invoked)
-and slash commands (user-typed in chat) — see §6.3.
-
-#### H. Path System (`paths.py`)
-
-**What it does:**
-- `get_cody_dir()` — root of the Cody installation.
-- `get_global_agents_dir()` — `~/.agents`.
-- `tiered_dir_templates(subpath)` — the 3-tier template list.
-- `resolve_dir_templates()` — expands `$CODY_DIR`, `~`, `{working_directory}`.
-- `resolved_tiered_paths()` — convenience for the common case.
-
-**Why keep:** The 3-tier pattern is used everywhere. Clean and simple.
-
----
-
-## 3. What Needs Simplification
-
-### 3.1 Duplicated Code
-
-| Duplication | Locations |
-|---|---|
-| `_group_assistant_tool_messages()` | `chat.py` (lines 22-64), `streaming_chat.py` (lines 28-70) — **identical** |
-| `_messages_to_display()` | `chat.py` (lines 67-79), `streaming_chat.py` (lines 73-85) — **identical** |
-| `save_chat()` method | `MsgBox` (lines 350-378), `StreamingMsgBox` (lines 561-588) — **near-identical** |
-| `_refresh_chat_history()` | `MsgBox` (lines 342-348), `StreamingMsgBox` (lines 553-559) — **identical** |
-| `_update_usage_display()` | `MsgBox` (lines 119-137), `StreamingMsgBox` (lines 312-330) — **identical** |
-| `_focus_message_input()` | `MsgBox` (lines 143-149), `StreamingMsgBox` (lines 336-342) — **identical** |
-| `abort_agent_response()` | `MsgBox` (lines 228-230), `StreamingMsgBox` (lines 344-346) — **identical** |
-| `compose()` structure | `MsgBox` (lines 96-102), `StreamingMsgBox` (lines 289-295) — **identical** |
-| `on_mount()` | `MsgBox` (lines 139-141), `StreamingMsgBox` (lines 332-334) — **identical** |
-| `watch_messages()` | `MsgBox` (lines 104-117), `StreamingMsgBox` (lines 297-310) — **near-identical** |
-
-**Fix:** Extract a `BaseMsgBox` class with all shared logic. `MsgBox` and `StreamingMsgBox`
-only differ in `get_agent_response()`.
-
-### 3.2 Overly Long Methods
-
-- `MsgBox.get_agent_response()` — ~110 lines. Mixes: API key checks, message building,
-  tool-calling loop, abort handling, run_command confirmation, sync, save, refresh.
-- `StreamingMsgBox.get_agent_response()` — ~165 lines. Same concerns plus thread/queue
-  management for bridging sync streaming to async UI.
-
-**Fix:** Break into smaller, testable methods:
-- `_ensure_api_key()` — provider-specific key check.
-- `_build_user_message()` — user msg + git checkpoint.
-- `_execute_tool_call()` — single tool execution with run_command confirmation.
-- `_finalize_turn()` — sync messages, save, refresh history.
-
-### 3.3 Global Mutable State
-
-Current singletons/globals:
-- `cfg` — Config singleton (module-level in cfg_man.py)
-- `skill_manager` — SkillManager singleton (module-level in skills.py)
-- `db_manager` — DatabaseManager proxy (module-level in db.py)
-- `tools`, `groups`, `enabled_tools` — module-level dicts/sets in tool.py
-- `SESSION_KEY`, `_DATA`, `_tui_app` — module-level in password_vault.py
-- `_root` — LeaderNode tree root in leader_registry.py
-
-**Problem:** Hard to test, hard to reason about initialization order, implicit coupling.
-
-**Fix:** A single `AppContext` dataclass or simple DI container that holds references to
-the services components need to *query* at runtime (config, database, leader registry,
-working directory). The tool registry and skill manager stay as module-level
-singletons — their self-registration-at-import pattern (via `@register_tool()`) is
-essential for the drop-in extensibility of the skill system and shouldn't be disrupted.
-The vault session state also stays module-level (it's genuinely global session state).
-
-`AppContext` is a service locator, not a strict DI container. Components import it
-for things they need to read, not things that self-register.
-
-### 3.4 `main.py` Does Too Much
-
-`main.py` currently handles:
-1. Argument parsing
-2. Config loading + defaults
-3. CSS discovery (walking components/ and skills/)
-4. Skill discovery
-5. Leader registry reset + core registration
-6. Tool loading (tiered paths + skill tools)
-7. Leader entry discovery
-8. Git repo initialization
-9. App class definition (TuiApp with all actions)
-10. Theme registration
-11. Async entry point
-
-**Fix:** Extract a `Bootstrap` or `ApplicationFactory` that handles steps 1-8 and returns
-a configured app. Keep `TuiApp` focused on UI concerns.
-
-### 3.5 Chat Component Architecture
-
-Currently there are two parallel implementations:
-- `MsgBox` — blocking, uses `asyncio.to_thread(self.actor.get_response, '')`
-- `StreamingMsgBox` — uses `actor.get_response_stream()` with a thread+queue bridge
-
-**Fix:** Unify on streaming. The blocking path can be a thin wrapper that collects all
-chunks from the stream into a single response. One `MsgBox` class, one code path.
-
-### 3.6 CSS Discovery
-
-CSS files are discovered by walking directory trees at startup. This is scattered between
-`main.py` and `fs.discover_css()`. Skills also contribute CSS from their `components/` dirs.
-
-**Fix:** A single `collect_css_paths()` function that gathers from all sources (core
-components + skills) and returns a flat list. Called once at bootstrap.
-
----
-
-## 4. Proposed Target Architecture
-
-### 4.1 Directory Structure (Simplified)
-
-```
-cody/
-├── main.py                  ← Entry point: parse args, bootstrap, run app
-├── app.py                   ← TuiApp class (UI concerns only)
-├── bootstrap.py             ← Bootstrap: config, skills, tools, CSS, themes, git
-├── context.py               ← AppContext dataclass (holds refs to all services)
-├── pyproject.toml
-├── app.css
-├── core/                    ← Core systems (the "keepers")
-│   ├── config.py            ← Config manager (was cfg_man.py)
-│   ├── vault.py             ← Password vault (was password_vault.py)
-│   ├── skills.py            ← Skill discovery & catalog
-│   ├── agent.py             ← Agent + TaskAgent
-│   ├── tools.py             ← Tool registry
-│   ├── database.py          ← Database manager
-│   ├── paths.py             ← Path utilities
-│   ├── leader.py            ← Leader registry
-│   ├── commands.py          ← Slash-command loader
-│   ├── git.py               ← Git utilities
-│   ├── themes.py            ← Theme discovery
-│   └── providers/           ← LLM providers
-│       ├── base.py
-│       ├── ollama.py
-│       ├── openai.py
-│       └── keys.py          ← Unified API key management (merge *_vault.py files)
-├── tools/                   ← Agent-callable tools (registered at startup)
-│   ├── activate_skill.py
-│   ├── run_skill.py
-│   ├── read_file.py
-│   ├── write_file.py
-│   └── run_command.py
-├── ui/                      ← All Textual widgets
-│   ├── tree/                ← Generic tree components
-│   │   ├── tree.py          ← Tree widget (flat expandable list)
-│   │   ├── tree_row.py      ← TreeRow (compose-based, hosts content widgets)
-│   │   └── tree.tcss
-│   ├── workspace/
-│   │   ├── workspace.py     ← Recursive split-pane workspace
-│   │   └── workspace.tcss
+main.py                 ← Entry point: CodyApp, leader bindings, compose/paste/mount
+bootstrap.py            ← Bootstrap: config → skills → tools → DB → leader → context
+context.py             ← AppContext dataclass (config, skills, database, leader, working_directory)
+conftest.py            ← Pytest fixtures
+├── core/              ← Core systems (zero UI dependency)
+│   ├── agent.py       ← Agent: system prompt builder, tool-calling loop, streaming
+│   ├── commands.py    ← Slash-command loader (CommandBase, 3-tier discovery)
+│   ├── config.py      ← Config manager (layered JSON, dot-path, diff-save, registered defaults)
+│   ├── database.py    ← Database manager (SQLite provider, connection manager, CRUD)
+│   ├── db_connections.py ← Multi-connection DB query manager (provider abstraction, pagination)
+│   ├── events.py      ← CodyEvent message system (leader chords → workspace/terminal actions)
+│   ├── leader.py      ← Leader registry (tree of keyboard chords for Ctrl+Space menu)
+│   ├── pane_tree.py   ← Pure data model: LeafPane, SplitPane, split/close/navigate ops
+│   ├── paths.py       ← 3-tier path resolution ($CODY_DIR, ~/.agents, project)
+│   ├── skills.py      ← Skill discovery & catalog (SKILL.md, YAML frontmatter, 3-tier)
+│   ├── terminal_passthrough.py ← Key passthrough registry (prevent terminal stealing app shortcuts)
+│   ├── tools.py       ← Tool registry (@register_tool, tag-based grouping, enable/disable)
+│   ├── vault.py       ← Password vault (Fernet + PBKDF2, credentials + secure notes)
+│   └── providers/
+│       ├── base.py    ← BaseProvider protocol, ChatResponse, StreamChunk, TokenUsage
+│       ├── ollama.py  ← Ollama provider (chat + stream_chat, vault key resolution)
+│       └── __init__.py ← Provider registry + config defaults
+├── ui/                ← All Textual widgets
+│   ├── chat/
+│   ├── db/
+│   │   ├── __init__.py
+│   │   └── connection_form.py ← Dynamic multi-field modal for DB connections
+│   │   ├── chat_display.py      ← ChatDisplay: Tree-based streaming message display
+│   │   ├── chat_input.py        ← ChatInput: Input wrapper, posts ChatSubmitted
+│   │   ├── chat_manager.py      ← ChatManager: orchestrates streaming loop + history/DB
+│   │   ├── command_palette.py   ← CommandPalette: fuzzy-search overlay for slash commands
+│   │   ├── command_suggester.py ← CommandSuggester: autocomplete for command palette
+│   │   └── __init__.py
 │   ├── sidebar/
-│   │   ├── registry.py      ← Sidebar tab registration + discovery
-│   │   ├── sidebar.py       ← Sidebar + SidebarContainer (hides/shows)
+│   │   ├── registry.py          ← Sidebar tab registration + discovery
+│   │   ├── sidebar.py           ← Sidebar + SidebarContainer (hides/shows)
 │   │   ├── panels/
-│   │   │   ├── vault_panel.py    ← Encrypted credential + note management
-│   │   │   ├── chat_panel.py     ← Streaming chat (Tree + Markdown widgets)
-│   │   │   └── config_panel.py   ← Editable config tree
-│   │   └── sidebar.tcss
-│   └── widgets/             ← Shared widgets (modals, leader screen)
-│       ├── input_modal.py
-│       ├── commands_help.py
-│       ├── leader_overlay.py
-│       └── *.tcss
-├── skills/                  ← Bundled skills (unchanged structure)
-├── themes/                  ← Bundled themes
-└── cmd/                     ← Core slash commands
+│   │   │   ├── chat_panel.py    ← ChatPanel sidebar tab wrapping ChatManager
+│   │   │   ├── config_panel.py  ← ConfigPanel: editable config tree with actions
+│   │   │   ├── db_panel.py      ← DBPanel: connection browser tree with actions
+│   │   │   ├── file_browser.py  ← FileBrowser: lazy directory tree with actions
+│   │   │   ├── vault_panel.py   ← VaultPanel: encrypted credential + note management
+│   │   │   └── __init__.py
+│   │   └── __init__.py
+│   ├── terminal/
+│   │   ├── terminal.py          ← TerminalView + TerminalSnapshot (PTY lifecycle + screen/display preservation)
+│   │   ├── terminal_handler.py  ← Leader chord handler for terminal.open
+│   │   └── __init__.py
+│   ├── tree/
+│   │   ├── tree.py              ← Generic Tree widget (flat expandable list, CSS hide/show)
+│   │   ├── tree_row.py          ← TreeRow (compose-based, hosts content + action buttons)
+│   │   └── __init__.py
+│   ├── widgets/
+│   │   ├── commands_help.py     ← Leader chord reference overlay
+│   │   ├── confirm_modal.py    ← Yes/No confirmation dialog
+│   │   ├── input_modal.py      ← Text input modal
+│   │   ├── leader_overlay.py    ← Leader menu overlay (chord tree navigation)
+│   │   └── __init__.py
+│   ├── workspace/
+│   │   ├── file_edit_handler.py ← Event handler wiring file.open → workspace tab
+│   │   ├── file_editor.py      ← FileEditor widget (read/write files in a tab)
+│   │   ├── query_editor.py     ← QueryEditor: split-pane SQL editor + results table
+│   │   ├── tabs.py             ← WorkspaceTabs (tab bar + content area, closeable tabs, state persistence)
+│   │   ├── welcome_view.py    ← WelcomeView (landing page for empty panes)
+│   │   ├── workspace.py       ← Recursive split-pane workspace + recomposition logic
+│   │   └── __init__.py
+│   └── __init__.py
+├── tools/              ← Agent-callable tools (registered at startup)
+│   ├── activate_skill.py    ← Load SKILL.md content into context
+│   ├── read_file.py         ← Read file tool
+│   ├── run_command.py       ← Run shell command tool
+│   ├── run_skill.py         ← Execute skill scripts (subprocess)
+│   ├── write_file.py        ← Write file tool
+│   └── __init__.py
+├── utils/
+│   ├── dom_id.py        ← DOM ID generation utilities
+│   ├── icons.py         ← Nerd Font icon constants (file types, actions, folders)
+│   └── __init__.py
+├── skills/             ← Bundled skills (extensible via SKILL.md)
+├── cmd/                ← Core slash commands
+│   ├── clear.py
+│   ├── help.py
+│   └── new.py
+├── config/             ← Default config fragments
+└── implementations/    ← OpenAI provider implementation (separate package)
 ```
 
-### 4.2 Key Architectural Changes
+### 2.2 Core Systems
 
-#### 1. `AppContext` — Service Locator
+#### A. Config Manager (`core/config.py`)
+
+Layered JSON config with dot-path access (`cfg.get('session.provider')`), diff-save
+(only changed keys are written), and registered defaults that modules declare at
+import time. Singleton `Config` instance bootstrapped in `Bootstrap.run()`.
+
+#### B. Password Vault (`core/vault.py`)
+
+Fernet + PBKDF2HMAC encryption. Two entry types: credentials (username + password)
+and secure notes. Session-based unlock with concurrent caller queuing. Providers
+register lock callbacks. API key resolution: vault → config → environment variable.
+
+#### C. Skills System (`core/skills.py`)
+
+Discovers skills via `SKILL.md` YAML frontmatter. 3-tier search: `$CODY_DIR/skills/`
+→ `~/.agents/skills/` → `{wd}/.agents/skills/`. Per-skill enable/disable. Generates
+XML catalog for the agent system prompt. Manual scan — no implicit re-discovery.
+
+#### D. Provider System (`core/providers/`)
+
+`BaseProvider` protocol with `chat()` and `stream_chat()`. `OllamaProvider`
+implementation (OpenAI possible via `implementations/`). `ChatResponse`,
+`StreamChunk`, `TokenUsage`, `ToolCall` dataclasses. `StreamChunk` extended with
+`thinking` field for reasoning-capable models.
+
+#### E. Tool Registry (`core/tools.py`)
+
+`@register_tool()` decorator with module-level globals. Tag-based grouping.
+Enable/disable individual tools or whole groups. Skills drop a `.py` file and
+it self-registers at import time. Distinct from slash commands and leader chords
+(see §6.3).
+
+#### F. Database Manager (`core/database.py`)
+
+SQLite provider (Cosmos dropped per §6.2). Connection manager, tables: chats,
+agents, todos, input_history. CRUD operations. Agent seeding from bundled JSON.
+Provider abstraction retained for future extensibility.
+
+#### F2. DB Connection Manager (`core/db_connections.py`)
+
+Manages user-defined database connections backed by the layered config system.
+Connection metadata lives under ``db.connections`` in config; sensitive fields
+(passwords) are stored in the vault.  Provides a ``DBProvider`` abstract class
+that each backend (SQLite, future PostgreSQL etc.) implements, a dynamic
+``ConnectionFormModal`` driven by ``form_fields()``, and a lazy-loading sidebar
+tree that introspects tables, views, and triggers.  Query execution with
+offset-based pagination is handled by each provider's ``execute_query()``.
+
+#### G. Leader Registry (`core/leader.py`)
+
+Tree of keyboard chords for the leader menu (`Ctrl+Space`). `LeaderNode` dataclass
+with `register_submenu()` and `register_action()`. Core chords registered by
+workspace, chat, and terminal modules at import time. Skill chords discovered
+from `SKILL.md` frontmatter.
+
+#### H. Path System (`core/paths.py`)
+
+Simplified to three functions: `cody_dir()`, `agents_dir()`, `resolve()`. 3-tier
+template expansion for skill/CSS/theme discovery. `collect_tcss()` gathers CSS
+from all tiers + skills.
+
+#### I. Event System (`core/events.py`)
+
+`CodyEvent` — a Textual `Message` subclass for inter-component communication.
+Leader chords post `CodyEvent` messages which widgets route via `on_cody_event`
+handlers. Used for workspace navigation, terminal opening, and file opening.
+
+#### J. Terminal Passthrough (`core/terminal_passthrough.py`)
+
+Registry of keyboard shortcuts that the terminal must *not* consume (e.g. `Ctrl+Q`
+for quit, `Ctrl+Space` for leader, `Ctrl+H/J/K/L` for pane navigation). The
+embedded terminal checks this set before forwarding key events.
+
+---
+
+## 3. Design Decisions (Resolved)
+
+### 3.1 Tool Registry: Module Globals with Decorator Pattern
+
+**Decision:** Keep `@register_tool()` with module-level globals. No class wrapping.
+
+**Rationale:** Self-registration at import time with zero boilerplate — skill authors
+drop a `.py` file and it just works. A class-based approach would require passing a
+registry instance around, adding friction.
+
+### 3.2 Database Providers: Drop Cosmos, Ship SQLite Only
+
+**Decision:** Remove Cosmos DB provider. Ship SQLite as the only bundled provider.
+Retain the `BaseDBProvider` abstraction for extensibility.
+
+**Rationale:** `azure-cosmos` + `azure-identity` are heavy dependencies with narrow
+utility. One concrete provider is easier to maintain.
+
+### 3.3 Slash Commands, Leader Chords, and Tools: Three Separate Registries
+
+**Decision:** Three distinct registries, no merging.
+
+**Rationale:** Fundamentally different invocation contexts:
+- **Tools** — agent-invoked via LLM tool-calling loop, need structured I/O
+- **Slash commands** — user-typed in chat (`/command`), freeform control
+- **Leader chords** — keyboard-driven (`Ctrl+Space → keys`), pure UI navigation
+
+### 3.4 Skill Discovery: No Hot-Reloading
+
+**Decision:** No implicit re-discovery. Explicit "Scan Skills" button in the UI.
+
+**Rationale:** Implicit re-discovery is confusing. File watchers add complexity.
+A manual button gives users control without restarting the app.
+
+### 3.5 Testing Strategy
+
+**Decision:** Full test suite from the start. pytest with Textual `pilot` fixtures.
+
+- `AppContext` makes services injectable
+- Module-level singletons have reset functions for test isolation
+- Provider tests: mock HTTP → verify normalization
+- UI tests: Textual `pilot` for widget-level integration
+- Vault tests: integration against temp encrypted file
+
+### 3.6 Chat UI: Unified Streaming
+
+**Decision:** One `ChatManager` class, always streams. No blocking path.
+
+**Rationale:** The old codebase had `MsgBox` (blocking) and `StreamingMsgBox` (streaming)
+with ~10 duplicated methods. Unifying eliminates duplication and simplifies
+the codebase significantly.
+
+### 3.7 Terminal Preservation: Data Transfer, Not Widget Remount
+
+**Decision:** Transfer pyte `Screen` + `TerminalDisplay` objects across recomposition
+rather than trying to remount Textual widgets.
+
+**Rationale:** Textual widgets cannot be remounted after DOM removal. But `Screen`
+and `TerminalDisplay` are plain Python objects, not widgets — they can be captured
+before the rebuild and injected into a freshly-created `PtyTerminal`. This preserves
+both the PTY process and the visible output. See §7 Step 16b for full details.
+
+---
+
+## 4. Resolved Simplifications
+
+These items were identified as needing cleanup in the original codebase and have
+been resolved during the rewrite:
+
+| Original problem | Resolution |
+|---|---|
+| Duplicated `MsgBox`/`StreamingMsgBox` code (~10 methods) | Unified into single `ChatManager` (Step 15) |
+| Overly long `get_agent_response()` methods | Broken into smaller methods in `ChatManager` |
+| Global mutable state (cfg, skill_manager, etc.) | `AppContext` dataclass introduced (Step 13) |
+| `main.py` doing too much | Extracted to `Bootstrap` class (Step 13) |
+| CSS discovery scattered across `main.py` and `fs.py` | `paths.collect_tcss()` gathers all tiers (Step 13) |
+
+---
+
+## 5. Current Directory Structure
+
+(After all completed steps — see §7 for step-by-step history.)
+
+```
+.
+├── bootstrap.py               ← Bootstrap class: config → skills → tools → DB → leader → context
+├── conftest.py                ← Pytest fixtures
+├── context.py                 ← AppContext dataclass
+├── main.py                    ← Entry point: CodyApp, compose, leader bindings
+├── cody_data.db               ← SQLite database (runtime)
+├── core/
+│   ├── __init__.py
+│   ├── agent.py               ← Agent: system prompt, tool-calling loop, streaming
+│   ├── commands.py            ← Slash-command loader
+│   ├── config.py              ← Layered JSON config, dot-path, diff-save
+│   ├── database.py            ← SQLite DB manager, CRUD, agent seeding
+│   ├── events.py              ← CodyEvent message system
+│   ├── leader.py              ← Leader chord tree registry
+│   ├── pane_tree.py           ← Pure data model: split/close/navigate
+│   ├── paths.py               ← 3-tier path resolution, collect_tcss()
+│   ├── skills.py              ← Skill discovery & catalog
+│   ├── terminal_passthrough.py ← Key passthrough registry for terminal
+│   ├── tools.py               ← Tool registry, @register_tool()
+│   ├── vault.py               ← Encrypted password vault
+│   └── providers/
+│       ├── __init__.py         ← Provider registry + defaults
+│       ├── base.py             ← BaseProvider protocol, ChatResponse, StreamChunk
+│       └── ollama.py           ← Ollama provider
+├── cmd/
+│   ├── clear.py
+│   ├── help.py
+│   └── new.py
+├── implementations/
+│   └── (OpenAI provider package)
+├── skills/
+│   └── __init__.py
+├── tests/
+│   ├── test_agent.py
+│   ├── test_bootstrap.py
+│   ├── test_chat_display.py
+│   ├── test_chat_display_system.py
+│   ├── test_chat_input.py
+│   ├── test_chat_manager.py
+│   ├── test_chat_panel.py
+│   ├── test_command_dispatch.py
+│   ├── test_command_palette.py
+│   ├── test_commands.py
+│   ├── test_command_suggester.py
+│   ├── test_config.py
+│   ├── test_config_panel.py
+│   ├── test_database.py
+│   ├── test_events.py
+│   ├── test_file_browser.py
+│   ├── test_file_editor.py
+│   ├── test_icons.py
+│   ├── test_leader.py
+│   ├── test_pane_tree.py
+│   ├── test_paths.py
+│   ├── test_provider_base.py
+│   ├── test_provider_ollama.py
+│   ├── test_sidebar.py
+│   ├── test_skills.py
+│   ├── test_terminal.py
+│   ├── test_terminal_preservation.py
+│   ├── test_theme_persistence.py
+│   ├── test_tools.py
+│   ├── test_tools_read_file.py
+│   ├── test_tools_run_command.py
+│   ├── test_tools_skill.py
+│   ├── test_tools_write_file.py
+│   ├── test_tree_merged.py
+│   ├── test_tree.py
+│   ├── test_vault.py
+│   ├── test_widgets.py
+│   ├── test_workspace.py
+│   └── test_workspace_tabs.py
+├── tools/
+│   ├── __init__.py
+│   ├── activate_skill.py
+│   ├── read_file.py
+│   ├── run_command.py
+│   ├── run_skill.py
+│   └── write_file.py
+├── ui/
+│   ├── __init__.py
+│   ├── chat/
+│   │   ├── __init__.py
+│   │   ├── chat_display.py
+│   │   ├── chat_input.py
+│   │   ├── chat_manager.py
+│   │   ├── command_palette.py
+│   │   └── command_suggester.py
+│   ├── sidebar/
+│   │   ├── __init__.py
+│   │   ├── registry.py
+│   │   ├── sidebar.py
+│   │   └── panels/
+│   │       ├── __init__.py
+│   │       ├── chat_panel.py
+│   │       ├── config_panel.py
+│   │       ├── file_browser.py
+│   │       └── vault_panel.py
+│   ├── terminal/
+│   │   ├── __init__.py
+│   │   ├── terminal.py
+│   │   └── terminal_handler.py
+│   ├── tree/
+│   │   ├── __init__.py
+│   │   ├── tree.py
+│   │   └── tree_row.py
+│   ├── widgets/
+│   │   ├── __init__.py
+│   │   ├── commands_help.py
+│   │   ├── confirm_modal.py
+│   │   ├── input_modal.py
+│   │   └── leader_overlay.py
+│   └── workspace/
+│       ├── __init__.py
+│       ├── file_edit_handler.py
+│       ├── file_editor.py
+│       ├── tabs.py
+│       ├── welcome_view.py
+│       └── workspace.py
+├── utils/
+│   ├── __init__.py
+│   ├── dom_id.py
+│   └── icons.py
+├── config/                    ← Default config fragments
+└── .agents/                   ← Agent/skill configuration (project-local)
+```
+
+---
+
+## 6. Key Architectural Patterns
+
+### 6.1 `AppContext` — Service Locator
 
 ```python
 @dataclass
 class AppContext:
     config: Config
-    skills: SkillManager       # ref to singleton (for UI queries, not registration)
+    skills: SkillManager
     database: DatabaseManager
     leader: LeaderRegistry
     working_directory: str
 ```
 
 Created once at bootstrap. Holds references to services components need to *query*
-at runtime. The tool registry and skill manager remain module-level singletons —
-their `@register_tool()` / `SkillManager()` patterns are essential for
-self-registration-at-import extensibility and should not be disrupted by DI.
-The vault also stays module-level (session state, not app state).
+at runtime. Tool registry and skill manager remain module-level singletons — their
+`@register_tool()` / `SkillManager()` patterns are essential for self-registration-
+at-import extensibility. The vault stays module-level (global session state).
 
 `AppContext` is a service locator, not a strict DI container.
 
-#### 2. Unified `MsgBox`
+### 6.2 Unified Chat Streaming
 
-One `MsgBox` class. Always streams. The non-streaming path is just:
+One `ChatManager` class. Always streams via `Agent.stream_chat()`. The
+`ChatDisplay` widget provides a streaming API: `add_user_message()`,
+`begin_assistant_turn()`, `update_section()`, `finalize_turn()`. No more
+`MsgBox`/`StreamingMsgBox` duplication.
 
-```python
-async def get_response_blocking(self, user_text):
-    chunks = []
-    async for chunk in self.actor.get_response_stream(user_text):
-        chunks.append(chunk)
-    return chunks
-```
-
-No more duplicated `_group_assistant_tool_messages`, `save_chat`, etc.
-
-#### 3. Bootstrap Module
+### 6.3 Bootstrap Module
 
 ```python
 class Bootstrap:
-    def __init__(self, working_directory: str):
-        self.wd = working_directory
-
-    def run(self) -> AppContext:
+    def run(self) -> tuple[AppContext, list[str]]:
         config = self._init_config()
         skills = self._discover_skills(config)
-        self._load_tools(config, skills)     # triggers import-time registration
+        self._load_tools(config, skills)
         database = self._init_database(config)
         leader = self._init_leader(skills)
-        self._init_git()
         css = self._collect_css(skills)
-        return AppContext(
-            config=config,
-            skills=skills,
-            database=database,
-            leader=leader,
-            working_directory=self.wd,
-        ), css
+        return AppContext(...), css
 ```
 
-#### 4. Unified API Key Management
+Steps 1–13 of the startup sequence live here. `main.py` just parses args,
+calls `Bootstrap.run()`, and mounts the app.
 
-Merge `openai_vault.py` and `ollama_vault.py` into a single `providers/keys.py`:
+### 6.4 API Key Resolution
 
-```python
-async def ensure_api_key(provider_name: str, app) -> bool:
-    """Ensure we have an API key for provider_name. Prompts vault unlock if needed."""
+Providers resolve keys directly from the vault (no separate `keys.py` module).
+`OllamaProvider` calls `vault.get_credential()` on demand. If the vault is locked,
+an async unlock flow is triggered.
 
-def clear_api_key_cache(provider_name: str) -> None:
-    """Clear cached key for provider_name (called on vault lock)."""
-```
+### 6.5 CSS Collection
 
-#### 5. CSS Collection
-
-```python
-def collect_css(skills: SkillManager) -> list[str]:
-    paths = ['app.css']
-    paths.extend(discover_css('ui/'))
-    for skill in skills.values():
-        css_dir = os.path.join(skill.base_dir, 'components')
-        if os.path.isdir(css_dir):
-            paths.extend(discover_css(css_dir))
-    return paths
-```
-
-### 4.3 What Stays the Same
-
-| System | Changes |
-|---|---|
-| Config Manager | Move to `core/config.py`, otherwise identical |
-| Password Vault | Move to `core/vault.py`, otherwise identical |
-| Skills System | Move to `core/skills.py`, manual scan button replaces implicit re-discovery |
-| Provider Protocol | Move to `core/providers/base.py`, otherwise identical |
-| Tool Registry | Move to `core/tools.py`, keep module-global decorator pattern (no class wrapper — see §6.1) |
-| Database Manager | Move to `core/database.py`, drop Cosmos provider, keep provider abstraction, ship SQLite only (see §6.2) |
-| Leader Registry | Move to `core/leader.py`, unchanged |
-| Path System | Move to `core/paths.py`, otherwise identical |
-| Git Utilities | Move to `core/git.py`, otherwise identical |
-| Theme Discovery | Move to `core/themes.py`, otherwise identical |
-| Slash Commands | Move to `core/commands.py`, otherwise identical |
+`paths.collect_tcss(wd)` gathers CSS from all three tiers (core UI, user themes,
+project `.agents/`) plus any skill `components/` directories. Called once at bootstrap.
 
 ---
 
-## 5. Migration Strategy
-
-### Phase 1: Extract Core (no behaviour changes)
-
-1. Create `core/` directory.
-2. Move each utility file, updating import paths throughout.
-3. Verify the app still runs.
-
-### Phase 2: Eliminate Duplication
-
-1. Extract `BaseMsgBox` from the common parts of `MsgBox` and `StreamingMsgBox`.
-2. Unify on streaming — delete the blocking path.
-3. Extract shared message grouping functions to a single location.
-
-### Phase 3: Introduce AppContext
-
-1. Create `AppContext` dataclass (service locator — does NOT wrap tools/skills).
-2. Create `Bootstrap` class in `bootstrap.py`.
-3. Wire AppContext through to components that query config, database, leader.
-4. Tool registry and skill manager remain module-level imports — components
-   import them directly for self-registration patterns.
-
-### Phase 4: Simplify
-
-1. Break up long methods in chat components.
-2. Merge vault provider files.
-3. Clean up `main.py` to just parse args + call bootstrap + run app.
-4. Remove dead code (commented-out imports, unused utilities).
-
----
-
-## 6. Design Decisions (Resolved)
-
-### 6.1 Tool Registry: Keep Module Globals with Decorator Pattern
-
-**Decision:** Keep the current `@register_tool()` decorator with module-level
-globals (`tools`, `groups`, `enabled_tools`). Do NOT wrap in a class.
-
-**Rationale:** The decorator pattern means tools self-register at import time with
-a single line — no passing registries around, no proxy pattern needed. This is
-critical for skill extensibility: skill authors can drop a Python file with
-`@register_tool(...)` in their skill's `tools/` directory and it just works.
-A class-based approach would require every tool author to access the registry
-instance, adding friction to the extension mechanism.
-
-### 6.2 Database Providers: Drop Cosmos, Keep Provider Abstraction, Ship SQLite Only
-
-**Decision:** Remove the Cosmos DB provider entirely. Ship with SQLite as the only
-bundled provider. Retain the provider abstraction (`db_providers/base.py`) so users
-can write their own providers for other database types.
-
-**Rationale:** Cosmos DB requires `azure-cosmos` and `azure-identity` — heavy
-dependencies that add complexity without broad utility. The provider abstraction is
-clean and worth keeping for extensibility, but we only need to ship and maintain
-one concrete implementation.
-
-### 6.3 Slash Commands, Leader Chords, and Tools: Three Separate Registries
-
-**Decision:** Keep these as three distinct, separate registries. No merging.
-
-**Rationale:** They serve fundamentally different invocation contexts:
-- **Tools** — agent-invoked via the LLM's tool-calling loop. Need structured args
-  and structured results. The LLM decides when to call them.
-- **Slash commands** — user-typed in the chat input (`/command`). Freeform,
-  meant for direct user control over the application.
-- **Leader chords** — keyboard-driven (`Ctrl+Space → key sequence`). Pure UI
-  navigation and actions with no text input.
-
-Keeping them separate maintains clean boundaries and gives skill authors three
-distinct extension surfaces to choose from depending on their needs.
-
-### 6.4 Skill Discovery: No Hot-Reloading, Add a Manual Scan Button
-
-**Decision:** Remove the implicit re-discovery on every catalog generation. Instead,
-add an explicit "Scan Skills" button in the UI that triggers re-discovery and
-refreshes the catalog.
-
-**Rationale:** Implicit re-discovery is confusing behavior — users don't know when
-it happens. File watchers add complexity (cross-platform edge cases, resource use).
-A manual button is simple, explicit, and gives users control. It's still more
-convenient than restarting the application.
-
-### 6.5 Testing Strategy
-
-**Decision:** The rewrite will include a full test suite from the start. Use pytest
-with fixtures that leverage `AppContext` for dependency injection.
-
-**Key testing design points:**
-- `AppContext` makes services injectable — tests can supply test configs, mock
-  databases, and fake provider responses.
-- Module-level singletons (tool registry, skill manager) can be reset between
-  tests via explicit reset functions added to their public APIs.
-- Provider tests: mock HTTP responses, verify normalization to `ChatResponse`/
-  `StreamChunk`.
-- UI tests: Textual's `pilot` fixture for widget-level integration tests.
-- Vault tests: integration tests against a temp encrypted file.
-
-**Recommended pytest fixtures:**
-- `test_config` — in-memory config or temp JSON files
-- `test_context` — `AppContext` wired with all fakes
-- `test_db` — temp SQLite file, seeded with known data
-- `mock_provider` — provider that returns canned responses
-
----
-
-## 7. Implementation Phases
+## 7. Implementation Steps
 
 ### Step 1: Project Scaffolding ✅
 
- - pyproject.toml — deps: textual, ollama, cryptography, dev: pytest, pytest-asyncio
- - Directory skeleton: core/, core/providers/, ui/, tools/, skills/, tests/
- - conftest.py with base fixtures
- - Tests: Verify project imports cleanly
- - **COMPLETE** — branch `step-1-scaffolding`
+ - pyproject.toml, directory skeleton, conftest.py
+ - **COMPLETE**
 
-### Step 2: Provider Base Protocol (zero internal deps)
+### Step 2: Provider Base Protocol ✅
 
- - core/providers/base.py — BaseProvider protocol, ChatResponse, Message, StreamChunk, TokenUsage, ToolCall dataclasses
- - Pure data + interfaces, no I/O
- - **COMPLETE** — branch `step-2-6-provider-base-ollama`
- - Added ``thinking`` field to ChatResponse and StreamChunk for reasoning-capable models
+ - `core/providers/base.py` — BaseProvider protocol, dataclasses
+ - Added `thinking` field for reasoning-capable models
+ - **COMPLETE**
 
-### Step 3: Path System (zero internal deps) ✅
+### Step 3: Path System ✅
 
- - core/paths.py — get_cody_dir(), get_global_agents_dir(), 3-tier resolution, template expansion
- - Tests: All path functions, edge cases (missing dirs, relative paths, $CODY_DIR expansion)
- - **COMPLETE** — simplified to 3 functions: cody_dir(), agents_dir(), resolve()
+ - `core/paths.py` — 3-tier resolution, `cody_dir()`, `agents_dir()`, `resolve()`
+ - **COMPLETE**
 
-### Step 4: Config Manager (depends on paths) ✅
+### Step 4: Config Manager ✅
 
- - core/config.py — layered JSON loading, dot-path access, diff-save, registered defaults
- - Tests: Deep merge, dot-path get/set, diff computation, defaults registration, round-trip save/load
- - **COMPLETE** — Config class: get(), set(), defaults(), apply_defaults(), save()
+ - `core/config.py` — layered JSON, dot-path, diff-save, registered defaults
+ - **COMPLETE**
 
-### Step 5: Password Vault (depends on paths) ✅
+### Step 5: Password Vault ✅
 
- - core/vault.py — Fernet + PBKDF2, credential + secure note types, session unlock, concurrent waiter queue
- - Tests: Encrypt/decrypt round-trip, wrong password rejection, lock/unlock flow, concurrent unlock callers
- - **COMPLETE** — Vault class: initialize(), unlock(), lock(), is_locked(), credential + secure note CRUD
+ - `core/vault.py` — Fernet + PBKDF2, credentials + secure notes, concurrent unlock
+ - **COMPLETE**
 
-### Step 6: Ollama Provider (depends on base, config, vault)
+### Step 6: Ollama Provider ✅
 
- - core/providers/ollama.py — implements BaseProvider, chat() + stream_chat(), API key from vault only (no config/env fallback)
- - Removed ``core/providers/keys.py`` — unnecessary indirection; providers resolve keys directly from vault
- - **COMPLETE** — branch `step-2-6-provider-base-ollama`
+ - `core/providers/ollama.py` — implements BaseProvider, vault key resolution
+ - **COMPLETE**
 
-### Step 7: Recursive Pane Tree + Workspace (depends on events, context stub) ✅
+### Step 7: Recursive Pane Tree + Workspace ✅
 
- - core/pane_tree.py — pure data model: LeafPane, SplitPane, operations (split, close, find_neighbor, set_content, get_leaves, get_layout)
- - ui/workspace/workspace.py — Workspace widget composing tree → Horizontal/Vertical containers, vim+click navigation, leader event posting
- - ui/workspace/workspace.css — pane borders, focus indicators, empty-state styling
- - Tests: All tree operations in isolation, Workspace widget via Textual pilot
- - No resize — splits set a ratio once at creation time
- - Leader chords: ws v/h (split), ws c (close), ws h/j/k/l (navigate)
- - **COMPLETE** — branch `step-7-pane-tree-workspace` (merged to main)
+ - `core/pane_tree.py` — LeafPane, SplitPane, split/close/find_neighbor/get_layout
+ - `ui/workspace/workspace.py` — Workspace widget, PaneContainer, vim navigation, leader chords
+ - **COMPLETE**
 
-### Step 8: Tool Registry (zero internal deps) ✅
+### Step 8: Tool Registry ✅
 
- - core/tools.py — @register_tool() decorator, tag-based grouping, enable/disable, execute_tool(), get_tools(), reset for tests
- - Tests: Registration, tag filtering, enable/disable, execution, reset isolation
- - **COMPLETE** — merged to main
+ - `core/tools.py` — `@register_tool()`, tag grouping, enable/disable, reset
+ - **COMPLETE**
 
-### Step 9: Skill System (depends on paths, config, tools) ✅
+### Step 9: Skill System ✅
 
- - core/skills.py — SKILL.md discovery with YAML frontmatter, 3-tier search with override, enable/disable, XML catalog generation, manual scan method (no implicit re-discovery)
- - Tests: Discovery from fixture directories, tier override, frontmatter parsing, catalog XML output, scan method
- - **COMPLETE** — merged to main
+ - `core/skills.py` — SKILL.md discovery, YAML frontmatter, 3-tier override, XML catalog
+ - **COMPLETE**
 
-### Step 10: Agent (depends on providers, tools, skills) ✅
+### Step 10: Agent ✅
 
- - core/agent.py — system prompt builder with `{{key}}` template substitution, tool-calling loop, streaming response handling, abort, max_tool_iterations safety limit
- - core/providers/base.py — added ``tool_calls`` field to ``StreamChunk``
- - Tests: template rendering, message building, simple chat, tool-calling loop, streaming, abort
- - **COMPLETE** — branch `step-10-agent`
+ - `core/agent.py` — system prompt builder, tool-calling loop, streaming, abort
+ - **COMPLETE**
 
-### Step 11: Database (depends on paths, config) ✅
+### Step 11: Database ✅
 
- - core/database.py — provider abstraction (BaseDBProvider), SQLiteProvider, connection manager, tables: chats/agents/todos/input_history, CRUD, agent seeding
- - Tests: All CRUD operations, multi-connection, provider swapping, seeded agents
- - **COMPLETE** — merged to main; Cosmos provider dropped per §6.2
+ - `core/database.py` — SQLiteProvider, connection manager, CRUD, agent seeding
+ - Cosmos provider dropped per §3.2
+ - **COMPLETE**
 
-### Step 12: Leader Registry + Slash Commands (zero internal deps) ✅
+### Step 12: Leader Registry + Slash Commands ✅
 
- - core/leader.py — LeaderNode tree, register_submenu(), register_action(), skill chord discovery
- - core/commands.py — slash-command loader, CommandBase, tiered discovery from skill cmd/ dirs
- - Tests: Tree building, action dispatch, command loading, chord conflict detection
- - **COMPLETE** — merged to main; LeaderOverlay widget built early in ui/widgets/
+ - `core/leader.py` — LeaderNode tree, register_submenu/action
+ - `core/commands.py` — CommandBase, tiered discovery
+ - **COMPLETE**
 
-### Step 13: Bootstrap + AppContext (depends on everything above) ✅
+### Step 13: Bootstrap + AppContext ✅
 
- - context.py — AppContext dataclass (config, skills, database, leader, working_directory)
- - bootstrap.py — Bootstrap class: init config → discover skills → load tools → init DB → build leader → return context
- - core/themes.py — theme discovery (3-tier) — **DEFERRED**
- - core/git.py — git checkpoint utilities — **DEFERRED**
- - CSS collection — ✅ **COMPLETE** (feature/css-3-tier-collection); collected via ``paths.collect_tcss(wd)`` covering all three tiers
- - Tests: Full bootstrap flow with temp directories, verify all services initialized
- - **COMPLETE** — merged to main; leader overlay, main.py wiring, and workspace leader chords built alongside
+ - `context.py`, `bootstrap.py` — full bootstrap flow
+ - CSS collection via `paths.collect_tcss()`
+ - **COMPLETE**
+ - **DEFERRED:** `core/themes.py` (3-tier theme discovery), `core/git.py` (checkpoint utilities)
 
-### Step 14: Shared UI Widgets (depends on AppContext) ✅
+### Step 14: Shared UI Widgets ✅
 
- - ui/widgets/ — InputModal, CommandsHelp, LeaderOverlay (built in Step 12/13)
- - Tests: Textual pilot for each widget, modal flows, keyboard navigation
- - **COMPLETE** — branch `step-14-ui-widgets`; FormModal deferred
+ - `ui/widgets/` — InputModal, CommandsHelp, LeaderOverlay, ConfirmModal
+ - **COMPLETE**
+ - **DEFERRED:** FormModal (structured input with labeled fields)
 
-### Step 15: Chat UI (depends on agent, AppContext, widgets, tree) ✅
+### Step 15: Chat UI ✅
 
- - ui/tree/tree_row.py — ``TreeNode`` gets optional ``content: Widget`` for arbitrary leaf content; TreeRow uses ``compose()`` to host content widgets
- - ``ui/chat/chat_input.py`` — ``ChatInput`` widget: wraps ``Input``, posts ``ChatSubmitted(text)`` message, exposes ``focus()`` / ``clear()``
- - ``ui/chat/chat_display.py`` — ``ChatDisplay`` widget: wraps ``Tree``, provides streaming API (``add_user_message()``, ``begin_assistant_turn()``, ``update_section()``, ``finalize_turn()``), owns ``PersistentMarkdown`` for surviving tree re-mounts
- - ``ui/chat/chat_manager.py`` — ``ChatManager`` widget: composes ``ChatInput`` + ``ChatDisplay``, orchestrates streaming loop, manages history/DB/agent, listens to ``ChatSubmitted`` and drives ``ChatDisplay``
- - ``ui/sidebar/panels/chat_panel.py`` — thin wrapper: ``ChatPanel`` sidebar tab that composes a ``ChatManager`` and wires it from ``AppContext`` on mount. Same ``ChatManager`` can be embedded in workspace panes later.
- - Tests: 44 tests across ``tests/test_chat_input.py``, ``tests/test_chat_display.py``, ``tests/test_chat_manager.py``, ``tests/test_chat_panel.py`` covering all components, streaming with fake agents, and persistence
- - **COMPLETE** — branches ``step-15a-tree-content-chatpanel`` and ``step-15b-decouple-chat``
+ - `ui/chat/` — ChatInput, ChatDisplay (Tree-based streaming), ChatManager, ChatPanel
+ - ChatDisplay uses Tree widget with content nodes; streaming via section updates
+ - 44 tests across chat components
+ - **COMPLETE**
 
-### Step 15c: Tree CSS Hide/Show (replaces DOM remounts) ✅
+### Step 15c: Tree CSS Hide/Show ✅
 
- - ``ui/tree/tree.py`` — mount all rows once on mount/set_root; expand/collapse toggles a ``-hidden`` CSS class instead of removing/re-mounting rows; ``_rebuild_rows()`` replaced by ``_refresh_visibility()``; ``rebuild()`` still remounts all rows for structural changes
- - ``ui/tree/tree_row.py`` — ``PersistentMarkdown`` removed from ``ui/chat/chat_display.py`` (no longer needed since content widgets stay mounted)
- - ``ui/chat/chat_display.py`` — use plain ``Markdown`` instead of ``PersistentMarkdown``
- - Tests: Updated ``tests/test_tree.py`` and ``tests/test_chat_display.py``
- - Branch: ``step-15c-tree-css-hide-show``
+ - Tree mounts all rows once; expand/collapse toggles `-hidden` CSS class
+ - No DOM remounts for expand/collapse; `PersistentMarkdown` removed
+ - **COMPLETE**
 
-### Step 16: Workspace + Terminal (depends on AppContext, ui/chat/)
+### Step 16: Workspace + Terminal ✅
 
- - ui/workspace/ — **DONE** (split panes built in Step 7)
- - ui/terminal/ — terminal integration (not started)
- - Tests: Terminal launch
+#### 16a: Terminal View
 
-### Step 17: Sidebar Components (depends on AppContext, database, widgets) ✅
+ - `ui/terminal/terminal.py` — `TerminalView` wraps `textual_terminal.Terminal`
+   with lifecycle management, working directory context, `CodyEvent` integration
+ - `ui/terminal/terminal_handler.py` — leader chord handler for `terminal.open`
+ - `core/terminal_passthrough.py` — key passthrough registry
+ - Leader chord: `Ctrl+Space t o` opens terminal in focused pane
 
- - ui/sidebar/ — registry, Sidebar, SidebarContainer, panels/vault_panel.py, panels/chat_panel.py, panels/config_panel.py
- - ui/db/ — DBTab, DBTree, results modal — DEFERRED
- - ui/tree/ — GenericTree, TreeRow ✅ (built in `step-tree`)
- - Tests: registry, sidebar visibility, vault panel rendering, chat panel streaming, config panel editing
- - **COMPLETE** — branch `step-sidebar`; DB tab deferred
+#### 16b: Terminal Preservation Across Workspace Splits
 
-### Step 18: app.py + main.py (wires everything)
+When the workspace is reorganised (split / close), the terminal's PTY emulator
+**and visible output** are preserved across the DOM rebuild so the shell session
+survives and the user doesn't lose their terminal history.
 
- - main.py — ``CodyApp`` class (TuiApp-style), leader key binding, header/footer/workspace/sidebars compose, vault+chat wire-up on mount, vault unlock/init prompts
- - main.py — parse args → Bootstrap.run() → mount app → run
- - **DONE** — no separate ``app.py`` needed; wiring lives in ``main.py``
- - **REMAINING:** app-wide CSS, theme registration, smoke test
+The challenge: Textual widgets cannot be remounted once removed from the DOM.
+When `recompose()` destroys the widget tree, the old `PtyTerminal` widget (and its
+render state) goes away. The previous emulator-only transfer kept the shell process
+alive, but all previous output was lost — the new terminal started with a blank screen.
 
-### Step 20: File Browser + Workspace Tabs
+The solution: the pyte `Screen` (character buffer + cursor state) and
+`TerminalDisplay` (rendered Rich Text lines) held by `PtyTerminal` are **plain
+Python objects**, not Textual widgets. They can be captured before the DOM rebuild
+and injected into the freshly-created `PtyTerminal` after recomposition.
 
-A sidebar panel for browsing the project directory with inline action buttons,
-plus a custom tabbed container in the workspace for opening files.
+Three preservation mechanisms:
 
-Phase 1: Icon Registry (`utils/icons.py`)
- - Nerd Font icon constants for file types, actions, folders
- - `get_file_icon(filename)` mapping extension → icon, unknown fallback
- - Test: `tests/test_icons.py`
+1. **`_preserving` flag** — prevents `on_unmount` from killing the PTY process
+   during a temporary DOM removal.
+2. **`TerminalSnapshot` dataclass** — bundles the live emulator, pyte screen,
+   and rendered display so they travel together through
+   `SavedTab → restore_state → on_mount`.
+3. **`_inherited_snapshot`** — on the new `TerminalView`, `on_mount()` adopts
+   the emulator **and** restores the screen/display by replacing the
+   newly-created `PtyTerminal`'s defaults:
+   - `_screen` ← snapshot's screen (character buffer + cursor)
+   - `stream.screen` ← same screen (keeps `pyte.Stream` feeding into it)
+   - `_display` ← snapshot's display (Rich Text lines for immediate render)
+   - `ncol`/`nrow` ← saved screen dimensions
+   - `refresh()` called to show the restored content immediately
 
-Phase 2: Merge ActionRow into TreeRow + Lazy Loading
- - `TreeNode` gets `loaded: bool = True` field — `False` means children not yet fetched
- - `TreeRow` absorbs all `ActionRow` functionality: `ButtonPressed` message, inline buttons,
-   branch toggle with ▼/▶ for nodes that have both children AND buttons
- - `Tree` always creates `TreeRow` (no more ActionRow branch)
- - `Tree.on_tree_row_toggled` handles lazy nodes: posts `NodeNeedsChildren` instead of expanding
- - `NodeNeedsChildren(Message)` — new message posted when a `loaded=False` node is expanded
- - Delete `ActionRow` class; update all references (VaultPanel, ConfigPanel, Tree internals)
- - `is_branch` computed as `bool(node.children) or not node.loaded`
- - Click guard: TreeRow.on_click skips if click originated on a Button child
- - CSS: merge ActionRow styles into TreeRow; Button styles scoped via `.tree-row-buttons`
- - Tests: update `tests/test_tree.py`, `tests/test_sidebar.py`, `tests/test_config_panel.py`,
-   `tests/test_chat_display.py`; add lazy loading and button-on-branch tests
+Flow during a workspace split:
 
-Phase 3: Custom WorkspaceTabs (`ui/workspace/tabs.py`)
- - `WorkspaceTabs` widget: horizontal tab bar with label buttons + close (×) buttons
- - `TabInfo` dataclass: id, label, content Widget
- - `open_tab(id, label, content)` — add or switch to tab
- - `close_tab(id)` — remove tab, switch to neighbor
- - `switch_tab(id)` — activate tab, show content, hide others
- - Posts `TabClosed`, `TabSwitched` messages
- - CSS: `ui/workspace/tabs.tcss` — tab bar, active tab, close buttons
- - Test: `tests/test_workspace_tabs.py`
+```
+_save_pane_tab_states()
+  └─ WorkspaceTabs.save_state()
+       └─ TerminalView.detach_emulator()
+            ├─ captures emulator, screen, display → TerminalSnapshot
+            ├─ cancels recv task
+            └─ disconnects old PtyTerminal from emulator
 
-Phase 4: File Browser Panel (`ui/sidebar/panels/file_browser.py`)
- - Registered via `@register_sidebar_tab(name="files", icon="📁", side="left")`
- - Scans `working_directory` lazily (one level at root, NodeNeedsChildren on expand)
- - Directories → branch TreeNode with buttons: +File, +Dir, Rename, Del
- - Files → leaf TreeNode with buttons: Open, Rename, Del
- - Section buttons: + New File, + New Folder, ⟳ Refresh
- - File actions use InputModal; Delete uses confirmation
- - Open posts `CodyEvent("files.open", {"path": ...})`
- - Ignores: `__pycache__`, `.git`, `node_modules`, `.venv`, `*.egg-info`
- - File icons via `utils/icons.py`
- - CSS: `ui/sidebar/panels/file_browser.tcss`
- - Test: `tests/test_file_browser.py`
+_mark_terminals_preserving()
+  └─ sets _preserving=True on all TerminalViews
 
-Phase 5: File Viewer + Workspace Integration
- - `ui/workspace/file_view.py` — `FileView(Widget)` reads file on mount, renders content
- - `WorkspaceTabs` placed inside `PaneContainer` when first file is opened
- - Event handler for `files.open` creates/switches to tab with `FileView(filepath)`
- - CSS: `ui/workspace/file_view.tcss`
- - Test: `tests/test_file_view.py`
+await recompose()   ← DOM rebuild destroys old widgets
 
-Files created: `utils/icons.py`, `ui/workspace/tabs.py`, `ui/workspace/tabs.tcss`,
- `ui/workspace/file_view.py`, `ui/workspace/file_view.tcss`,
- `ui/sidebar/panels/file_browser.py`, `ui/sidebar/panels/file_browser.tcss`
-Files modified: `ui/tree/tree_row.py`, `ui/tree/tree.py`, `ui/tree/tree_row.tcss`,
- `ui/sidebar/panels/vault_panel.py`, `ui/sidebar/panels/config_panel.py`,
- `main.py`, `tests/test_tree.py`, `tests/test_sidebar.py`, `tests/test_config_panel.py`
-Tests created: `tests/test_icons.py`, `tests/test_workspace_tabs.py`,
- `tests/test_file_browser.py`, `tests/test_file_view.py`
+_restore_pane_tab_states()
+  └─ WorkspaceTabs.restore_state()
+       └─ creates new TerminalView via content_factory()
+       └─ sets new_tv._inherited_snapshot = saved snapshot
+       └─ mounts new widget
+           └─ TerminalView.on_mount()
+                ├─ adopts emulator (keeps PTY process alive)
+                ├─ restores screen into PtyTerminal._screen
+                ├─ restores display into PtyTerminal._display
+                └─ calls refresh() → user sees previous output
+```
+
+Key classes and their roles:
+
+| Class | Role |
+|---|---|
+| `TerminalSnapshot` | Dataclass bundling `emulator`, `screen`, `display` |
+| `TerminalView.detach_emulator()` | Captures `PtyTerminal._screen` + `_display` alongside the emulator |
+| `TerminalView._inherited_snapshot` | Set by `restore_state()`; consumed in `on_mount()` |
+| `SavedTab.inherited_snapshot` | Carries the snapshot through the recomposition pipeline |
+| `Workspace._cleanup_orphaned_terminals()` | Calls `snapshot.stop_emulator()` for closed-pane terminals |
+
+Orphan cleanup: if a pane containing a terminal is closed (not just split),
+the preserved emulator's PTY process must be explicitly killed since `on_unmount`
+was skipped (`_preserving=True`). `TerminalSnapshot.stop_emulator()` handles this.
+
+ **COMPLETE**
+
+### Step 17: Sidebar Components ✅
+
+ - `ui/sidebar/` — registry, Sidebar, SidebarContainer, panels/vault_panel, chat_panel, config_panel, file_browser
+ - File browser uses Tree with lazy loading (`NodeNeedsChildren`) and action buttons
+ - **COMPLETE**
+ - **DONE:** `ui/db/` — DB sidebar tab + connection form + query editor (see Step 21)
+
+### Step 18: main.py (wires everything)
+
+ - `main.py` — `CodyApp` class with leader bindings, compose, vault/chat wire-up
+ - No separate `app.py` — all wiring lives in `main.py`
+ - **DONE** — core wiring works
+ - **REMAINING:** app-wide CSS polish, theme registration, smoke test
+
+### Step 20: File Browser + Workspace Tabs ✅
+
+Phase 1: Icon Registry ✅
+ - `utils/icons.py` — Nerd Font icon constants, `get_file_icon()` extension mapping
+
+Phase 2: TreeRow + Action Buttons + Lazy Loading ✅
+ - `TreeNode` has `loaded` field for lazy children
+ - `TreeRow` hosts action buttons + branch toggle
+ - `NodeNeedsChildren` message for on-demand loading
+ - `Tree._refresh_visibility()` toggles CSS classes instead of DOM remounts
+
+Phase 3: WorkspaceTabs ✅
+ - `ui/workspace/tabs.py` — `WorkspaceTabs` with `TabInfo`, `SavedTab`, `SavedTabState`
+ - `open_tab()`, `close_tab()`, `switch_tab()` with `TabSwitched`/`TabClosed` messages
+ - State persistence across recomposition (content factories, terminal snapshots)
+
+Phase 4: File Browser Panel ✅
+ - `ui/sidebar/panels/file_browser.py` — lazy directory tree with action buttons
+ - Registered as sidebar tab with `@register_sidebar_tab`
+ - Posts `CodyEvent("files.open")`, `CodyEvent("files.new_file")`, etc.
+
+Phase 5: File Editor + Workspace Integration ✅
+ - `ui/workspace/file_editor.py` — `FileEditor` reads/writes files in a tab
+ - `ui/workspace/file_edit_handler.py` — routes `files.open` events to tabs
+ - `ui/workspace/welcome_view.py` — landing page for empty panes
+ - `ui/workspace/workspace.py` — handles `CodyEvent` for file opening
+
+ **COMPLETE**
 
 ### Step 19: Bundled Content + E2E
 
  - Basic skills: coding, git, todo, brave_search
  - Default themes
  - E2E tests: full conversation with tool calls, git checkpoint, vault unlock flow
+ - **NOT STARTED**
+
+### Step 21: Database Query Editor ✅
+
+Phase 1: Core — Connection Management (`core/db_connections.py`) ✅
+ - `FormField` dataclass — describes fields for the connection form
+ - `ConnectionInfo` dataclass — represents a saved connection
+ - `QueryResult` dataclass — result of executing a SQL query
+ - `DBProvider` abstract class — provider interface with `form_fields()`, `connect()`, `list_tables()`, etc.
+ - `SQLiteProvider` — concrete implementation for SQLite
+ - `ConnectionManager` — CRUD for connections (backed by layered config), connect/disconnect lifecycle, browse/execute
+ - Connections stored in config under `db.connections`; sensitive fields in vault as `dbconn:{id}`
+ - Config defaults registered: `db.connections = []`, `db.default_page_size = 200`
+
+Phase 1b: Config integration ✅
+ - `context.py` — added `db_connections: ConnectionManager` field
+ - `bootstrap.py` — added `_init_db_connections()` phase
+ - No changes to `core/database.py` (connections are in config, not DB tables)
+
+Phase 2: UI — Connection Form Modal (`ui/db/connection_form.py`) ✅
+ - `ConnectionFormModal` — dynamic form driven by `provider.form_fields()`
+ - Provider type dropdown auto-generates form fields
+ - File-type fields get a Browse button
+ - Test Connection button validates parameters
+ - Save creates/updates connection via ConnectionManager
+
+Phase 3: UI — DB Sidebar Panel (`ui/sidebar/panels/db_panel.py`) ✅
+ - `DBPanel` — registered as sidebar tab `db` with 󰆼 icon
+ - Tree of connections, lazy-loaded (tables/views/triggers expand on demand)
+ - Action buttons per connection: 🔍 open query, 🖉 edit, 🗑 delete, ⟳ refresh
+ - Table rows have a 📋 button that opens a SELECT * pre-filled query
+ - `+ Add Connection` button opens ConnectionFormModal
+ - `db.open_query` CodyEvent posted to open query editor in workspace
+
+Phase 4: UI — Query Editor (`ui/workspace/query_editor.py`) ✅
+ - `QueryEditor` — split-pane widget (query input above, results below)
+ - Header shows connection name + ▶ Run button
+ - `TextArea` with SQL syntax highlighting for query input
+ - `DataTable` for results with column headers
+ - Offset-based pagination: Prev/Next buttons, row count display
+ - DML/DDL results show rows affected instead of a data table
+ - Ctrl+Enter keybinding to execute query
+ - Pre-filled queries from table browser auto-execute after mount
+
+Phase 5: Integration ✅
+ - `ui/db/db_handler.py` — event handler `db.open_query` opens QueryEditor in workspace tabs (same pattern as `file_edit_handler.py`)
+ - `ui/sidebar/panels/__init__.py` — imports `db_panel` for registration
+ - CSS files: `db_panel.tcss`, `connection_form.tcss`, `query_editor.tcss`
+ - 46 unit tests in `tests/test_db_connections.py`
 
 ---
+
+## 8. Remaining Work
+
+| Item | Status | Notes |
+|---|---|---|
+| `core/themes.py` — 3-tier theme discovery | **DEFERRED** | Not blocking; CSS themes work manually |
+| `core/git.py` — git checkpoint utilities | **DEFERRED** | Not blocking; git is available via run_command tool |
+| `FormModal` — structured input with labeled fields | **DONE** | `ConnectionFormModal` in Step 21 serves this purpose |
+| `ui/db/` — DB sidebar tab | **DONE** | Step 21: connection tree, schema browser, query editor |
+| App-wide CSS polish | **REMAINING** | Visual refinement of spacing, colors, borders |
+| Theme registration | **REMAINING** | Dynamic theme switching via config |
+| Smoke test | **REMAINING** | Full app launch + basic interaction test |
+| Bundled skills (coding, git, todo, brave_search) | **NOT STARTED** | Step 19 |
+| Default themes | **NOT STARTED** | Step 19 |
+| E2E tests | **NOT STARTED** | Step 19 |
+
+---
+
+## 9. Test Inventory
+
+| Test file | Area | Count |
+|---|---|---|
+| `test_agent.py` | Agent, streaming, tool calling | — |
+| `test_bootstrap.py` | Full bootstrap flow | — |
+| `test_chat_display.py` | ChatDisplay streaming, section updates | — |
+| `test_chat_display_system.py` | System-level chat tests | — |
+| `test_chat_input.py` | ChatInput widget | — |
+| `test_chat_manager.py` | ChatManager orchestration | — |
+| `test_chat_panel.py` | ChatPanel sidebar tab | — |
+| `test_command_dispatch.py` | Slash command routing | — |
+| `test_command_palette.py` | CommandPalette overlay | — |
+| `test_commands.py` | Command loader | — |
+| `test_command_suggester.py` | Autocomplete | — |
+| `test_config.py` | Config get/set/defaults | — |
+| `test_config_panel.py` | ConfigPanel editing | — |
+| `test_database.py` | CRUD, provider swapping | — |
+| `test_db_connections.py` | Connection manager, providers, pagination | 46 |
+| `test_events.py` | CodyEvent dispatch | — |
+| `test_file_browser.py` | File tree browser | — |
+| `test_file_editor.py` | File editor tab | — |
+| `test_icons.py` | Icon mapping | — |
+| `test_leader.py` | Leader tree, action dispatch | — |
+| `test_pane_tree.py` | Pure data model ops | — |
+| `test_paths.py` | 3-tier path resolution | — |
+| `test_provider_base.py` | BaseProvider protocol | — |
+| `test_provider_ollama.py` | Ollama provider | — |
+| `test_sidebar.py` | Sidebar visibility, panels | — |
+| `test_skills.py` | Skill discovery, catalog | — |
+| `test_terminal.py` | TerminalView, handler, passthrough | — |
+| `test_terminal_preservation.py` | Screen/display preservation across splits | — |
+| `test_theme_persistence.py` | Theme save/load | — |
+| `test_tools.py` | Tool registry | — |
+| `test_tools_read_file.py` | Read file tool | — |
+| `test_tools_run_command.py` | Run command tool | — |
+| `test_tools_skill.py` | Skill tools | — |
+| `test_tools_write_file.py` | Write file tool | — |
+| `test_tree_merged.py` | Tree merged tests | — |
+| `test_tree.py` | Tree widget | — |
+| `test_vault.py` | Encrypt/decrypt, lock/unlock | — |
+| `test_widgets.py` | InputModal, ConfirmModal | — |
+| `test_workspace.py` | Workspace split/close/navigate | — |
+| `test_workspace_tabs.py` | WorkspaceTabs open/close/switch | — |
+
+**Total: ~41 test files**

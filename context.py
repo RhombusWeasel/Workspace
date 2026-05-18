@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from core.config import Config
     from core.database import DatabaseManager
+    from core.db_connections import ConnectionManager
     from core.leader import LeaderRegistry
     from core.skills import SkillManager
     from core.vault import VaultManager
@@ -30,6 +31,7 @@ class AppContext:
     config: Config | None = None
     skills: SkillManager | None = None
     database: DatabaseManager | None = None
+    db_connections: ConnectionManager | None = None
     leader: LeaderRegistry | None = None
     vault: VaultManager | None = None
     working_directory: str = ""

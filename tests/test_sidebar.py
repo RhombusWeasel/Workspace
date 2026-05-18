@@ -204,13 +204,14 @@ class TestVaultPanel:
             action_rows = [r for r in global_tree.query(TreeRow) if r.node.buttons]
             assert len(action_rows) >= 3  # ollama + openai + reminder
 
-            # Each row should have a Copy, Edit, Del button
+            # Each row should have Copy, Edit, Del buttons (identified by
+            # action_id in button id: act-{node_id}-copy/edit/del).
             first_row = action_rows[0]
             buttons = first_row.query(Button)
-            btn_labels = {b.label.plain for b in buttons}
-            assert "Copy" in btn_labels
-            assert "Edit" in btn_labels
-            assert "Del" in btn_labels
+            btn_ids = {b.id for b in buttons if b.id}
+            assert any("-copy" in bid for bid in btn_ids)
+            assert any("-edit" in bid for bid in btn_ids)
+            assert any("-del" in bid for bid in btn_ids)
 
     async def test_shows_add_local_vault_button_when_no_local(self):
         """The 'Add Local Vault' button is visible when no local vault exists."""

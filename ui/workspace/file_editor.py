@@ -69,18 +69,6 @@ class FileEditor(Widget):
         Absolute path to the file to edit.
     """
 
-    DEFAULT_CSS = """
-    FileEditor {
-        height: 1fr;
-        width: 1fr;
-    }
-
-    FileEditor TextArea {
-        height: 1fr;
-        width: 1fr;
-    }
-    """
-
     def __init__(self, filepath: str):
         super().__init__(id=path_to_id("fv", filepath))
         self._filepath = filepath
