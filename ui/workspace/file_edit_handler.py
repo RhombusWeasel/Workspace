@@ -14,7 +14,7 @@ import os
 
 from context import AppContext
 from core.events import CodyEvent, register_handler
-from ui.workspace.file_editor import FileEditor
+from ui.workspace.file_editor import FileEditor, FileEditorState
 from ui.workspace.workspace import PaneContainer
 from ui.workspace.tabs import WorkspaceTabs
 from utils.dom_id import path_to_id
@@ -43,7 +43,7 @@ def _on_files_edit(data: dict, ctx: AppContext) -> None:
     except Exception:
         return
 
-    # Check if the container already has a WorkspaceTabs
+    # Check if the container already has WorkspaceTabs
     existing_tabs = None
     try:
         existing_tabs = container.query_one(WorkspaceTabs)
@@ -53,14 +53,16 @@ def _on_files_edit(data: dict, ctx: AppContext) -> None:
     filename = os.path.basename(filepath)
     tab_id = path_to_id("file", filepath)
 
-    # A factory that recreates the FileEditor — needed so the tab
-    # can survive a workspace recomposition (split / close).
-    def _make_file_editor(_fp=filepath) -> FileEditor:
-        return FileEditor(_fp)
+    # Create the persistent state for this tab.
+    state = FileEditorState(filepath)
+
+    # Factory that recreates the FileEditor — receives the same state.
+    def _make_file_editor(s: FileEditorState) -> FileEditor:
+        return FileEditor(s)
 
     if existing_tabs is not None:
         # Open in existing tabs
-        existing_tabs.open_tab(tab_id, filename, content_factory=_make_file_editor)
+        existing_tabs.open_tab(tab_id, filename, state=state, content_factory=_make_file_editor)
     else:
         # Create new WorkspaceTabs and set as pane content
         tabs = WorkspaceTabs()
@@ -68,6 +70,6 @@ def _on_files_edit(data: dict, ctx: AppContext) -> None:
         async def _do() -> None:
             # Mount the tabs widget in the container
             await container.mount(tabs)
-            tabs.open_tab(tab_id, filename, content_factory=_make_file_editor)
+            tabs.open_tab(tab_id, filename, state=state, content_factory=_make_file_editor)
 
         app.run_worker(_do())

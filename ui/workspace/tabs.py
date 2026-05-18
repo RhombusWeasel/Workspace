@@ -5,6 +5,11 @@ and a content area below showing the active tab's content widget.
 
 Tabs are identified by string IDs.  Opening a tab with an existing ID
 switches to it instead of duplicating it.
+
+Tab state survives workspace recomposition (splits / closes) via the
+:class:`TabState` model.  Each tab owns a :class:`TabState` object that
+persists across widget destruction — widget instances are freely
+recreated from the state by the ``content_factory``.
 """
 
 from __future__ import annotations
@@ -22,6 +27,31 @@ from utils.icons import CLOSE
 
 
 # ---------------------------------------------------------------------------
+# TabState — base class for persistent tab state
+# ---------------------------------------------------------------------------
+
+
+class TabState:
+    """Base class for tab state that survives workspace recomposition.
+
+    Subclass this for each widget type that has in-memory state.
+    The TabState object is owned by the tab slot, not by the widget
+    — it outlives any particular widget instance.
+
+    Call ``dispose()`` when the tab is permanently closed to release
+    external resources (PTY processes, database connections, etc.).
+    """
+
+    def dispose(self) -> None:
+        """Release external resources.  No-op in the base class.
+
+        Called when the tab is permanently closed (not during
+        recomposition).  Subclasses that own external resources
+        (e.g. PTY processes) override this to clean them up.
+        """
+
+
+# ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
 
@@ -32,12 +62,14 @@ class TabInfo:
 
     id: str
     label: str
+    state: TabState | None = None
+    """Persistent state for this tab.  Survives widget destruction."""
     content: Widget | None = None
-    content_factory: Callable[[], Widget | None] | None = None
+    content_factory: Callable[[TabState], Widget | None] | None = None
     """Callable to recreate *content* after a DOM recomposition.
 
-    When set, this is preferred over storing a stale widget reference.
-    Called by :meth:`WorkspaceTabs.restore_state` to build a fresh widget.
+    Receives the tab's :class:`TabState` so the fresh widget can
+    read from it in ``on_mount()``.
     """
 
 
@@ -48,28 +80,13 @@ class TabInfo:
 
 @dataclass
 class SavedTab:
-    """Serializable snapshot of a single tab for persistence across recompose."""
+    """Snapshot of a single tab for persistence across recompose."""
 
     id: str
     label: str
-    content_factory: Callable[[], Widget | None] | None = None
-    inherited_snapshot: Any = None
-    """TerminalSnapshot from a previous TerminalView instance.
-
-    When set, the freshly-created TerminalView will adopt the live
-    emulator and restore the saved screen/display in
-    :meth:`~ui.terminal.terminal.TerminalView.on_mount`, keeping the
-    shell session alive and its visible output intact across workspace
-    recompositions.
-    """
-    editor_snapshot: Any = None
-    """QueryEditorSnapshot from a previous QueryEditor instance.
-
-    When set, the freshly-created QueryEditor will restore the query
-    text, results, and pagination state in
-    :meth:`~ui.workspace.query_editor.QueryEditor.on_mount`, keeping
-    the editor's content intact across workspace recompositions.
-    """
+    state: TabState
+    """Persistent state object — survives recomposition unchanged."""
+    content_factory: Callable[[TabState], Widget | None] | None = None
 
 
 @dataclass
@@ -154,9 +171,10 @@ class WorkspaceTabs(Widget):
         self,
         tab_id: str,
         label: str,
-        content: Widget | None = None,
         *,
-        content_factory: Callable[[], Widget | None] | None = None,
+        state: TabState,
+        content: Widget | None = None,
+        content_factory: Callable[[TabState], Widget | None] | None = None,
     ) -> None:
         """Open a new tab or switch to an existing one.
 
@@ -169,16 +187,17 @@ class WorkspaceTabs(Widget):
             Unique identifier for the tab.
         label:
             Display label for the tab bar button.
+        state:
+            Persistent state object for this tab.  Survives widget
+            destruction and is passed to ``content_factory`` when
+            recreating content after recomposition.
         content:
             Widget to show in the content area.  May be ``None`` if
             *content_factory* is provided instead.
         content_factory:
-            Callable that recreates the content widget.  Used by
-            :meth:`save_state` / :meth:`restore_state` to rebuild
-            tabs after a DOM recomposition.  When provided, the
-            factory is stored alongside the widget so that the tab
-            can survive recomposition even if the original widget is
-            destroyed.
+            Callable that recreates the content widget.  Receives the
+            tab's ``state`` so the fresh widget can read from it in
+            ``on_mount()``.
         """
         if tab_id in self._tabs:
             self.switch_tab(tab_id)
@@ -186,11 +205,12 @@ class WorkspaceTabs(Widget):
 
         # Build content from factory if needed
         if content is None and content_factory is not None:
-            content = content_factory()
+            content = content_factory(state)
 
         self._tabs[tab_id] = TabInfo(
             id=tab_id,
             label=label,
+            state=state,
             content=content,
             content_factory=content_factory,
         )
@@ -201,7 +221,8 @@ class WorkspaceTabs(Widget):
         """Close a tab and remove its content.
 
         If the closed tab was active, switches to a neighboring tab.
-        If it was the last tab, sets active to None.
+        If it was the last tab, sets active to None.  Calls
+        ``dispose()`` on the tab's state to release external resources.
         """
         if tab_id not in self._tabs:
             return
@@ -212,9 +233,6 @@ class WorkspaceTabs(Widget):
         if self._active == tab_id:
             tabs_list = list(self._tabs.keys())
             if tabs_list:
-                # Try to switch to the previous or next tab
-                old_index = list(self._tabs.keys()).index(tab_id) if tab_id in self._tabs else -1
-                # Pick the first available tab
                 self._active = tabs_list[0]
             else:
                 self._active = None
@@ -225,6 +243,10 @@ class WorkspaceTabs(Widget):
                 info.content.remove()
             except Exception:
                 pass
+
+        # Release external resources owned by the state
+        if info.state is not None:
+            info.state.dispose()
 
         self._refresh()
         self.post_message(self.TabClosed(tab_id))
@@ -246,42 +268,29 @@ class WorkspaceTabs(Widget):
     def save_state(self) -> SavedTabState:
         """Return a snapshot of all open tabs so they can be restored later.
 
-        ``content_factory`` callables are saved for all tab types.
-        For terminal tabs, the live PTY emulator is also extracted
-        (via :meth:`TerminalView.detach_emulator`) so the shell
-        session can be kept alive across the DOM rebuild.
-        For query editor tabs, the editor state (query text, results,
-        pagination) is captured via :meth:`QueryEditor.detach_state`
-        so the user doesn't lose their work across recomposition.
+        ``content_factory`` callables and ``state`` objects are carried
+        directly — no extraction or snapshot logic is needed.  Widgets
+        that have a ``flush_state()`` method are asked to sync their
+        current UI state back to the ``state`` object before the DOM
+        rebuild.
         """
-        from ui.workspace.file_editor import FileEditor
-        from ui.terminal.terminal import TerminalView
-        from ui.workspace.query_editor import QueryEditor
-
         saved_tabs: list[SavedTab] = []
         for tab_id, info in self._tabs.items():
-            factory = info.content_factory
-            # Auto-derive factory for known content types
-            if factory is None and isinstance(info.content, FileEditor):
-                filepath = info.content.filepath
-                factory = lambda fp=filepath: FileEditor(fp)
-            # For terminal tabs, extract the live PTY emulator and
-            # screen/display so the shell session and its visible output
-            # survive workspace recomposition.
-            inherited_snapshot = None
-            if isinstance(info.content, TerminalView):
-                inherited_snapshot = info.content.detach_emulator()
-            # For query editor tabs, capture the query text, results,
-            # and pagination state so the editor survives recomposition.
-            editor_snapshot = None
-            if isinstance(info.content, QueryEditor):
-                editor_snapshot = info.content.detach_state()
+            # Ask the widget to flush any unsynchronised UI state
+            # back to the persistent state object.
+            if info.content is not None and hasattr(info.content, "flush_state"):
+                info.content.flush_state()
+
+            # state and content_factory are carried directly — they
+            # survive recomposition without any widget-specific logic.
+            if info.state is None:
+                continue  # skip stateless tabs (shouldn't happen)
+
             saved_tabs.append(SavedTab(
                 id=tab_id,
                 label=info.label,
-                content_factory=factory,
-                inherited_snapshot=inherited_snapshot,
-                editor_snapshot=editor_snapshot,
+                state=info.state,
+                content_factory=info.content_factory,
             ))
 
         return SavedTabState(tabs=saved_tabs, active_id=self._active)
@@ -324,8 +333,7 @@ class WorkspaceTabs(Widget):
                     pass
 
         # Rebuild _tabs from saved state, creating fresh content from
-        # factories.  Terminal tabs receive an inherited_emulator to keep
-        # the shell session alive.
+        # factories.  Each factory receives the tab's state object.
         rebuilt_tabs: dict[str, TabInfo] = {}
         for saved in state.tabs:
             existing = self._tabs.get(saved.id)
@@ -336,31 +344,21 @@ class WorkspaceTabs(Widget):
                     label=saved.label
                     if saved.label is not None
                     else existing.label,
+                    state=saved.state,
                     content=existing.content,
                     content_factory=saved.content_factory
                     if saved.content_factory is not None
                     else existing.content_factory,
                 )
             else:
-                # Create fresh content from the factory.
+                # Create fresh content from the factory, passing the state.
                 content = None
                 if saved.content_factory is not None:
-                    content = saved.content_factory()
-                # If this is a terminal tab with an inherited snapshot,
-                # transfer it so the shell session and visible output survive.
-                if saved.inherited_snapshot is not None:
-                    from ui.terminal.terminal import TerminalView
-                    if isinstance(content, TerminalView):
-                        content._inherited_snapshot = saved.inherited_snapshot
-                # If this is a query editor tab with a captured snapshot,
-                # transfer it so the query text and results survive.
-                if saved.editor_snapshot is not None:
-                    from ui.workspace.query_editor import QueryEditor
-                    if isinstance(content, QueryEditor):
-                        content._inherited_snapshot = saved.editor_snapshot
+                    content = saved.content_factory(saved.state)
                 rebuilt_tabs[saved.id] = TabInfo(
                     id=saved.id,
                     label=saved.label,
+                    state=saved.state,
                     content=content,
                     content_factory=saved.content_factory,
                 )

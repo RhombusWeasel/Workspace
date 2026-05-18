@@ -8,21 +8,15 @@ on a connection in the DB sidebar panel.  The top half is a
 Pagination controls allow navigating large result sets.  Non-SELECT
 queries show rows affected instead of a data table.
 
-When the workspace is reorganised (split / close), the editor's query
-text, result data, and pagination state are preserved across the DOM
-rebuild so the user doesn't lose their work.  This relies on:
-
-* :class:`QueryEditorSnapshot` — a dataclass bundling the current
-  query text, the last ``QueryResult``, and pagination position.
-* :meth:`detach_state` — captures the editor's state before
-  recomposition.
-* ``_inherited_snapshot`` — injected by ``restore_state``, consumed
-  in ``on_mount`` so the fresh widget shows the same query and results.
+Tab state is managed by :class:`QueryEditorState`, which holds the
+connection ID, query text, last result, and pagination position.
+When the workspace is reorganised (split / close), the state object
+survives unchanged — the fresh widget reads from it in ``on_mount()``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -32,30 +26,28 @@ from textual.widgets import Button, DataTable, Static, TextArea
 
 from context import AppContext
 from core.db_connections import ConnectionInfo, ConnectionManager, QueryResult
+from ui.workspace.tabs import TabState
 
 
 # ---------------------------------------------------------------------------
-# Query editor snapshot (for preservation across recomposition)
+# QueryEditorState — persistent state for query editor tabs
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class QueryEditorSnapshot:
-    """Captured state from a running query editor that can be restored
-    after a workspace recomposition.
+class QueryEditorState(TabState):
+    """State for a query editor tab that survives workspace recomposition.
 
-    Bundles the current query text, the last result, and pagination
-    state so the editor looks exactly the same after a split / close.
-
-    Like :class:`~ui.terminal.terminal.TerminalSnapshot`, these are
-    **plain Python objects** — not Textual widgets — so they can be
-    freely transferred between widget instances.
+    Holds the connection ID, current query text, the last query result,
+    and pagination state.  When a query editor tab is closed permanently,
+    ``dispose()`` is a no-op because database connections are managed
+    by :class:`ConnectionManager` (pooled, not per-tab).
     """
 
     connection_id: str
-    """Connection ID this editor was connected to."""
+    """Connection ID this editor is connected to."""
 
-    query_text: str
+    query_text: str = ""
     """Current SQL text in the editor."""
 
     last_result: QueryResult | None = None
@@ -82,10 +74,10 @@ class QueryEditor(Widget):
 
     Parameters
     ----------
-    connection_id:
-        ID of the database connection to query against.
-    prefill:
-        Initial SQL text to show in the editor (e.g. a SELECT statement).
+    state:
+        The :class:`QueryEditorState` for this tab.  Provides the
+        connection ID, initial query text, and (after first run)
+        the last result and pagination state.
     """
 
     DEFAULT_CSS = """
@@ -149,52 +141,31 @@ class QueryEditor(Widget):
         Binding("ctrl+r", "run_query", "Run Query", show=False),
     ]
 
-    def __init__(self, connection_id: str, prefill: str = ""):
-        super().__init__(id=f"query-editor-{connection_id}")
-        self._connection_id = connection_id
-        self._prefill = prefill
+    def __init__(self, state: QueryEditorState):
+        super().__init__(id=f"query-editor-{state.connection_id}")
+        self.state = state
         self._mgr: ConnectionManager | None = None
         self._conn_info: ConnectionInfo | None = None
 
-        # Pagination state
-        self._current_query: str = ""
-        self._page_size: int = 200
-        self._current_offset: int = 0
-        self._last_result: QueryResult | None = None
-
-        # Snapshot injected by restore_state() — consumed in on_mount()
-        self._inherited_snapshot: QueryEditorSnapshot | None = None
-
     # ------------------------------------------------------------------
-    # State transfer (preservation across recomposition)
+    # State sync
     # ------------------------------------------------------------------
 
-    def detach_state(self) -> QueryEditorSnapshot | None:
-        """Capture the editor's current state for preservation across
-        a workspace recomposition.
+    def flush_state(self) -> None:
+        """Sync current widget state back to ``self.state``.
 
-        Called by :meth:`WorkspaceTabs.save_state` before the DOM
-        rebuild.  The returned :class:`QueryEditorSnapshot` can be
-        passed to a new ``QueryEditor`` via ``_inherited_snapshot``
-        so the query text and results survive the recomposition.
-
-        Returns a :class:`QueryEditorSnapshot`, or ``None`` if the
-        widget isn't in a capturable state.
+        Called by :meth:`WorkspaceTabs.save_state` before recomposition.
+        Writes the current TextArea content and result/pagination state
+        back to the state object.
         """
         try:
             text_area = self.query_one("#query-input", TextArea)
-            query_text = text_area.text
+            self.state.query_text = text_area.text
         except Exception:
-            query_text = self._prefill
-
-        return QueryEditorSnapshot(
-            connection_id=self._connection_id,
-            query_text=query_text,
-            last_result=self._last_result,
-            current_query=self._current_query,
-            current_offset=self._current_offset,
-            page_size=self._page_size,
-        )
+            pass
+        # last_result, current_query, current_offset, page_size are
+        # already kept in sync via action handlers, so no extra work
+        # needed here.
 
     # ------------------------------------------------------------------
     # Compose
@@ -206,8 +177,8 @@ class QueryEditor(Widget):
             yield Static("󰆼 Loading...", id="connection-label")
             yield Button("▶ Run", variant="primary", id="run-button")
 
-        # Query editor
-        yield TextArea(self._prefill, id="query-input", language="sql")
+        # Query editor — prefill from state if available
+        yield TextArea(self.state.query_text, id="query-input", language="sql")
 
         # Results area
         with Vertical(id="results-area"):
@@ -220,14 +191,14 @@ class QueryEditor(Widget):
                 yield Button("▶", variant="default", id="btn-next")
 
     # ------------------------------------------------------------------
-    # Mount — wire up from app context
+    # Mount — wire up from app context and restore from state
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
         app = self.app
         if hasattr(app, "context") and app.context is not None:
             self._mgr = app.context.db_connections
-            self._conn_info = self._mgr.get_connection(self._connection_id)
+            self._conn_info = self._mgr.get_connection(self.state.connection_id)
 
         # Update header with connection info
         if self._conn_info:
@@ -245,48 +216,21 @@ class QueryEditor(Widget):
 
         # Load page size from config
         if hasattr(app, "context") and app.context is not None:
-            self._page_size = app.context.config.get("db.default_page_size", 200)
+            self.state.page_size = app.context.config.get("db.default_page_size", 200)
 
-        # If a snapshot was transferred from a previous instance,
-        # restore the editor's state so the user sees their query
-        # and results immediately.
-        if self._inherited_snapshot is not None:
-            self._restore_from_snapshot(self._inherited_snapshot)
-            self._inherited_snapshot = None
+        # Restore from state: if we have a last result, display it.
+        if self.state.last_result is not None:
+            self._display_result(self.state.last_result)
 
         # Focus the query input
         self.query_one("#query-input", TextArea).focus()
 
-        # If there's a prefill AND no inherited snapshot, run it
-        # automatically after a short delay.
-        if self._prefill.strip() and self._last_result is None:
+        # If there's query text and no result yet, auto-run after a short delay.
+        if self.state.query_text.strip() and self.state.last_result is None:
             self.run_worker(self._auto_run())
 
-    def _restore_from_snapshot(self, snapshot: QueryEditorSnapshot) -> None:
-        """Restore editor state from a captured snapshot.
-
-        Replaces the TextArea content, restores pagination state,
-        and re-displays the last result if one exists.
-        """
-        # Restore query text
-        try:
-            text_area = self.query_one("#query-input", TextArea)
-            text_area.load_text(snapshot.query_text)
-        except Exception:
-            pass
-
-        # Restore pagination state
-        self._current_query = snapshot.current_query
-        self._current_offset = snapshot.current_offset
-        self._page_size = snapshot.page_size
-
-        # Re-display last result
-        if snapshot.last_result is not None:
-            self._last_result = snapshot.last_result
-            self._display_result(snapshot.last_result)
-
     async def _auto_run(self) -> None:
-        """Run the prefill query after a brief delay to let the UI settle."""
+        """Run the query from state after a brief delay to let the UI settle."""
         import asyncio
         await asyncio.sleep(0.1)
         self.action_run_query()
@@ -306,8 +250,8 @@ class QueryEditor(Widget):
             self._show_error("No query entered.")
             return
 
-        self._current_query = query
-        self._current_offset = 0
+        self.state.current_query = query
+        self.state.current_offset = 0
         self._run_with_pagination()
 
     def _run_with_pagination(self) -> None:
@@ -322,12 +266,12 @@ class QueryEditor(Widget):
         async def do_run() -> None:
             try:
                 result = self._mgr.execute(
-                    self._connection_id,
-                    self._current_query,
-                    page_size=self._page_size,
-                    offset=self._current_offset,
+                    self.state.connection_id,
+                    self.state.current_query,
+                    page_size=self.state.page_size,
+                    offset=self.state.current_offset,
                 )
-                self._last_result = result
+                self.state.last_result = result
                 self._display_result(result)
             except Exception as e:
                 self._show_error(f"Query error: {e}")
@@ -381,8 +325,8 @@ class QueryEditor(Widget):
             status.update(f"✓ {row_count} row(s) returned")
 
         # Pagination info
-        start = self._current_offset + 1
-        end = self._current_offset + row_count
+        start = self.state.current_offset + 1
+        end = self.state.current_offset + row_count
         if result.total_count is not None:
             pagination_info.update(
                 f"Rows {start}–{end} of {result.total_count}"
@@ -393,7 +337,7 @@ class QueryEditor(Widget):
             pagination_info.update(f"Rows {start}–{end}")
 
         # Update pagination button states
-        self.query_one("#btn-prev", Button).disabled = (self._current_offset == 0)
+        self.query_one("#btn-prev", Button).disabled = (self.state.current_offset == 0)
         self.query_one("#btn-next", Button).disabled = not result.has_more
 
     def _show_error(self, message: str) -> None:
@@ -417,8 +361,8 @@ class QueryEditor(Widget):
         if btn_id == "run-button":
             self.action_run_query()
         elif btn_id == "btn-prev":
-            self._current_offset = max(0, self._current_offset - self._page_size)
+            self.state.current_offset = max(0, self.state.current_offset - self.state.page_size)
             self._run_with_pagination()
         elif btn_id == "btn-next":
-            self._current_offset += self._page_size
+            self.state.current_offset += self.state.page_size
             self._run_with_pagination()

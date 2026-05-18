@@ -6,6 +6,10 @@ editing experience with syntax highlighting, line numbers, and undo/redo.
 Opened inside workspace tabs when a file is selected from the file browser.
 Reads the file from disk on mount.  Supports saving changes back to disk
 via :meth:`save_file`.
+
+Tab state is managed by :class:`FileEditorState`, which holds only the
+file path (content lives on disk).  When the workspace is reorganised,
+the fresh widget re-reads from disk — no ``flush_state()`` needed.
 """
 
 from __future__ import annotations
@@ -16,7 +20,9 @@ from textual.app import ComposeResult
 from textual.widgets import TextArea
 from textual.widget import Widget
 
+from ui.workspace.tabs import TabState
 from utils.dom_id import path_to_id
+
 
 # ---------------------------------------------------------------------------
 # Language mapping — file extensions → Textual TextArea language names
@@ -56,6 +62,22 @@ def _language_for_file(filepath: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# FileEditorState — persistent state for file editor tabs
+# ---------------------------------------------------------------------------
+
+
+class FileEditorState(TabState):
+    """State for a file editor tab that survives workspace recomposition.
+
+    Content lives on disk, so this only needs the file path.  The widget
+    re-reads from disk on mount — no ``flush_state()`` needed.
+    """
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+
+
+# ---------------------------------------------------------------------------
 # FileEditor
 # ---------------------------------------------------------------------------
 
@@ -65,19 +87,20 @@ class FileEditor(Widget):
 
     Parameters
     ----------
-    filepath:
-        Absolute path to the file to edit.
+    state:
+        The :class:`FileEditorState` for this tab.  Provides the file
+        path and handles any per-tab state.
     """
 
-    def __init__(self, filepath: str):
-        super().__init__(id=path_to_id("fv", filepath))
-        self._filepath = filepath
+    def __init__(self, state: FileEditorState):
+        super().__init__(id=path_to_id("fv", state.filepath))
+        self.state = state
         self._content = ""
-        self._language = _language_for_file(filepath)
+        self._language = _language_for_file(state.filepath)
 
     @property
     def filepath(self) -> str:
-        return self._filepath
+        return self.state.filepath
 
     @property
     def editor(self) -> TextArea:
@@ -102,10 +125,10 @@ class FileEditor(Widget):
     def _load_file(self) -> None:
         """Read the file from disk and update the editor."""
         try:
-            with open(self._filepath, "r", encoding="utf-8", errors="replace") as f:
+            with open(self.state.filepath, "r", encoding="utf-8", errors="replace") as f:
                 self._content = f.read()
         except (OSError, UnicodeDecodeError):
-            self._content = f"(Could not read file: {self._filepath})"
+            self._content = f"(Could not read file: {self.state.filepath})"
 
         # Update the TextArea if it's already mounted
         try:
@@ -131,7 +154,7 @@ class FileEditor(Widget):
         try:
             text_area = self.query_one(TextArea)
             content = text_area.text
-            with open(self._filepath, "w", encoding="utf-8") as f:
+            with open(self.state.filepath, "w", encoding="utf-8") as f:
                 f.write(content)
             return True
         except (OSError, Exception):

@@ -6,7 +6,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import TextArea
 
-from ui.workspace.file_editor import FileEditor, _language_for_file
+from ui.workspace.file_editor import FileEditor, FileEditorState, _language_for_file
 
 
 class FileEditorTestApp(App):
@@ -19,7 +19,7 @@ class FileEditorTestApp(App):
         self._filepath = filepath
 
     def compose(self) -> ComposeResult:
-        self.editor_widget = FileEditor(self._filepath)
+        self.editor_widget = FileEditor(FileEditorState(self._filepath))
         yield self.editor_widget
 
 

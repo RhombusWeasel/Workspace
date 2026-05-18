@@ -30,53 +30,59 @@ class TestTerminalView:
 
     def test_default_command_uses_shell_env(self, monkeypatch):
         """When no command is given, $SHELL is used."""
-        from ui.terminal.terminal import TerminalView
+        from ui.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/zsh")
-        tv = TerminalView()
+        state = TerminalState()
+        tv = TerminalView(state)
         assert tv._command == "/bin/zsh"
 
     def test_shell_fallback(self, monkeypatch):
         """When $SHELL is unset, falls back to /bin/sh."""
-        from ui.terminal.terminal import TerminalView
+        from ui.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.delenv("SHELL", raising=False)
-        tv = TerminalView()
+        state = TerminalState()
+        tv = TerminalView(state)
         assert tv._command == "/bin/sh"
 
     def test_custom_command(self):
         """A custom command overrides $SHELL."""
-        from ui.terminal.terminal import TerminalView
+        from ui.terminal.terminal import TerminalState, TerminalView
 
-        tv = TerminalView(command="/usr/bin/python3")
+        state = TerminalState(command="/usr/bin/python3")
+        tv = TerminalView(state)
         assert tv._command == "/usr/bin/python3"
 
     def test_working_directory_wrapping(self, monkeypatch):
         """When a working_directory is given, the command wraps with cd."""
-        from ui.terminal.terminal import TerminalView
+        from ui.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/bash")
-        tv = TerminalView(working_directory="/tmp/my project")
+        state = TerminalState(working_directory="/tmp/my project")
+        tv = TerminalView(state)
         assert "/tmp/my project" in tv._command
         assert "cd" in tv._command
         assert "exec" in tv._command
 
     def test_no_working_directory_no_cd(self, monkeypatch):
         """Without a working_directory, the command is just the shell."""
-        from ui.terminal.terminal import TerminalView
+        from ui.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/bash")
-        tv = TerminalView()
+        state = TerminalState()
+        tv = TerminalView(state)
         assert tv._command == "/bin/bash"
 
     def test_working_directory_spaces_quoted(self, monkeypatch):
         """Paths with spaces are properly quoted for shlex.split()."""
         import shlex
-        from ui.terminal.terminal import TerminalView
+        from ui.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/bash")
         wd = "/tmp/has spaces/and more"
-        tv = TerminalView(working_directory=wd)
+        state = TerminalState(working_directory=wd)
+        tv = TerminalView(state)
         # The command must round-trip through shlex.split()
         argv = shlex.split(tv._command)
         assert argv[0] == "/bin/bash"

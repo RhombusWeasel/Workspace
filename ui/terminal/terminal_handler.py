@@ -16,7 +16,7 @@ import os
 
 from context import AppContext
 from core.events import register_handler
-from ui.terminal.terminal import TerminalView, next_terminal_id
+from ui.terminal.terminal import TerminalState, TerminalView, next_terminal_id
 from ui.workspace.workspace import PaneContainer
 from ui.workspace.tabs import WorkspaceTabs
 
@@ -63,22 +63,26 @@ def _on_terminal_open(data: dict, ctx: AppContext) -> None:
     tab_id = next_terminal_id()
     label = "Terminal"
 
-    # Factory that recreates the TerminalView after workspace recomposition
-    # (split / close).  Closures capture the current values.
-    def _make_terminal(
-        _cmd=command, _wd=working_directory
-    ) -> TerminalView:
-        return TerminalView(command=_cmd, working_directory=_wd)
+    # Create the persistent state for this tab.
+    state = TerminalState(
+        command=command,
+        working_directory=working_directory,
+    )
+
+    # Factory that recreates the TerminalView after workspace recomposition.
+    # Receives the same state object — the fresh widget reads from it.
+    def _make_terminal(s: TerminalState) -> TerminalView:
+        return TerminalView(s)
 
     if existing_tabs is not None:
-        existing_tabs.open_tab(tab_id, label, content_factory=_make_terminal)
+        existing_tabs.open_tab(tab_id, label, state=state, content_factory=_make_terminal)
     else:
         # Create new WorkspaceTabs and mount in the pane
         tabs = WorkspaceTabs()
 
         async def _do() -> None:
             await container.mount(tabs)
-            tabs.open_tab(tab_id, label, content_factory=_make_terminal)
+            tabs.open_tab(tab_id, label, state=state, content_factory=_make_terminal)
 
         app.run_worker(_do())
 

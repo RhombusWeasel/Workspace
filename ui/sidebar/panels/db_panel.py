@@ -536,7 +536,7 @@ class DBPanel(Container):
 @register_handler("db.open_query")
 def _on_db_open_query(data: dict, ctx: AppContext) -> None:
     """Open a query editor tab in the focused workspace pane."""
-    from ui.workspace.query_editor import QueryEditor
+    from ui.workspace.query_editor import QueryEditor, QueryEditorState
     from ui.workspace.workspace import PaneContainer
     from ui.workspace.tabs import WorkspaceTabs
 
@@ -568,11 +568,16 @@ def _on_db_open_query(data: dict, ctx: AppContext) -> None:
 
     tab_label = f"󰆼 {conn_info.name}"
 
-    # Factory for recreating the editor after workspace recomposition
-    def _make_query_editor(
-        _cid=connection_id, _pf=prefill
-    ) -> QueryEditor:
-        return QueryEditor(_cid, prefill=_pf)
+    # Create the persistent state for this tab.
+    state = QueryEditorState(
+        connection_id=connection_id,
+        query_text=prefill,
+    )
+
+    # Factory for recreating the editor after workspace recomposition.
+    # Receives the same state object — the fresh widget reads from it.
+    def _make_query_editor(s: QueryEditorState) -> QueryEditor:
+        return QueryEditor(s)
 
     # Check if container already has WorkspaceTabs
     try:
@@ -584,6 +589,7 @@ def _on_db_open_query(data: dict, ctx: AppContext) -> None:
         existing_tabs.open_tab(
             f"query-{connection_id}",
             tab_label,
+            state=state,
             content_factory=_make_query_editor,
         )
     else:
@@ -594,6 +600,7 @@ def _on_db_open_query(data: dict, ctx: AppContext) -> None:
             tabs.open_tab(
                 f"query-{connection_id}",
                 tab_label,
+                state=state,
                 content_factory=_make_query_editor,
             )
 

@@ -597,15 +597,15 @@ class TestConfigDefaults:
 
 
 # ---------------------------------------------------------------------------
-# QueryEditorSnapshot — roundtrip
+# QueryEditorState — roundtrip
 # ---------------------------------------------------------------------------
 
 
-class TestQueryEditorSnapshot:
-    def test_snapshot_roundtrip(self):
-        """Verify that a QueryEditorSnapshot captures and restores all
+class TestQueryEditorState:
+    def test_state_roundtrip(self):
+        """Verify that a QueryEditorState captures and restores all
         editor state fields."""
-        from ui.workspace.query_editor import QueryEditorSnapshot
+        from ui.workspace.query_editor import QueryEditorState
         from core.db_connections import QueryResult
 
         result = QueryResult(
@@ -615,7 +615,7 @@ class TestQueryEditorSnapshot:
             has_more=False,
         )
 
-        snapshot = QueryEditorSnapshot(
+        state = QueryEditorState(
             connection_id="abc123",
             query_text="SELECT * FROM users WHERE id > 0;",
             last_result=result,
@@ -624,32 +624,32 @@ class TestQueryEditorSnapshot:
             page_size=100,
         )
 
-        assert snapshot.connection_id == "abc123"
-        assert snapshot.query_text == "SELECT * FROM users WHERE id > 0;"
-        assert snapshot.last_result is not None
-        assert snapshot.last_result.columns == ["id", "name"]
-        assert len(snapshot.last_result.rows) == 2
-        assert snapshot.current_query == "SELECT * FROM users WHERE id > 0;"
-        assert snapshot.current_offset == 0
-        assert snapshot.page_size == 100
+        assert state.connection_id == "abc123"
+        assert state.query_text == "SELECT * FROM users WHERE id > 0;"
+        assert state.last_result is not None
+        assert state.last_result.columns == ["id", "name"]
+        assert len(state.last_result.rows) == 2
+        assert state.current_query == "SELECT * FROM users WHERE id > 0;"
+        assert state.current_offset == 0
+        assert state.page_size == 100
 
-    def test_snapshot_default_values(self):
+    def test_state_default_values(self):
         """Verify that optional fields default correctly."""
-        from ui.workspace.query_editor import QueryEditorSnapshot
+        from ui.workspace.query_editor import QueryEditorState
 
-        snapshot = QueryEditorSnapshot(
+        state = QueryEditorState(
             connection_id="test",
-            query_text="SELECT 1;",
         )
 
-        assert snapshot.last_result is None
-        assert snapshot.current_query == ""
-        assert snapshot.current_offset == 0
-        assert snapshot.page_size == 200
+        assert state.query_text == ""
+        assert state.last_result is None
+        assert state.current_query == ""
+        assert state.current_offset == 0
+        assert state.page_size == 200
 
-    def test_snapshot_with_pagination(self):
+    def test_state_with_pagination(self):
         """Verify that pagination state roundtrips correctly."""
-        from ui.workspace.query_editor import QueryEditorSnapshot
+        from ui.workspace.query_editor import QueryEditorState
         from core.db_connections import QueryResult
 
         result = QueryResult(
@@ -659,7 +659,7 @@ class TestQueryEditorSnapshot:
             has_more=True,
         )
 
-        snapshot = QueryEditorSnapshot(
+        state = QueryEditorState(
             connection_id="conn1",
             query_text="SELECT * FROM big_table;",
             last_result=result,
@@ -668,6 +668,6 @@ class TestQueryEditorSnapshot:
             page_size=200,
         )
 
-        assert snapshot.current_offset == 200
-        assert snapshot.last_result.has_more is True
-        assert snapshot.last_result.total_count == 500
+        assert state.current_offset == 200
+        assert state.last_result.has_more is True
+        assert state.last_result.total_count == 500

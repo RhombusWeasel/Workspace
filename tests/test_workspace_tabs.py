@@ -9,7 +9,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Static
 
-from ui.workspace.tabs import WorkspaceTabs, TabInfo
+from ui.workspace.tabs import WorkspaceTabs, TabState, TabInfo
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,18 @@ def _label(text: str) -> Label:
     return Label(text, id=f"lbl-{safe_id}")
 
 
+def _state(label: str = "") -> TabState:
+    """Create a bare TabState for testing."""
+    return TabState()
+
+
+def _factory_for_label(text: str):
+    """Create a content factory that returns a Label with the given text."""
+    def factory(s: TabState) -> Label:
+        return _label(text)
+    return factory
+
+
 # ---------------------------------------------------------------------------
 # Opening tabs
 # ---------------------------------------------------------------------------
@@ -50,7 +62,7 @@ class TestOpenTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
             await pilot.pause()
 
             assert tabs.tab_count == 1
@@ -62,8 +74,8 @@ class TestOpenTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
-            tabs.open_tab("t2", "File 2", _label("Content 2"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
+            tabs.open_tab("t2", "File 2", state=_state(), content=_label("Content 2"))
             await pilot.pause()
 
             assert tabs.tab_count == 2
@@ -75,12 +87,12 @@ class TestOpenTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
-            tabs.open_tab("t2", "File 2", _label("Content 2"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
+            tabs.open_tab("t2", "File 2", state=_state(), content=_label("Content 2"))
             await pilot.pause()
 
             # Opening t1 again should switch to it, not add a new tab
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
             await pilot.pause()
 
             assert tabs.tab_count == 2
@@ -99,8 +111,8 @@ class TestSwitchTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
-            tabs.open_tab("t2", "File 2", _label("Content 2"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
+            tabs.open_tab("t2", "File 2", state=_state(), content=_label("Content 2"))
             await pilot.pause()
 
             tabs.switch_tab("t1")
@@ -126,8 +138,8 @@ class TestSwitchTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
-            tabs.open_tab("t2", "File 2", _label("Content 2"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
+            tabs.open_tab("t2", "File 2", state=_state(), content=_label("Content 2"))
             await pilot.pause()
 
             tabs.switch_tab("t1")
@@ -142,7 +154,7 @@ class TestSwitchTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
             await pilot.pause()
 
             tabs.switch_tab("nonexistent")
@@ -161,9 +173,9 @@ class TestCloseTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
-            tabs.open_tab("t2", "File 2", _label("Content 2"))
-            tabs.open_tab("t3", "File 3", _label("Content 3"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
+            tabs.open_tab("t2", "File 2", state=_state(), content=_label("Content 2"))
+            tabs.open_tab("t3", "File 3", state=_state(), content=_label("Content 3"))
             await pilot.pause()
 
             tabs.close_tab("t2")  # Close active
@@ -179,8 +191,8 @@ class TestCloseTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
-            tabs.open_tab("t2", "File 2", _label("Content 2"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
+            tabs.open_tab("t2", "File 2", state=_state(), content=_label("Content 2"))
             await pilot.pause()
 
             tabs.close_tab("t1")  # Close non-active
@@ -195,7 +207,7 @@ class TestCloseTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
             await pilot.pause()
 
             tabs.close_tab("t1")
@@ -222,7 +234,7 @@ class TestCloseTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
             await pilot.pause()
 
             tabs.close_tab("t1")
@@ -237,7 +249,7 @@ class TestCloseTab:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content 1"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content 1"))
             await pilot.pause()
 
             tabs.close_tab("nonexistent")
@@ -252,14 +264,16 @@ class TestCloseTab:
 
 class TestTabInfo:
     def test_tab_info_fields(self):
-        info = TabInfo(id="f1", label="main.py")
+        info = TabInfo(id="f1", label="main.py", state=TabState())
         assert info.id == "f1"
         assert info.label == "main.py"
         assert info.content is None
+        assert info.state is not None
 
     def test_tab_info_with_content(self):
         content = Label("Hello")
-        info = TabInfo(id="f2", label="app.py", content=content)
+        state = TabState()
+        info = TabInfo(id="f2", label="app.py", state=state, content=content)
         assert info.content is content
 
 
@@ -284,12 +298,12 @@ class TestEdgeCases:
             tabs = pilot.app.tabs
             await pilot.pause()
 
-            tabs.open_tab("t1", "File 1", _label("Content A"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content A"))
             await pilot.pause()
             tabs.close_tab("t1")
             await pilot.pause()
             # Re-open with different content
-            tabs.open_tab("t1", "File 1", _label("Content B"))
+            tabs.open_tab("t1", "File 1", state=_state(), content=_label("Content B"))
             await pilot.pause()
 
             assert tabs.tab_count == 1
