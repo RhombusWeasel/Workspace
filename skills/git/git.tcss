@@ -18,5 +18,7 @@ GitPanel .git-panel-actions {
 }
 
 GitPanel .git-panel-actions Button {
-    margin: 0 1;
+    margin: 0;
+    height: 1;
+    border: none;
 }
