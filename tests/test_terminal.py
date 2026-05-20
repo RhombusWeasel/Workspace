@@ -21,16 +21,16 @@ from core.terminal_passthrough import (
 
 
 class TestTerminalView:
-    """Tests for :class:`~ui.terminal.terminal.TerminalView`."""
+    """Tests for :class:`~plugins.terminal.terminal.TerminalView`."""
 
     def test_import(self):
         """TerminalView can be imported."""
-        from ui.terminal.terminal import TerminalView
+        from plugins.terminal.terminal import TerminalView
         assert TerminalView is not None
 
     def test_default_command_uses_shell_env(self, monkeypatch):
         """When no command is given, $SHELL is used."""
-        from ui.terminal.terminal import TerminalState, TerminalView
+        from plugins.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/zsh")
         state = TerminalState()
@@ -39,7 +39,7 @@ class TestTerminalView:
 
     def test_shell_fallback(self, monkeypatch):
         """When $SHELL is unset, falls back to /bin/sh."""
-        from ui.terminal.terminal import TerminalState, TerminalView
+        from plugins.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.delenv("SHELL", raising=False)
         state = TerminalState()
@@ -48,7 +48,7 @@ class TestTerminalView:
 
     def test_custom_command(self):
         """A custom command overrides $SHELL."""
-        from ui.terminal.terminal import TerminalState, TerminalView
+        from plugins.terminal.terminal import TerminalState, TerminalView
 
         state = TerminalState(command="/usr/bin/python3")
         tv = TerminalView(state)
@@ -56,7 +56,7 @@ class TestTerminalView:
 
     def test_working_directory_wrapping(self, monkeypatch):
         """When a working_directory is given, the command wraps with cd."""
-        from ui.terminal.terminal import TerminalState, TerminalView
+        from plugins.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/bash")
         state = TerminalState(working_directory="/tmp/my project")
@@ -67,7 +67,7 @@ class TestTerminalView:
 
     def test_no_working_directory_no_cd(self, monkeypatch):
         """Without a working_directory, the command is just the shell."""
-        from ui.terminal.terminal import TerminalState, TerminalView
+        from plugins.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/bash")
         state = TerminalState()
@@ -77,7 +77,7 @@ class TestTerminalView:
     def test_working_directory_spaces_quoted(self, monkeypatch):
         """Paths with spaces are properly quoted for shlex.split()."""
         import shlex
-        from ui.terminal.terminal import TerminalState, TerminalView
+        from plugins.terminal.terminal import TerminalState, TerminalView
 
         monkeypatch.setenv("SHELL", "/bin/bash")
         wd = "/tmp/has spaces/and more"
@@ -91,7 +91,7 @@ class TestTerminalView:
 
     def test_next_terminal_id_increments(self):
         """next_terminal_id returns unique IDs on each call."""
-        from ui.terminal.terminal import next_terminal_id
+        from plugins.terminal.terminal import next_terminal_id
 
         id1 = next_terminal_id()
         id2 = next_terminal_id()
@@ -114,17 +114,17 @@ class TestTerminalHandler:
         # Re-register the terminal handler (reset cleared the import-time
         # registration, and Python's import cache won't re-run the decorator).
         from core.events import register_handler
-        from ui.terminal.terminal_handler import _on_terminal_open
+        from plugins.terminal.terminal_handler import _on_terminal_open
         register_handler("terminal.open")(_on_terminal_open)
 
     def test_handler_registered(self):
         """terminal.open handler is registered on import."""
-        import ui.terminal.terminal_handler  # noqa: F401
+        import plugins.terminal.terminal_handler  # noqa: F401
         assert "terminal.open" in _handler_registry
 
     def test_leader_chords_registered(self):
         """Leader chords for terminal are registered correctly."""
-        from ui.terminal.terminal_handler import register_terminal_leader_chords
+        from plugins.terminal.terminal_handler import register_terminal_leader_chords
         register_terminal_leader_chords()
 
         root = leader.get_root()
@@ -139,7 +139,7 @@ class TestTerminalHandler:
 
     def test_leader_chords_dont_conflict_with_workspace(self):
         """Terminal chords are separate from workspace chords."""
-        from ui.terminal.terminal_handler import register_terminal_leader_chords
+        from plugins.terminal.terminal_handler import register_terminal_leader_chords
         from ui.workspace.workspace import register_workspace_leader_chords
 
         register_terminal_leader_chords()
@@ -188,7 +188,9 @@ class TestTerminalPassthrough:
         """CodyApp.terminal_passthrough_keys includes all registered keys."""
         # Re-register the keys that were cleared by setup_method
         from ui.workspace.workspace import register_workspace_leader_chords
-        from ui.terminal.terminal_handler import register_terminal_leader_chords
+
+        # Terminal leader chords are now registered by the terminal plugin.
+        # We manually register the passthrough keys for this test.
 
         # main.py registers ctrl+q and ctrl+space on import
         register_terminal_passthrough({"ctrl+q", "ctrl+space"})

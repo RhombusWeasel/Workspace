@@ -9,8 +9,8 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
 
-from ui.chat.chat_input import ChatInput
-from ui.chat.command_palette import CommandPalette
+from plugins.chat.chat_input import ChatInput
+from plugins.chat.command_palette import CommandPalette
 from core.commands import reset_commands
 
 

@@ -14,9 +14,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Label
 
-from ui.terminal.terminal import TerminalState, TerminalView, next_terminal_id
+from plugins.terminal.terminal import TerminalState, TerminalView, next_terminal_id
 from ui.workspace.tabs import TabState, WorkspaceTabs, SavedTab, SavedTabState, _TabLabelButton, _TabCloseButton
-from ui.workspace.query_editor import QueryEditorState
+from plugins.database.query_editor import QueryEditorState
 from ui.workspace.file_editor import FileEditorState
 from ui.workspace.workspace import Workspace, PaneContainer
 from core.pane_tree import get_leaves
@@ -171,7 +171,8 @@ class TestTerminalView:
         mock_pty.emulator = mock_emulator
         mock_pty._screen = MagicMock()
         mock_pty._display = MagicMock()
-        mock_pty.recv_task = MagicMock()
+        mock_recv_task = MagicMock()
+        mock_pty.recv_task = mock_recv_task
         tv._pty = mock_pty
 
         tv.flush_state()
@@ -180,7 +181,7 @@ class TestTerminalView:
         assert state.screen is mock_pty._screen
         assert state.display is mock_pty._display
         # recv_task should be cancelled
-        mock_pty.recv_task.cancel.assert_called_once()
+        mock_recv_task.cancel.assert_called_once()
         # Pty should be disconnected from emulator
         assert mock_pty.emulator is None
         assert mock_pty.send_queue is None
@@ -214,7 +215,7 @@ class TestTerminalView:
         mock_pty = MagicMock()
         tv._pty = mock_pty
 
-        with patch("ui.terminal.terminal.asyncio.create_task"):
+        with patch("plugins.terminal.terminal.asyncio.create_task"):
             tv.on_mount()
 
         # The emulator should be adopted by the PTY
@@ -225,7 +226,8 @@ class TestTerminalView:
         mock_pty.start.assert_not_called()
         # Screen and display should be restored
         assert mock_pty._screen is mock_screen
-        assert mock_pty.stream.screen is mock_screen
+        assert mock_pty.stream.attach.called
+        mock_pty.stream.attach.assert_called_with(mock_screen)
         assert mock_pty.ncol == 80
         assert mock_pty.nrow == 24
         assert mock_pty._display is mock_display
@@ -241,6 +243,35 @@ class TestTerminalView:
 
         # start() should be called for a fresh terminal
         mock_pty.start.assert_called_once()
+
+    def test_stream_attach_uses_listener_not_screen(self):
+        """pyte.Stream uses .listener (not .screen) for processing.
+
+        This test verifies that on_mount uses stream.attach() to
+        properly re-attach the pyte stream to the saved screen.
+        Setting stream.screen would create a useless attribute
+        without changing where stream.feed() sends output.
+        """
+        import pyte
+
+        # Create a pyte Stream with one screen
+        screen_a = pyte.Screen(80, 24)
+        stream = pyte.Stream(screen_a)
+        stream.feed("ScreenA")
+
+        # Verify stream.listener is the active screen
+        assert stream.listener is screen_a
+        assert screen_a.display[0].startswith("ScreenA")
+
+        # Create another screen and use attach() (the fix)
+        screen_b = pyte.Screen(80, 24)
+        stream.attach(screen_b)
+        stream.feed("ScreenB")
+
+        # Output now goes to screen_b (via listener), not screen_a
+        assert stream.listener is screen_b
+        assert screen_b.display[0].startswith("ScreenB")
+        assert not screen_a.display[0].startswith("ScreenB")
 
     def test_on_unmount_does_not_stop_pty(self):
         """on_unmount does not stop the PTY — lifecycle is managed by state."""
@@ -267,7 +298,7 @@ class TestQueryEditorState:
 
     def test_state_roundtrip(self):
         """QueryEditorState captures all editor state fields."""
-        from core.db_connections import QueryResult
+        from plugins.database.core.db_connections import QueryResult
 
         result = QueryResult(
             columns=["id", "name"],
@@ -306,7 +337,7 @@ class TestQueryEditorState:
 
     def test_state_with_pagination(self):
         """QueryEditorState pagination state roundtrips correctly."""
-        from core.db_connections import QueryResult
+        from plugins.database.core.db_connections import QueryResult
 
         result = QueryResult(
             columns=["id"],

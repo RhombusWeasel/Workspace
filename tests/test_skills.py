@@ -650,6 +650,50 @@ class TestReset:
 
 
 # ---------------------------------------------------------------------------
+# Skill components dirs
+# ---------------------------------------------------------------------------
+
+
+class TestComponentsDirs:
+    def test_get_components_dirs_returns_paths(self, tmp_path):
+        """Skills with a components/ directory are discovered."""
+        skill_dir = tmp_path / "myskill"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "myskill", "Test")
+        comp_dir = skill_dir / "components"
+        comp_dir.mkdir()
+        (comp_dir / "panel.py").write_text("# panel")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        dirs = mgr.get_skill_components_dirs()
+        assert len(dirs) == 1
+        assert dirs[0].endswith("components")
+
+    def test_get_components_dirs_skips_skills_without_components(self, tmp_path):
+        """Skills without a components/ directory are skipped."""
+        skill_dir = tmp_path / "noskills"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "noskills", "No components")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        assert mgr.get_skill_components_dirs() == []
+
+    def test_get_components_dirs_excludes_disabled(self, tmp_path):
+        """Disabled skills' components dirs are not returned."""
+        skill_dir = tmp_path / "disabled"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "disabled", "Test")
+        comp_dir = skill_dir / "components"
+        comp_dir.mkdir()
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)], enabled={"disabled": False})
+        assert mgr.get_skill_components_dirs() == []
+
+
+# ---------------------------------------------------------------------------
 # Autouse fixture — reset before every test
 # ---------------------------------------------------------------------------
 

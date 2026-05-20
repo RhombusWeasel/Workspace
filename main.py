@@ -35,8 +35,8 @@ register_defaults({"ui": {"theme": _UI_DEFAULT_THEME}})
 import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handler registration
 # Import file edit handler so its @register_handler("files.edit") runs.
 import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for handler registration
-# Import terminal handler so its @register_handler("terminal.open") runs.
-import ui.terminal.terminal_handler  # noqa: F401 — side-effect import for handler registration
+# Terminal handler is now registered by the terminal plugin
+# (plugins/terminal/__init__.py) at plugin load time.
 
 
 # ---------------------------------------------------------------------------

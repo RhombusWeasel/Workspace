@@ -7,7 +7,7 @@ ConfirmModal {
     max-height: 80%;
     padding: 1 2;
     background: $surface;
-    border: thick $primary;
+    border: round $primary;
 }
 
 #confirm-title {
@@ -23,7 +23,7 @@ ConfirmModal {
     max-height: 20;
     padding: 1;
     background: $boost;
-    border: solid $panel;
+    border: round $panel;
     overflow-y: auto;
 }
 

@@ -7,7 +7,8 @@ the same tab, closing all tabs.
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Label, Static
+from textual.containers import Container
+from textual.widgets import Input, Label, Static
 
 from ui.workspace.tabs import WorkspaceTabs, TabState, TabInfo
 
@@ -308,3 +309,121 @@ class TestEdgeCases:
 
             assert tabs.tab_count == 1
             assert tabs.active_tab_id == "t1"
+
+
+# ---------------------------------------------------------------------------
+# Focus handling
+# ---------------------------------------------------------------------------
+
+
+class _FocusableContent(Container):
+    """A container with an Input child, simulating a tab with focusable content."""
+
+    DEFAULT_CSS = "_FocusableContent { height: auto; }"
+
+    def __init__(self, input_id: str = "focus-input", **kwargs):
+        super().__init__(**kwargs)
+        self._input_id = input_id
+
+    def compose(self) -> ComposeResult:
+        yield Input(placeholder="Type here", id=self._input_id)
+
+
+class FocusTabsApp(App):
+    """App with WorkspaceTabs for focus testing."""
+
+    CSS = """
+    WorkspaceTabs {
+        height: 100%;
+        width: 100%;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        self.tabs = WorkspaceTabs()
+        yield self.tabs
+
+
+def _focusable_factory(s: TabState) -> _FocusableContent:
+    return _FocusableContent()
+
+
+class TestFocusOnTabSwitch:
+    async def test_open_tab_focuses_focusable_content(self):
+        """Opening a tab with focusable content gives it keyboard focus."""
+        async with FocusTabsApp().run_test() as pilot:
+            tabs = pilot.app.tabs
+            await pilot.pause()
+
+            tabs.open_tab(
+                "t1", "Editor", state=_state(),
+                content_factory=_focusable_factory,
+            )
+            await pilot.pause()
+
+            # The Input inside the tab should have focus.
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "focus-input"
+
+    async def test_switch_tab_moves_focus(self):
+        """Switching to a tab moves focus to its focusable content."""
+        async with FocusTabsApp().run_test() as pilot:
+            tabs = pilot.app.tabs
+            await pilot.pause()
+
+            # Open two tabs, each with its own uniquely-identified Input.
+            tabs.open_tab(
+                "t1", "Editor 1", state=_state(),
+                content=_FocusableContent(input_id="input-1"),
+            )
+            tabs.open_tab(
+                "t2", "Editor 2", state=_state(),
+                content=_FocusableContent(input_id="input-2"),
+            )
+            await pilot.pause()
+
+            # t2 is active — its input should be focused.
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "input-2"
+
+            # Switch to t1.
+            tabs.switch_tab("t1")
+            await pilot.pause()
+
+            # t1 is now active — its input should be focused.
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "input-1"
+
+    async def test_close_active_tab_focuses_remaining(self):
+        """Closing the active tab focuses the next tab's content."""
+        async with FocusTabsApp().run_test() as pilot:
+            tabs = pilot.app.tabs
+            await pilot.pause()
+
+            # Open two tabs with uniquely identified inputs.
+            tabs.open_tab(
+                "t1", "Editor 1", state=_state(),
+                content=_FocusableContent(input_id="input-1"),
+            )
+            tabs.open_tab(
+                "t2", "Editor 2", state=_state(),
+                content=_FocusableContent(input_id="input-2"),
+            )
+            await pilot.pause()
+
+            # t2 is active and focused.
+            assert pilot.app.focused is not None
+            assert pilot.app.focused.id == "input-2"
+
+            # Close t2 (the active tab) — should switch to t1.
+            tabs.close_tab("t2")
+            await pilot.pause()
+
+            # t1 should now be active and its input focused.
+            assert tabs.active_tab_id == "t1"
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "input-1"

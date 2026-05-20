@@ -322,3 +322,68 @@ def _reset_registries():
     skill_manager.reset()
     reset_leader()
     reset_registered_defaults()
+
+
+class TestPluginLoadErrorIsolation:
+    """A plugin with missing imports should be skipped, not crash the app."""
+
+    def test_broken_plugin_skipped_gracefully(self, tmp_path, monkeypatch, capsys):
+        """A plugin whose __init__.py raises ImportError is skipped."""
+        from bootstrap import Bootstrap
+        from core.tools import reset as reset_tools
+        from core.commands import reset_commands
+        from core.config import reset_registered_defaults
+
+        reset_tools()
+        reset_commands()
+        reset_registered_defaults()
+
+        cody_dir = tmp_path / "cody"
+        agents_dir = tmp_path / "agents"
+        working_dir = tmp_path / "working"
+        os.makedirs(working_dir)
+
+        # Bundled config
+        cfg_dir = cody_dir / "config"
+        os.makedirs(cfg_dir)
+        _write_file(cfg_dir / "config.json", json.dumps({
+            "session": {"provider": "ollama"},
+        }))
+
+        # Create a broken plugin in the cody tier
+        broken_plugin_dir = cody_dir / "plugins" / "broken_plugin"
+        os.makedirs(broken_plugin_dir)
+        _write_file(
+            broken_plugin_dir / "SKILL.md",
+            "---\nname: broken_plugin\ndescription: A broken plugin\n---",
+        )
+        _write_file(
+            broken_plugin_dir / "__init__.py",
+            "import nonexistent_package\n",  # will raise ModuleNotFoundError
+        )
+
+        # Need tcss
+        ui_dir = cody_dir / "ui" / "workspace"
+        os.makedirs(ui_dir)
+        _write_file(ui_dir / "styles.tcss", "Button {}")
+
+        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
+
+        b = Bootstrap(
+            working_directory=str(working_dir),
+            cody_dir=str(cody_dir),
+            agents_dir=str(agents_dir),
+        )
+
+        # Should NOT raise — broken plugin is skipped
+        ctx = b.run()
+        assert ctx is not None
+
+        # Should print a warning to stderr
+        captured = capsys.readouterr()
+        assert "broken_plugin" in captured.err
+        assert "skipping" in captured.err.lower() or "Skipping" in captured.err
+
+        ctx.database.close()
+        reset_tools()

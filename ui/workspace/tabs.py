@@ -152,6 +152,8 @@ class WorkspaceTabs(Widget):
         super().__init__()
         self._tabs: dict[str, TabInfo] = {}
         self._active: str | None = None
+        self._focus_generation: int = 0
+        """Monotonically increasing counter to invalidate stale focus requests."""
 
     # ------------------------------------------------------------------
     # Public API
@@ -384,8 +386,10 @@ class WorkspaceTabs(Widget):
 
     def _refresh(self) -> None:
         """Rebuild the tab bar and content area to reflect current state."""
+        self._focus_generation += 1
         self._refresh_tab_bar()
         self._refresh_content()
+        self._focus_active_content()
 
     def _refresh_tab_bar(self) -> None:
         """Rebuild the tab bar with current tabs."""
@@ -399,6 +403,56 @@ class WorkspaceTabs(Widget):
             if tab_id == self._active:
                 lbl_btn.add_class("-active")
             self._tab_bar.mount(Horizontal(lbl_btn, close_btn, classes="tab-item"))
+
+    def _focus_active_content(self) -> None:
+        """Focus the active tab's content (or its first focusable descendant).
+
+        When a tab becomes active — whether opened, switched to, or after
+        closing another tab — the user expects to be able to interact
+        immediately.  This method locates the first focusable widget inside
+        the active tab's content and gives it keyboard focus.
+
+        When the content widget is already mounted (e.g. tab switch), focus
+        is set immediately.  When a newly-opened tab's content is still
+        being mounted, a short retry loop waits for the mount to complete
+        before focusing.
+
+        A generation counter ensures that stale focus requests from
+        previous tab activations are cancelled — e.g. if a retry timer
+        from tab-1 fires after tab-2 has already been activated and
+        focused, it is silently ignored.
+        """
+        if self._active is None:
+            return
+        info = self._tabs.get(self._active)
+        if info is None or info.content is None:
+            return
+
+        content = info.content
+        generation = self._focus_generation
+
+        def _try_focus(retries: int = 10) -> None:
+            # If a newer focus request has been issued, abort.
+            if self._focus_generation != generation:
+                return
+            if content is None or not content.is_mounted:
+                if retries > 0:
+                    self.set_timer(0.01, lambda: _try_focus(retries - 1))
+                return
+            # If the content widget itself is focusable, focus it.
+            if content.focusable:
+                content.focus()
+                return
+            # Otherwise, find the first focusable descendant.
+            try:
+                for widget in content.query("*").results(Widget):
+                    if widget.focusable:
+                        widget.focus()
+                        return
+            except Exception:
+                pass
+
+        _try_focus()
 
     def _refresh_content(self) -> None:
         """Show the active tab's content; hide all others.

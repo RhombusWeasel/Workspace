@@ -1,0 +1,1 @@
+"""Git skill components — auto-imported by bootstrap."""

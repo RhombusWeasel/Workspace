@@ -16,6 +16,8 @@ from utils.icons import (
     REFRESH,
     CLOSE,
     COPY,
+    EYE,
+    EYE_OFF,
     _FILE_ICONS,
     _SPECIAL_FILE_ICONS,
     _SPECIAL_DIR_ICONS,
@@ -31,11 +33,14 @@ class TestIconConstants:
     def test_action_icons_are_strings(self):
         """All action icon constants are non-empty strings."""
         for icon in [EDIT, DELETE, RENAME, ADD_FILE, ADD_DIR,
-                     REFRESH, CLOSE, COPY, FOLDER, FILE, FOLDER_OPEN]:
+                     REFRESH, CLOSE, COPY, FOLDER, FILE, FOLDER_OPEN,
+                     EYE, EYE_OFF]:
             assert isinstance(icon, str)
             assert len(icon) > 0
 
-    def test_folder_icon_is_not_file_icon(self):
+    def test_eye_icons_are_distinct(self):
+        """EYE and EYE_OFF are different icons for toggle state."""
+        assert EYE != EYE_OFF
         """Folder and file icons are distinct."""
         assert FOLDER != FILE
 

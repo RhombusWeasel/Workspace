@@ -96,6 +96,16 @@ Decorator that appends the decorated function to the handler list for
 | `data` | `dict[str, Any]` | Payload from the `CodyEvent` |
 | `ctx` | `AppContext` | Service locator with config, vault, database, and `ctx.app` |
 
+Handlers are **synchronous** functions.  If you need to `await` an async
+operation (e.g. `push_screen_wait`), launch it via `app.run_worker()`:
+
+```python
+async def do_prompt() -> None:
+    result = await app.push_screen_wait(InputModal("..."))
+
+app.run_worker(do_prompt())
+```
+
 ### `reset_handlers()`
 
 ```python
@@ -130,8 +140,16 @@ def _on_vault_needs_unlock(data: dict, ctx: AppContext) -> None:
     app = ctx.app
     if app is None:
         return
-    # Push a modal, query widgets, etc.
-    result = await app.push_screen_wait(InputModal(...))
+    # Push a modal via an async worker — handlers are sync,
+    # so async operations must be launched through run_worker().
+    async def do_prompt() -> None:
+        result = await app.push_screen_wait(InputModal("Enter password", password=True))
+        if result is None:
+            return
+        ctx.vault.unlock(result)
+        # ... rebuild UI after unlock
+
+    app.run_worker(do_prompt())
 ```
 
 ---
@@ -142,10 +160,12 @@ Use dotted `"domain.action"` strings:
 
 | Domain | Example | Meaning |
 |---|---|---|
-| `leader.*` | `leader.workspace.split_h` | Leader chord actions |
-| `workspace.*` | `workspace.split` | Workspace lifecycle events |
+| `workspace.*` | `workspace.split` | Workspace lifecycle events (data carries details) |
 | `vault.*` | `vault.needs_unlock` | Vault state events |
 | `app.*` | `app.open_leader` | Application-level commands |
+| `db.*` | `db.open_query` | Database plugin events |
+| `files.*` | `files.edit` | File browser events |
+| `terminal.*` | `terminal.open` | Terminal plugin events |
 | Skill domains | `analysis.complete` | Skill-specific events |
 
 Two or more dots is fine for sub-actions: `leader.workspace.toggle_left`.

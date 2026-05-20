@@ -235,7 +235,10 @@ def _resolve_api_key(self) -> str | None:
     vault = self._get_vault_manager()
     if vault is None or vault.is_locked():
         return None
-    cred = vault.get_credential("ollama:api_key")
+    try:
+        cred = vault.get_credential("ollama")
+    except RuntimeError:
+        return None  # vault is locked
     if cred is None:
         return None
     _, key = cred
@@ -243,8 +246,7 @@ def _resolve_api_key(self) -> str | None:
 ```
 
 Keys are **not** read from config files or environment variables — the vault
-is the single source of truth for secrets.  The previous codebase's multi-
-source fallback (vault → config → env) was removed as unnecessary indirection.
+is the single source of truth for secrets.
 
 ---
 

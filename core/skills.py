@@ -208,6 +208,22 @@ class SkillManager:
                 result.append(tools_dir)
         return result
 
+    def get_skill_components_dirs(self) -> list[str]:
+        """Return paths to ``components/`` directories that exist inside enabled skills.
+
+        Components directories contain Python modules that register
+        UI elements (sidebar panels, event handlers, leader chords)
+        via the usual decorator pattern.  They are auto-imported by
+        the bootstrap loader, exactly like ``tools/`` and ``cmd/``
+        directories.
+        """
+        result: list[str] = []
+        for name in sorted(self._enabled):
+            comp_dir = os.path.join(self._skills[name].base_dir, "components")
+            if os.path.isdir(comp_dir):
+                result.append(comp_dir)
+        return result
+
     # ------------------------------------------------------------------
     # Catalog XML
     # ------------------------------------------------------------------

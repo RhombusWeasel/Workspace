@@ -265,6 +265,87 @@ class TestFileEditor:
             shutil.rmtree(tmpdir)
 
 
+    async def test_ctrl_s_hotkey_saves_file(self):
+        """Pressing Ctrl+S in the editor saves the file to disk."""
+        tmpdir = tempfile.mkdtemp()
+        filepath = os.path.join(tmpdir, "hotkey_test.txt")
+        try:
+            with open(filepath, "w") as f:
+                f.write("Original")
+
+            async with FileEditorTestApp(filepath).run_test() as pilot:
+                await pilot.pause()
+                editor_widget = pilot.app.editor_widget
+                text_area = editor_widget.query_one(TextArea)
+
+                # Modify content in the editor
+                text_area.load_text("Saved via hotkey")
+                await pilot.pause()
+
+                # Press Ctrl+S to trigger the save binding
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+
+                # Verify file on disk was updated
+                with open(filepath) as f:
+                    assert f.read() == "Saved via hotkey"
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    async def test_action_save_shows_notification(self):
+        """action_save() posts a notification on success."""
+        tmpdir = tempfile.mkdtemp()
+        filepath = os.path.join(tmpdir, "notify_test.txt")
+        try:
+            with open(filepath, "w") as f:
+                f.write("Original")
+
+            async with FileEditorTestApp(filepath).run_test() as pilot:
+                await pilot.pause()
+                editor_widget = pilot.app.editor_widget
+
+                # Call action_save directly
+                editor_widget.action_save()
+                await pilot.pause()
+
+                # Check that a notification was posted
+                notifications = list(pilot.app._notifications)
+                assert len(notifications) == 1
+                assert "Saved" in notifications[0].message
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    async def test_is_modified_resets_after_save(self):
+        """is_modified returns False after save_file() succeeds."""
+        tmpdir = tempfile.mkdtemp()
+        filepath = os.path.join(tmpdir, "modified_test.txt")
+        try:
+            with open(filepath, "w") as f:
+                f.write("Original")
+
+            async with FileEditorTestApp(filepath).run_test() as pilot:
+                await pilot.pause()
+                editor_widget = pilot.app.editor_widget
+                text_area = editor_widget.query_one(TextArea)
+
+                # Initially not modified
+                assert editor_widget.is_modified is False
+
+                # Modify content
+                text_area.load_text("Changed")
+                await pilot.pause()
+                assert editor_widget.is_modified is True
+
+                # Save resets modified state
+                editor_widget.save_file()
+                assert editor_widget.is_modified is False
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+
 class TestLanguageForFile:
     def test_python(self):
         assert _language_for_file("hello.py") == "python"

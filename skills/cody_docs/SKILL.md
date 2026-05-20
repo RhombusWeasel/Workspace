@@ -1,6 +1,6 @@
 ---
 name: cody_docs
-description: Cody core-systems documentation — events, config, vault, and architecture
+description: Cody core-systems documentation — events, config, vault, plugins, tools, commands, and architecture
 ---
 
 # Cody Documentation
@@ -8,16 +8,77 @@ description: Cody core-systems documentation — events, config, vault, and arch
 Internal documentation for Cody's core systems.  Use these docs when extending
 Cody with new features, skills, or UI components.
 
-## Docs
+## How to Read These Docs
 
-| System | File | What it covers |
+This skill's SKILL.md is an index.  To read the full documentation, use
+the **`run_skill`** tool to call the `read_doc.py` script bundled with
+this skill:
+
+**List available docs:**
+```
+run_skill(skill_name="cody_docs", script="scripts/read_doc.py")
+```
+
+**Read a specific doc:**
+```
+run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["docs/events.md"])
+```
+
+The `args` value is the doc filename — you can use either the short form
+(`events.md`) or the full form (`docs/events.md`).  If a file isn't found,
+the script lists all available docs automatically.
+
+**Read every doc at once** (large — ~166KB total):
+```
+run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
+```
+
+## Documentation Index
+
+| Category | File | Summary |
 |---|---|---|
-| Event system | [`docs/events.md`](docs/events.md) | `CodyEvent`, `@register_handler`, `dispatch`, event naming |
-| Config management | [`docs/config.md`](docs/config.md) | Layered JSON, dot-path access, diff-save, registered defaults |
-| Password vault | [`docs/vault.md`](docs/vault.md) | Fernet encryption, master + local vaults, `VaultManager` |
+| **Guide** | | |
+| Creating a Plugin | `docs/creating_a_plugin.md` | Step-by-step: anatomy, all registration types, examples, troubleshooting |
+| **Core Systems** | | |
+| Event system | `docs/events.md` | `CodyEvent`, `@register_handler`, `dispatch`, event naming |
+| Config management | `docs/config.md` | Layered JSON, dot-path access, diff-save, registered defaults |
+| Password vault | `docs/vault.md` | Fernet encryption, master + local vaults, `VaultManager` |
+| Plugin system | `docs/plugins.md` | 3-tier plugin discovery, loading, authoring guide, requirements |
+| Workspace tabs | `docs/workspace_tabs.md` | `TabState`, `flush_state()`, `content_factory`, persistence patterns |
+| Tool registry | `docs/tools.md` | `@register_tool`, tag grouping, enable/disable, context injection |
+| Slash commands | `docs/commands.md` | `@register_command`, auto-discovery from `cmd/` directories |
+| Leader chords | `docs/leader.md` | `register_action`, `register_submenu`, chord tree, terminal passthrough |
+| AppContext | `docs/context.md` | Service locator dataclass, all fields, access patterns |
+| Skills system | `docs/skills.md` | Skill discovery, SKILL.md format, skills vs plugins, `activate_skill` |
+| LLM providers | `docs/providers.md` | `BaseProvider` protocol, creating a new provider, API key resolution |
+| Agent | `docs/agent.md` | Tool-calling loop, template rendering, streaming, abort support |
+| Database | `docs/database.md` | Chat/message/agent/todo CRUD, section storage, history reconstruction |
+| Sidebar registry | `docs/sidebar.md` | `@register_sidebar_tab`, tab discovery, Nerd Font icons |
+| UI widgets | `docs/ui_widgets.md` | `InputModal`, `ConfirmModal`, pushing modals from handlers/tools/commands |
+| Bootstrap | `docs/bootstrap.md` | Startup sequence, phase ordering, error isolation |
 
-## Architecture
+## Quick Reference: All Registries
 
-See the project [`design_document.md`](../../design_document.md) for the
-overall architecture, directory layout, migration plan, and resolved design
-decisions.
+| What | Module | Decorator/Function | Parameters |
+|---|---|---|---|
+| Sidebar tab | `ui.sidebar.registry` | `@register_sidebar_tab(name, icon, side, tooltip)` | Widget subclass |
+| Event handler | `core.events` | `@register_handler(event_type)` | `(data: dict, ctx: AppContext)` |
+| LLM tool | `core.tools` | `@register_tool(name, description, parameters, tags)` | Sync or async function |
+| Slash command | `core.commands` | `@register_command(name, description)` | `async (app, args: str)` |
+| Leader chord | `core.leader` | `register_action(keys, label, event_type=)` | Side-effect registration |
+| Leader submenu | `core.leader` | `register_submenu(keys, label)` | Side-effect registration |
+| Config defaults | `core.config` | `register_defaults(dict)` | Nested dict |
+| Terminal passthrough | `core.terminal_passthrough` | `register_terminal_passthrough(keys)` | Set of key strings |
+
+## Quick Reference: AppContext Fields
+
+| Field | Type | What it provides |
+|---|---|---|
+| `config` | `Config` | Layered JSON config with dot-path access |
+| `skills` | `SkillManager` | Skill catalog (query available skills) |
+| `database` | `DatabaseManager` | Chat, message, agent, todo CRUD |
+| `db_connections` | `Any` | ConnectionManager from database plugin (or None) |
+| `leader` | `LeaderRegistry` | Keyboard chord tree |
+| `vault` | `VaultManager` | Encrypted credential + note storage |
+| `working_directory` | `str` | Current project directory |
+| `app` | `CodyApp` | Running Textual app instance |

@@ -229,3 +229,84 @@ class TestSave:
             saved = _read_json(b)
             assert "unchanged" not in saved
             assert saved["changed"] == "new"
+
+
+class TestGetSetListIndex:
+    """Tests for Config.get/set with [N] list-index notation."""
+
+    def test_get_list_item(self):
+        cfg = Config([])
+        cfg.set("db.connections", [{"id": "a1", "name": "My DB"}])
+        assert cfg.get("db.connections[0]") == {"id": "a1", "name": "My DB"}
+
+    def test_get_nested_list_item_field(self):
+        cfg = Config([])
+        cfg.set("db.connections", [{"id": "a1", "name": "My DB"}])
+        assert cfg.get("db.connections[0].name") == "My DB"
+
+    def test_get_list_index_out_of_range_returns_default(self):
+        cfg = Config([])
+        cfg.set("items", [1, 2, 3])
+        assert cfg.get("items[5]") is None
+        assert cfg.get("items[5]", "missing") == "missing"
+
+    def test_get_list_on_non_list_returns_default(self):
+        cfg = Config([])
+        cfg.set("db", {"host": "localhost"})
+        assert cfg.get("db.host[0]") is None
+
+    def test_set_list_item(self):
+        cfg = Config([])
+        cfg.set("db.connections", [{"id": "a1", "name": "My DB"}])
+        cfg.set("db.connections[0].name", "Renamed DB")
+        assert cfg.get("db.connections[0].name") == "Renamed DB"
+
+    def test_set_scalar_list_item(self):
+        cfg = Config([])
+        cfg.set("items", ["a", "b", "c"])
+        cfg.set("items[1]", "B")
+        assert cfg.get("items[1]") == "B"
+        assert cfg.get("items") == ["a", "B", "c"]
+
+    def test_set_list_item_out_of_range_raises(self):
+        cfg = Config([])
+        cfg.set("items", [1, 2])
+        with pytest.raises(IndexError):
+            cfg.set("items[5]", 99)
+
+    def test_parse_path_plain_key(self):
+        assert Config._parse_path("session") == [("session", None)]
+
+    def test_parse_path_dotted_key(self):
+        assert Config._parse_path("db.host") == [
+            ("db", None),
+            ("host", None),
+        ]
+
+    def test_parse_path_with_index(self):
+        assert Config._parse_path("db.connections[0].name") == [
+            ("db", None),
+            ("connections", 0),
+            ("name", None),
+        ]
+
+    def test_parse_path_multiple_indices(self):
+        # "data.items[0].sub[0].val" — each segment has at most one index
+        result = Config._parse_path("data.items[0].sub[0].val")
+        assert result == [
+            ("data", None),
+            ("items", 0),
+            ("sub", 0),
+            ("val", None),
+        ]
+
+    def test_parse_path_no_indices(self):
+        assert Config._parse_path("db.host") == [
+            ("db", None),
+            ("host", None),
+        ]
+
+    def test_get_deeply_nested_list(self):
+        cfg = Config([])
+        cfg.set("data", {"items": [{"sub": [{"val": 42}]}]})
+        assert cfg.get("data.items[0].sub[0].val") == 42

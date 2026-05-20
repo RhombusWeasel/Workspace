@@ -10,6 +10,7 @@ Modules can register defaults via ``config.defaults({...})`` at import time;
 
 import json
 import os
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -113,28 +114,96 @@ class Config:
                 _deep_merge(self._baseline, blob)
 
     # ------------------------------------------------------------------
+    # Path parsing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_path(key: str) -> list[tuple[str, int | None]]:
+        """Parse a dot-path with optional ``[N]`` list indices.
+
+        Returns a list of ``(segment, index)`` tuples:
+        - ``("connections", None)`` — dict key
+        - ``("connections", 0)`` — dict key + list index
+
+        Examples::
+
+            _parse_path("db.connections")
+            # → [("db", None), ("connections", None)]
+
+            _parse_path("db.connections[0].name")
+            # → [("db", None), ("connections", 0), ("name", None)]
+        """
+        segments: list[tuple[str, int | None]] = []
+        for part in key.split("."):
+            m = re.match(r"^(.+?)\[(\d+)\]$", part)
+            if m:
+                segments.append((m.group(1), int(m.group(2))))
+            else:
+                segments.append((part, None))
+        return segments
+
+    # ------------------------------------------------------------------
     # Dot-path access
     # ------------------------------------------------------------------
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Return the value at dotted *key*, or *default* if not found."""
-        parts = key.split(".")
+        """Return the value at dotted *key*, or *default* if not found.
+
+        Supports ``[N]`` notation for list indexing, e.g.
+        ``"db.connections[0].name"``.
+        """
+        segments = self._parse_path(key)
         node: Any = self._data
-        for part in parts:
-            if not isinstance(node, dict) or part not in node:
+        for seg_key, index in segments:
+            # Navigate into dict by key
+            if not isinstance(node, dict) or seg_key not in node:
                 return default
-            node = node[part]
+            node = node[seg_key]
+            # If an index is present, navigate into the list
+            if index is not None:
+                if not isinstance(node, list) or index >= len(node):
+                    return default
+                node = node[index]
         return node
 
     def set(self, key: str, value: Any) -> None:
-        """Set *value* at dotted *key*, creating intermediate dicts as needed."""
-        parts = key.split(".")
-        node = self._data
-        for part in parts[:-1]:
-            if part not in node or not isinstance(node[part], dict):
-                node[part] = {}
-            node = node[part]
-        node[parts[-1]] = value
+        """Set *value* at dotted *key*, creating intermediate dicts as needed.
+
+        Supports ``[N]`` notation for list indexing.
+        The list and all intermediate dicts must already exist —
+        this method will not create new list entries.
+        For dict segments that don't exist, they are created automatically.
+        """
+        segments = self._parse_path(key)
+        node: Any = self._data
+        for seg_key, index in segments[:-1]:
+            # Create missing intermediate dicts, but never overwrite
+            # existing values (e.g. a list) with an empty dict.
+            if seg_key not in node:
+                node[seg_key] = {}
+            node = node[seg_key]
+            if index is not None:
+                if not isinstance(node, list) or index >= len(node):
+                    raise IndexError(
+                        f"List index {index} out of range for "
+                        f"path segment '{seg_key}[{index}]'"
+                    )
+                node = node[index]
+        # Set the final value
+        last_key, last_index = segments[-1]
+        if last_index is not None:
+            # Setting into a list — the list must already exist
+            if last_key not in node:
+                node[last_key] = []
+            target = node[last_key]
+            if not isinstance(target, list) or last_index >= len(target):
+                raise IndexError(
+                    f"List index {last_index} out of range for "
+                    f"path segment '{last_key}[{last_index}]'"
+                )
+            target[last_index] = value
+        else:
+            node[last_key] = value
 
     # ------------------------------------------------------------------
     # Registered defaults

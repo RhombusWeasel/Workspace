@@ -1,8 +1,8 @@
 """File browser panel — sidebar tab for browsing project files.
 
 Uses the generic Tree widget with lazy loading: directories are scanned
-one level at a time when expanded.  Files and directories have inline
-action buttons (open/edit, add, rename, delete).
+one level at a time when expanded.  Clicking a file label opens it for
+editing; files and directories have inline action buttons (rename, delete).
 """
 
 from __future__ import annotations
@@ -16,16 +16,15 @@ from textual.widgets import Button, Static
 
 from core.events import CodyEvent
 from ui.sidebar.registry import register_sidebar_tab
-from ui.tree.tree import Tree, NodeNeedsChildren
+from ui.tree.tree import Tree, NodeNeedsChildren, NodeSelected
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
 from utils.dom_id import path_to_id
-from utils.icons import get_file_icon, get_folder_icon, EDIT, RENAME, DELETE, ADD_FILE, ADD_DIR, REFRESH, FOLDER_OPEN
+from utils.icons import get_file_icon, get_folder_icon, RENAME, DELETE, ADD_FILE, ADD_DIR, REFRESH, FOLDER_OPEN, EYE, EYE_OFF
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_EDIT = "edit"
 _ADD_FILE = "add_file"
 _ADD_DIR = "add_dir"
 _RENAME = "rename"
@@ -57,7 +56,6 @@ _IGNORED_NAMES: set[str] = {
 
 def _file_buttons() -> list[RowButton]:
     return [
-        RowButton(_EDIT, EDIT, "btn-edit"),
         RowButton(_RENAME, RENAME, "btn-rename"),
         RowButton(_DEL, DELETE, "btn-del"),
     ]
@@ -86,18 +84,23 @@ class FileBrowserPanel(Container):
     ``NodeNeedsChildren`` which this panel handles by scanning the
     directory, adding children, and refreshing the tree.
 
+    Clicking a file label opens the file for editing (equivalent to
+    the former Edit button, which has been removed to save space).
+
     Actions:
-    - **Edit**: Posts ``CodyEvent("files.edit")`` with the file path.
+    - **Open file**: Click a file label to edit it.
     - **Add File**: Creates an empty file in the selected directory.
     - **Add Dir**: Creates a new directory.
     - **Rename**: Renames a file or directory on disk.
     - **Delete**: Deletes a file or directory after confirmation.
+    - **Show Hidden**: Toggles visibility of dotfiles and dotdirs.
     - **Refresh**: Rescans the working directory from scratch.
     """
 
     def __init__(self, working_directory: str | None = None):
         super().__init__()
         self._wd = working_directory or os.getcwd()
+        self._show_hidden = False
 
     # ------------------------------------------------------------------
     # Compose
@@ -110,6 +113,7 @@ class FileBrowserPanel(Container):
         with Horizontal(classes="file-browser-actions"):
             yield Button("+ File", id="fb-new-file", variant="default")
             yield Button("+ Dir", id="fb-new-dir", variant="default")
+            yield Button(EYE_OFF, id="fb-show-hidden", variant="default")
             yield Button(REFRESH, id="fb-refresh", variant="default")
 
     def on_mount(self) -> None:
@@ -149,11 +153,23 @@ class FileBrowserPanel(Container):
         self._tree.set_root(root)
         self._tree.expand_node(root.id)
 
+    def _toggle_hidden(self) -> None:
+        """Toggle whether hidden entries are shown and rebuild the tree."""
+        self._show_hidden = not self._show_hidden
+        # Update the toggle button label
+        btn = self.query_one("#fb-show-hidden", Button)
+        btn.label = EYE if self._show_hidden else EYE_OFF
+        self._rebuild()
+
     def _scan_dir(self, dirpath: str) -> list[TreeNode]:
         """Scan *dirpath* one level deep and return child TreeNodes.
 
         Directories are created as lazy nodes (``loaded=False``).
         Files are created as leaf nodes with action buttons.
+
+        Hidden entries (starting with ``.``) are excluded unless
+        ``self._show_hidden`` is True.  Entries in ``_IGNORED_NAMES``
+        are always excluded regardless of the hidden toggle.
         """
         try:
             entries = sorted(os.listdir(dirpath))
@@ -162,8 +178,12 @@ class FileBrowserPanel(Container):
 
         nodes: list[TreeNode] = []
         for name in entries:
-            # Skip ignored names and hidden files (starting with .)
-            if name in _IGNORED_NAMES or name.startswith("."):
+            # Always skip explicitly-ignored names (build artifacts, VCS dirs, etc.)
+            if name in _IGNORED_NAMES:
+                continue
+
+            # Skip hidden entries (dotfiles / dotdirs) unless toggled on
+            if not self._show_hidden and name.startswith("."):
                 continue
 
             full_path = os.path.join(dirpath, name)
@@ -192,7 +212,7 @@ class FileBrowserPanel(Container):
                     buttons=_file_buttons(),
                 ))
 
-        return sorted(nodes, key=lambda n: (n.data.get("type", "") != "dir", n.label.lower()))
+        return sorted(nodes, key=lambda n: (n.data.get("type", "") != "dir", n.data.get("name", "").lower()))
 
     # ------------------------------------------------------------------
     # Lazy loading handler
@@ -223,8 +243,21 @@ class FileBrowserPanel(Container):
             self._prompt_add_file(self._wd)
         elif btn_id == "fb-new-dir":
             self._prompt_add_dir(self._wd)
+        elif btn_id == "fb-show-hidden":
+            self._toggle_hidden()
         elif btn_id == "fb-refresh":
             self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Selection handler — click on file label opens it for editing
+    # ------------------------------------------------------------------
+
+    def on_node_selected(self, msg: NodeSelected) -> None:
+        """Open a file for editing when its label is clicked."""
+        msg.stop()
+        node = msg.node
+        if node.data and node.data.get("type") == "file":
+            self._edit_file(node.data.get("path", ""))
 
     # ------------------------------------------------------------------
     # ActionRow button handlers — per-node actions
@@ -238,9 +271,7 @@ class FileBrowserPanel(Container):
         path = node.data.get("path", "")
         ntype = node.data.get("type", "")
 
-        if action == _EDIT:
-            self._edit_file(path)
-        elif action == _ADD_FILE and ntype == "dir":
+        if action == _ADD_FILE and ntype == "dir":
             self._prompt_add_file(path)
         elif action == _ADD_DIR and ntype == "dir":
             self._prompt_add_dir(path)

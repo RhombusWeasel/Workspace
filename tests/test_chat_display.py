@@ -9,7 +9,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Markdown
 
-from ui.chat.chat_display import ChatDisplay
+from plugins.chat.chat_display import ChatDisplay
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode, TreeRow
 

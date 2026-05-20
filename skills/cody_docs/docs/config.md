@@ -37,7 +37,7 @@ Load order (last wins):
               └─────────┬───────────┘
                         │
               ┌─────────▼───────────┐
-              │   Config._defaults  │  ← accumulated from defaults() calls
+              │   Config._defaults  │  ← fed from module-level register_defaults()
               │ (registered at      │
               │  import time)       │
               └─────────────────────┘
@@ -69,20 +69,26 @@ Takes an ordered list of paths.  Files are loaded and merged in order.
 ```python
 provider = cfg.get("session.provider")       # → "ollama"
 port     = cfg.get("session.port", 11434)    # → 11434 if key missing
+name    = cfg.get("db.connections[0].name")  # → list indexing supported
 ```
 
-Dot-separated path into the nested dict.  Returns `default` if any segment
-is missing or the intermediate value is not a dict.
+Dot-separated path into the nested dict.  Supports `[N]` notation for
+list indexing — e.g. `"db.connections[0].name"` navigates into the first
+list item.  Returns `default` if any segment is missing, the list index is
+out of range, or the intermediate value is not a dict.
 
 ### `set(key, value)`
 
 ```python
 cfg.set("session.model", "deepseek-v4-pro")
 cfg.set("ui.theme.colors.primary", "#ff0000")
+cfg.set("db.connections[0].name", "Renamed DB")  # list indexing supported
 ```
 
-Creates intermediate dicts as needed.  Does **not** validate types or check
-for conflicts — the UI layer handles validation.
+Creates intermediate dicts as needed.  Supports `[N]` notation for list
+indexing — the list and all intermediate dicts must already exist; `set()`
+will not create new list entries.  Does **not** validate types or check for
+conflicts — the UI layer handles validation.
 
 ### `defaults(d)`
 
@@ -120,16 +126,61 @@ paths.
 
 ---
 
+## Module-Level Defaults
+
+In addition to the instance method `cfg.defaults()`, there is a module-level
+registry for defaults that modules populate at **import time**, before a
+`Config` instance even exists.  Bootstrap collects these and feeds them into
+the `Config` instance.
+
+### `register_defaults(d)`
+
+```python
+from core.config import register_defaults
+
+register_defaults({
+    "session": {"provider": "ollama", "model": "llama3.2"}
+})
+```
+
+Accumulates defaults into a module-level dict.  Call this at module import
+time (i.e. at the top level of your module, not inside a function).
+Later calls deep-merge with earlier ones; later values win on conflict.
+
+### `get_registered_defaults()`
+
+```python
+from core.config import get_registered_defaults
+
+defaults = get_registered_defaults()  # → deep copy of accumulated defaults
+```
+
+Returns a deep copy of all defaults registered via `register_defaults()`.
+Used by bootstrap to feed accumulated defaults into a `Config` instance.
+
+### `reset_registered_defaults()`
+
+```python
+from core.config import reset_registered_defaults
+```
+
+Clears all accumulated module-level defaults.  Use between tests to prevent
+cross-test pollution.
+
+---
+
 ## Usage Patterns
 
 ### Bootstrap sequence
 
 ```python
+from core.config import Config, get_registered_defaults
+
 # 1. Create config (loads files immediately)
 cfg = Config([global_path, project_path])
 
-# 2. Register defaults (modules do this at import time)
-cfg.defaults({...})
+# 2. Feed in module-level defaults (registered by modules at import time)
+cfg.defaults(get_registered_defaults())
 
 # 3. Apply defaults (fills gaps without touching user values)
 cfg.apply_defaults()
@@ -138,12 +189,17 @@ cfg.apply_defaults()
 ### Module registering defaults
 
 ```python
-# In core/providers/base.py (imported before bootstrap)
-from core.config import config  # if singleton exists
-config.defaults({
+# In core/providers/ollama.py (imported before bootstrap)
+from core.config import register_defaults
+
+register_defaults({
     "session": {"provider": "ollama", "model": "llama3.2"}
 })
 ```
+
+Modules call `register_defaults()` at import time.  The bootstrap sequence
+then collects these via `get_registered_defaults()` and feeds them into
+the `Config` instance.  There is no global `config` singleton to import.
 
 ### Reading in a widget
 
@@ -155,7 +211,8 @@ theme = self.app.context.config.get("ui.theme", "default")
 
 ## Internal Helpers
 
-These are module-level functions, not exported as public API:
+These are module-level functions used internally by `Config`.  They are
+not part of the public API:
 
 | Function | Purpose |
 |---|---|

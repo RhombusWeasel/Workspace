@@ -5,12 +5,4 @@ ConfigPanel {
 
 ConfigPanel Tree {
     height: 1fr;
-    margin-bottom: 1;
-}
-
-ConfigPanel #config-save {
-    dock: bottom;
-    margin-bottom: 1;
-    min-width: 10;
-    background: $success 20%;
 }

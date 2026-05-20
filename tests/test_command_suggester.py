@@ -2,7 +2,7 @@
 
 import pytest
 
-from ui.chat.command_suggester import CommandSuggester
+from plugins.chat.command_suggester import CommandSuggester
 from core.commands import register_command, reset_commands
 
 

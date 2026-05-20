@@ -1,7 +1,7 @@
 {
   "session": {
     "provider": "ollama",
-    "model": "deepseek-v4-pro:cloud"
+    "model": "glm-5.1:cloud"
   },
   "ollama": {
     "base_url": "http://localhost:11434"

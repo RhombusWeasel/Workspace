@@ -22,7 +22,7 @@ WorkspaceTabs .tab-item {
 WorkspaceTabs .tab-content {
     height: 1fr;
     width: 1fr;
-    border: tall $surface-lighten-1;
+    border: round $surface-lighten-1;
 }
 
 /* Internal tab-bar button widgets */

@@ -19,6 +19,7 @@ import os
 from textual.app import ComposeResult
 from textual.widgets import TextArea
 from textual.widget import Widget
+from textual.binding import Binding
 
 from ui.workspace.tabs import TabState
 from utils.dom_id import path_to_id
@@ -92,6 +93,10 @@ class FileEditor(Widget):
         path and handles any per-tab state.
     """
 
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Save", show=True),
+    ]
+
     def __init__(self, state: FileEditorState):
         super().__init__(id=path_to_id("fv", state.filepath))
         self.state = state
@@ -156,9 +161,21 @@ class FileEditor(Widget):
             content = text_area.text
             with open(self.state.filepath, "w", encoding="utf-8") as f:
                 f.write(content)
+            # Sync cached content so is_modified resets after save
+            self._content = content
             return True
         except (OSError, Exception):
             return False
+
+    def action_save(self) -> None:
+        """Handle the Ctrl+S keybinding — save the file and notify the user."""
+        if self.save_file():
+            self.app.notify(f"Saved {os.path.basename(self.state.filepath)}")
+        else:
+            self.app.notify(
+                f"Failed to save {os.path.basename(self.state.filepath)}",
+                severity="error",
+            )
 
     @property
     def is_modified(self) -> bool:

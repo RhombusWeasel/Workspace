@@ -6,6 +6,11 @@ hierarchically.  Leaf nodes display ``key: value`` and have an
 for inline editing.  Changes are applied immediately via
 :meth:`Config.set()`.
 
+Dicts and lists are expanded as branch nodes, giving a full tree
+view of structured data like database connections.  Only scalar leaf
+values have Edit buttons — complex structures are navigable but
+edited through their own dedicated UI.
+
 Editing ``ui.theme`` also applies the theme live via ``app.theme``,
 which triggers ``CodyApp._watch_theme`` to persist the choice.
 
@@ -14,7 +19,18 @@ Tree structure::
     Configuration
     ├── session
     │   ├── provider: "ollama"
-    │   └── model: "llama3"
+│   └── model: "llama3"
+    ├── db
+    │   ├── default_page_size: 200
+    │   └── connections
+    │       ├── 0: My DB
+    │       │   ├── id: "abc123"
+    │       │   ├── name: "My DB"
+    │       │   ├── provider_type: "sqlite"
+    │       │   └── params
+    │       │       └── path: "/data/db.sqlite"
+    │       └── 1: Other DB
+    │           └── ...
     └── ui
         └── theme: "haxor"
 """
@@ -25,7 +41,6 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button
 
 from core.config import Config
 from ui.sidebar.registry import register_sidebar_tab
@@ -121,15 +136,14 @@ def _coerce_value(raw: str, original: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@register_sidebar_tab(name="config", icon="", side="left",
+@register_sidebar_tab(name="config", icon="", side="left",
                        tooltip="Config")
 class ConfigPanel(Container):
     """Sidebar panel showing configuration as an editable tree.
 
     Provides:
     * :meth:`set_config` — bind a :class:`Config` instance and rebuild.
-    * Inline **Edit** buttons on every leaf node.
-    * **Save** button to persist changes to disk.
+    * Inline **Edit** buttons on every leaf node — changes auto-persist.
     """
 
     def __init__(self):
@@ -153,7 +167,6 @@ class ConfigPanel(Container):
     def compose(self) -> ComposeResult:
         self._tree = Tree(TreeNode("config-root", "Configuration"))
         yield self._tree
-        yield Button("Save", id="config-save", variant="primary")
 
     # ------------------------------------------------------------------
     # Mount
@@ -181,38 +194,56 @@ class ConfigPanel(Container):
         self._tree.set_root(root)
         self._tree.expand_all()
 
+    # ------------------------------------------------------------------
+    # Tree building
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sanitize_id(dot_key: str) -> str:
+        """Turn a dot-path into a valid DOM id."""
+        return f"cfg-{dot_key.replace('.', '-').replace('[', '-').replace(']', '')}"
+
     def _build_children(
         self, prefix: str, data: dict[str, Any]
     ) -> list[TreeNode]:
         """Convert a dict to tree nodes.
 
-        * Scalar values → leaf :class:`TreeNode` with an **Edit** button.
-        * Dict values → branch :class:`TreeNode` with nested children.
+        * Dict values → branch node with nested children.
+        * List values → branch node with indexed children.
+        * Scalar values → leaf node with an **Edit** button.
         """
         nodes: list[TreeNode] = []
 
         for key, value in data.items():
             dot_key = f"{prefix}.{key}" if prefix else key
-            # Sanitize for DOM — dots, braces are illegal in Textual IDs
-            node_id = f"cfg-{dot_key.replace('.', '-').replace('[', '-').replace(']', '')}"
+            node_id = self._sanitize_id(dot_key)
 
             if isinstance(value, dict):
-                # Branch node
                 child_nodes = self._build_children(dot_key, value)
                 nodes.append(
                     TreeNode(
                         node_id,
-                        f"\uf07b  {key}",  # folder icon
+                        f"{key}",  # folder icon
                         children=child_nodes,
                         data={"key": dot_key, "type": "dict"},
                     )
                 )
-            else:
-                # Leaf node with Edit button
+            elif isinstance(value, list):
+                child_nodes = self._build_list_children(dot_key, value)
                 nodes.append(
                     TreeNode(
                         node_id,
-                        f"  {key}: {_format_value(value)}",
+                        f"{key}  [{len(value)}]",
+                        children=child_nodes,
+                        data={"key": dot_key, "type": "list"},
+                    )
+                )
+            else:
+                # Scalar leaf node with Edit button
+                nodes.append(
+                    TreeNode(
+                        node_id,
+                        f"{key}: {_format_value(value)}",
                         data={"key": dot_key, "type": "value",
                               "value": value},
                         buttons=_edit_button(),
@@ -221,22 +252,60 @@ class ConfigPanel(Container):
 
         return nodes
 
-    # ------------------------------------------------------------------
-    # Button handlers — Save
-    # ------------------------------------------------------------------
+    def _build_list_children(
+        self, prefix: str, items: list[Any]
+    ) -> list[TreeNode]:
+        """Convert a list to tree nodes.
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle Save button press."""
-        if event.button.id == "config-save":
-            event.stop()
-            if self._config is not None:
-                try:
-                    self._config.save()
-                except Exception:
-                    pass
+        Each item becomes a child node.  Dict items are expanded as
+        branches (using ``name`` or ``id`` for the label if available).
+        Scalar items appear as editable leaves.
+        """
+        nodes: list[TreeNode] = []
+
+        for i, item in enumerate(items):
+            dot_key = f"{prefix}[{i}]"
+            node_id = self._sanitize_id(dot_key)
+
+            if isinstance(item, dict):
+                # Use a human-friendly label if the dict has name or id
+                heading = item.get("name") or item.get("id") or f"item {i}"
+                child_nodes = self._build_children(dot_key, item)
+                nodes.append(
+                    TreeNode(
+                        node_id,
+                        f"[{i}] {heading}",
+                        children=child_nodes,
+                        data={"key": dot_key, "type": "dict"},
+                    )
+                )
+            elif isinstance(item, list):
+                # Nested list
+                child_nodes = self._build_list_children(dot_key, item)
+                nodes.append(
+                    TreeNode(
+                        node_id,
+                        f"[{i}]  [{len(item)}]",
+                        children=child_nodes,
+                        data={"key": dot_key, "type": "list"},
+                    )
+                )
+            else:
+                # Scalar list item — editable
+                nodes.append(
+                    TreeNode(
+                        node_id,
+                        f"[{i}]: {_format_value(item)}",
+                        data={"key": dot_key, "type": "value",
+                              "value": item},
+                        buttons=_edit_button(),
+                    )
+                )
+
+        return nodes
 
     # ------------------------------------------------------------------
-    # ActionRow button handlers — Edit
+    # Edit handlers
     # ------------------------------------------------------------------
 
     def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
@@ -283,9 +352,10 @@ class ConfigPanel(Container):
             # Coerce the new value
             new_value = _coerce_value(result, current)
 
-            # Apply
+            # Apply & auto-persist
             if self._config is not None:
                 self._config.set(dot_key, new_value)
+                self._config.save()
                 self._rebuild()
 
                 # Live-apply config keys that have immediate UI effects.

@@ -170,8 +170,8 @@ class TestConfigPanelRendering:
             c_node = b_node.children[0]
             assert "c" in c_node.label and "deep" in c_node.label
 
-    async def test_list_values_displayed_as_json(self, tmp_path):
-        """List values are displayed using their repr form."""
+    async def test_list_values_are_expandable_branches(self, tmp_path):
+        """List values become branch nodes with indexed children."""
         from ui.sidebar.panels.config_panel import ConfigPanel
         cfg = _make_config({"allowed_hosts": ["localhost", "127.0.0.1"]}, tmp_path)
 
@@ -193,7 +193,11 @@ class TestConfigPanelRendering:
 
             rows = tree.query(TreeRow)
             labels = [r.node.label for r in rows]
-            assert any("allowed_hosts" in l and "[" in l for l in labels)
+            # List node shows key and item count
+            assert any("allowed_hosts" in l and "[2]" in l for l in labels), f"labels: {labels}"
+            # Scalar items inside the list show as indexed leaves
+            assert any("[0]" in l and "localhost" in l for l in labels), f"labels: {labels}"
+            assert any("[1]" in l and "127.0.0.1" in l for l in labels), f"labels: {labels}"
 
     async def test_boolean_values_preserved(self, tmp_path):
         """Boolean values are shown correctly and not confused with strings."""
@@ -266,10 +270,11 @@ class TestConfigPanelRendering:
             # Root exists but has no children
             assert tree.root.label == "Configuration"
 
-    async def test_save_button_present(self, tmp_path):
-        """A Save button is present to persist changes."""
+    async def test_edit_auto_persists_changes(self, tmp_path):
+        """Editing a value automatically persists it to the config file."""
         from ui.sidebar.panels.config_panel import ConfigPanel
-        cfg = _make_config({"x": 1}, tmp_path)
+        from textual.widgets import Input
+        cfg = _make_config({"editable": "before"}, tmp_path)
 
         class TestApp(App):
             CSS = "ConfigPanel { width: 40; height: 100%; }"
@@ -282,9 +287,26 @@ class TestConfigPanelRendering:
         async with TestApp().run_test() as pilot:
             await pilot.pause()
 
-            btn = pilot.app.query_one("#config-save", Button)
-            assert btn is not None
-            assert "Save" in btn.label.plain
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            all_btns = list(panel.query("Button"))
+            edit_btn = _find_edit_button(all_btns)
+            edit_btn.press()
+            await pilot.pause()
+
+            screen = pilot.app.screen
+            modal_input = screen.query_one("#modal-input", Input)
+            modal_input.value = "after"
+            ok_btn = screen.query_one("#btn-ok", Button)
+            ok_btn.press()
+            await pilot.pause()
+
+            # Value should be persisted to the config file
+            cfg2 = Config(cfg._paths)
+            assert cfg2.get("editable") == "after"
 
     async def test_set_config_rebuilds_tree(self, tmp_path):
         """Calling set_config with a different config replaces the tree data."""
@@ -534,55 +556,6 @@ class TestConfigPanelEditing:
             # The nested key should be updated via dot-path (type coerced from int original)
             assert cfg.get("database.port") == 9999
 
-    async def test_save_persists_changes(self, tmp_path):
-        """Pressing Save writes changes to the config file."""
-        from ui.sidebar.panels.config_panel import ConfigPanel
-        cfg = _make_config({"editable": "before"}, tmp_path)
-
-        class TestApp(App):
-            CSS = "ConfigPanel { width: 40; height: 100%; }"
-
-            def compose(self):
-                self.panel = ConfigPanel()
-                self.panel.set_config(cfg)
-                yield self.panel
-
-        async with TestApp().run_test() as pilot:
-            await pilot.pause()
-
-            # Change a value
-            cfg.set("editable", "after")
-
-            # Press Save
-            save_btn = pilot.app.query_one("#config-save", Button)
-            save_btn.press()
-            await pilot.pause()
-
-            # Reload from file and check
-            cfg2 = Config(cfg._paths)
-            assert cfg2.get("editable") == "after"
-
-    async def test_save_with_no_paths_does_not_crash(self, tmp_path):
-        """Save when Config has no writable paths is a no-op."""
-        from ui.sidebar.panels.config_panel import ConfigPanel
-        cfg = Config([])  # no paths
-
-        class TestApp(App):
-            CSS = "ConfigPanel { width: 40; height: 100%; }"
-
-            def compose(self):
-                self.panel = ConfigPanel()
-                self.panel.set_config(cfg)
-                yield self.panel
-
-        async with TestApp().run_test() as pilot:
-            await pilot.pause()
-
-            # Should not raise
-            save_btn = pilot.app.query_one("#config-save", Button)
-            save_btn.press()
-            await pilot.pause()
-
     async def test_type_coercion_boolean_input(self, tmp_path):
         """Input 'true' or 'false' should be coerced to Python bool."""
         from ui.sidebar.panels.config_panel import ConfigPanel
@@ -754,3 +727,222 @@ class TestConfigPanelAppContext:
             branch_labels = [c.label for c in tree.root.children]
             assert any("session" in l for l in branch_labels)
             assert any("ui" in l for l in branch_labels)
+
+
+class TestConfigPanelListRendering:
+    """Tests for the config panel rendering lists and dicts-in-lists."""
+
+    async def test_list_becomes_branch_with_count(self, tmp_path):
+        """A list config value becomes a branch node showing the item count."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config({"ports": [80, 443, 8080]}, tmp_path)
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            # List node shows key and count
+            list_node = tree.root.children[0]
+            assert "ports" in list_node.label
+            assert "[3]" in list_node.label
+            # List has 3 leaf children (one per scalar item)
+            assert len(list_node.children) == 3
+
+    async def test_list_of_scalar_items_are_editable_leaves(self, tmp_path):
+        """Scalar list items appear as editable leaf nodes with [N] indices."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config({"colors": ["red", "green", "blue"]}, tmp_path)
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            list_node = tree.root.children[0]
+            child_labels = [c.label for c in list_node.children]
+            assert any("[0]" in l and "red" in l for l in child_labels)
+            assert any("[1]" in l and "green" in l for l in child_labels)
+            assert any("[2]" in l and "blue" in l for l in child_labels)
+
+            # Scalar items have Edit buttons
+            for child in list_node.children:
+                assert len(child.buttons) > 0, f"Leaf '{child.label}' has no edit button"
+
+    async def test_list_of_dicts_uses_name_or_id_heading(self, tmp_path):
+        """Dict items in a list use 'name' or 'id' for the branch label."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config(
+            {"connections": [
+                {"id": "abc1", "name": "My DB", "provider_type": "sqlite"},
+                {"id": "def2", "name": "Other DB", "provider_type": "sqlite"},
+            ]},
+            tmp_path,
+        )
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            # Top-level list node
+            list_node = tree.root.children[0]
+            assert "connections" in list_node.label
+            assert "[2]" in list_node.label
+
+            # Dict items should use 'name' as heading
+            child_labels = [c.label for c in list_node.children]
+            assert any("[0]" in l and "My DB" in l for l in child_labels)
+            assert any("[1]" in l and "Other DB" in l for l in child_labels)
+
+    async def test_list_of_dicts_expands_nested_fields(self, tmp_path):
+        """Dict items inside a list are fully expandable."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config(
+            {"servers": [{"host": "db.local", "port": 5432}]},
+            tmp_path,
+        )
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            # Drill down: root → servers → [0] → host / port
+            servers_node = tree.root.children[0]
+            item_node = servers_node.children[0]
+            field_labels = [c.label for c in item_node.children]
+            assert any("host" in l and "db.local" in l for l in field_labels)
+            assert any("port" in l and "5432" in l for l in field_labels)
+
+    async def test_empty_list_shows_zero_count(self, tmp_path):
+        """An empty list renders as a branch with [0]."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config({"connections": []}, tmp_path)
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            list_node = tree.root.children[0]
+            assert "connections" in list_node.label
+            assert "[0]" in list_node.label
+            assert len(list_node.children) == 0
+
+    async def test_nested_dict_inside_list_inside_dict(self, tmp_path):
+        """Deep nesting: dict → list → dict → dict."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config(
+            {"db": {"connections": [{"params": {"path": "/data/db.sqlite"}}]}},
+            tmp_path,
+        )
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            # Drill down: root → db → connections → [0] → params → path
+            db_node = tree.root.children[0]
+            conn_node = db_node.children[0]  # connections list
+            item_node = conn_node.children[0]  # [0] dict
+            params_node = item_node.children[0]  # params dict
+            path_leaf = params_node.children[0]  # path: /data/db.sqlite
+            assert "path" in path_leaf.label
+            assert "/data/db.sqlite" in path_leaf.label
+
+    async def test_dict_without_name_or_id_uses_item_index(self, tmp_path):
+        """Dict items without 'name' or 'id' fall back to 'item N' label."""
+        from ui.sidebar.panels.config_panel import ConfigPanel
+        cfg = _make_config(
+            {"items": [{"x": 1, "y": 2}]},
+            tmp_path,
+        )
+
+        class TestApp(App):
+            CSS = "ConfigPanel { width: 40; height: 100%; }"
+
+            def compose(self):
+                self.panel = ConfigPanel()
+                self.panel.set_config(cfg)
+                yield self.panel
+
+        async with TestApp().run_test() as pilot:
+            await pilot.pause()
+
+            panel = pilot.app.panel
+            tree = panel.query_one(Tree)
+            tree.expand_all()
+            await pilot.pause()
+
+            # The dict item should use fallback label 'item 0'
+            items_node = tree.root.children[0]
+            item_label = items_node.children[0].label
+            assert "item 0" in item_label

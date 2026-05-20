@@ -1,0 +1,22 @@
+GitPanel {
+    height: 100%;
+    background: $surface;
+}
+
+GitPanel .section-header {
+    color: $text;
+    text-style: bold;
+    padding: 1 2;
+    background: $surface;
+}
+
+GitPanel .git-panel-actions {
+    height: 3;
+    padding: 0 1;
+    dock: bottom;
+    background: $surface;
+}
+
+GitPanel .git-panel-actions Button {
+    margin: 0 1;
+}

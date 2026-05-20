@@ -10,6 +10,7 @@ dependencies = [
     "pyperclip>=1.11.0",
     "textual[syntax]>=8.2.5",
     "textual-terminal",
+    "requests>=2.34.2",
 ]
 
 [dependency-groups]

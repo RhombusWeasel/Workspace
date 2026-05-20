@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from core.config import Config
     from core.database import DatabaseManager
-    from core.db_connections import ConnectionManager
     from core.leader import LeaderRegistry
     from core.skills import SkillManager
     from core.vault import VaultManager
@@ -26,12 +25,21 @@ class AppContext:
     skill manager remain module-level singletons — their self-registration
     patterns (``@register_tool()``, ``SkillManager()``) are essential for
     drop-in extensibility.
+
+    ``db_connections`` is populated by the plugin system — the database
+    plugin's ``PLUGIN_SERVICES`` factory creates the ConnectionManager
+    at bootstrap time.
     """
 
     config: Config | None = None
     skills: SkillManager | None = None
     database: DatabaseManager | None = None
-    db_connections: ConnectionManager | None = None
+    db_connections: Any = None
+    """Connection manager provided by the database plugin.
+
+    Set to a :class:`ConnectionManager` instance by bootstrap if the
+    database plugin is loaded; ``None`` otherwise.
+    """
     leader: LeaderRegistry | None = None
     vault: VaultManager | None = None
     working_directory: str = ""

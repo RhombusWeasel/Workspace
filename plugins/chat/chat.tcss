@@ -1,0 +1,110 @@
+ChatManager {
+    height: 1fr;
+}
+
+ChatManager > Vertical {
+    height: 1fr;
+}
+
+ChatDisplay {
+    height: 1fr;
+}
+
+ChatDisplay Tree {
+    height: 1fr;
+}
+
+/* --------------------------------------------------------------- */
+/* Command Palette — popup between display and input                 */
+/* --------------------------------------------------------------- */
+
+CommandPalette {
+    display: none;
+    width: 1fr;
+    height: auto;
+    max-height: 10;
+    background: $surface;
+    border-bottom: tall $surface-lighten-1;
+    padding: 0;
+    overflow-y: auto;
+}
+
+CommandPalette.-visible {
+    display: block;
+}
+
+CommandPalette #cmd-option-list {
+    max-height: 10;
+}
+
+/* --------------------------------------------------------------- */
+/* File Palette — popup between display and input                     */
+/* --------------------------------------------------------------- */
+
+FilePalette {
+    display: none;
+    width: 1fr;
+    height: auto;
+    max-height: 10;
+    background: $surface;
+    border-bottom: tall $surface-lighten-1;
+    padding: 0;
+    overflow-y: auto;
+}
+
+FilePalette.-visible {
+    display: block;
+}
+
+FilePalette #file-option-list {
+    max-height: 10;
+}
+
+/* --------------------------------------------------------------- */
+/* Chat input — bar at the bottom with text input and action button  */
+/* --------------------------------------------------------------- */
+
+ChatInput {
+    height: auto;
+}
+
+ChatInput .chat-input-bar-horizontal {
+    height: auto;
+    width: 1fr;
+    layout: horizontal;
+}
+
+ChatInput .chat-input-bar-horizontal > Input {
+    width: 1fr;
+    border-top: heavy $surface-lighten-1;
+    border-bottom: heavy $surface-lighten-1;
+    border-left: none;
+    border-right: none;
+}
+
+ChatInput .chat-input-bar-horizontal > Input:focus {
+    border-top: heavy $primary;
+    border-bottom: heavy $primary;
+    border-left: none;
+    border-right: none;
+}
+
+ChatInput .chat-input-bar-horizontal > .chat-action-btn {
+    min-width: 3;
+    width: 3;
+    height: 3;
+    border: none !important;
+    background: transparent;
+}
+
+ChatInput .chat-input-bar-horizontal > .chat-action-btn:hover {
+    background: $primary-lighten-1;
+}
+
+ChatInput .chat-input-bar-horizontal > .chat-action-btn.-send {
+    color: $success;
+}
+
+ChatInput .chat-input-bar-horizontal > .chat-action-btn.-abort {
+    color: $error;
+}
