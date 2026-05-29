@@ -25,8 +25,7 @@ conftest.py            ← Pytest fixtures
 │   ├── agent.py       ← Agent: system prompt builder, tool-calling loop, streaming
 │   ├── commands.py    ← Slash-command loader (CommandBase, 3-tier discovery)
 │   ├── config.py      ← Config manager (layered JSON, dot-path, diff-save, registered defaults)
-│   ├── database.py    ← Database manager (SQLite provider, connection manager, CRUD)
-│   ├── db_connections.py ← Multi-connection DB query manager (provider abstraction, pagination)
+│   ├── database.py    ← Database manager (SQLite provider, CRUD)
 │   ├── events.py      ← CodyEvent message system (leader chords → workspace/terminal actions)
 │   ├── leader.py      ← Leader registry (tree of keyboard chords for Ctrl+Space menu)
 │   ├── pane_tree.py   ← Pure data model: LeafPane, SplitPane, split/close/navigate ops
@@ -39,31 +38,15 @@ conftest.py            ← Pytest fixtures
 │       ├── base.py    ← BaseProvider protocol, ChatResponse, StreamChunk, TokenUsage
 │       ├── ollama.py  ← Ollama provider (chat + stream_chat, vault key resolution)
 │       └── __init__.py ← Provider registry + config defaults
-├── ui/                ← All Textual widgets
-│   ├── chat/
-│   ├── db/
-│   │   ├── __init__.py
-│   │   └── connection_form.py ← Dynamic multi-field modal for DB connections
-│   │   ├── chat_display.py      ← ChatDisplay: Tree-based streaming message display
-│   │   ├── chat_input.py        ← ChatInput: Input wrapper, posts ChatSubmitted
-│   │   ├── chat_manager.py      ← ChatManager: orchestrates streaming loop + history/DB
-│   │   ├── command_palette.py   ← CommandPalette: fuzzy-search overlay for slash commands
-│   │   ├── command_suggester.py ← CommandSuggester: autocomplete for command palette
-│   │   └── __init__.py
+├── ui/                ← All Textual widgets (no plugin-level content)
 │   ├── sidebar/
 │   │   ├── registry.py          ← Sidebar tab registration + discovery
 │   │   ├── sidebar.py           ← Sidebar + SidebarContainer (hides/shows)
 │   │   ├── panels/
-│   │   │   ├── chat_panel.py    ← ChatPanel sidebar tab wrapping ChatManager
 │   │   │   ├── config_panel.py  ← ConfigPanel: editable config tree with actions
-│   │   │   ├── db_panel.py      ← DBPanel: connection browser tree with actions
 │   │   │   ├── file_browser.py  ← FileBrowser: lazy directory tree with actions
 │   │   │   ├── vault_panel.py   ← VaultPanel: encrypted credential + note management
 │   │   │   └── __init__.py
-│   │   └── __init__.py
-│   ├── terminal/
-│   │   ├── terminal.py          ← TerminalView + TerminalSnapshot (PTY lifecycle + screen/display preservation)
-│   │   ├── terminal_handler.py  ← Leader chord handler for terminal.open
 │   │   └── __init__.py
 │   ├── tree/
 │   │   ├── tree.py              ← Generic Tree widget (flat expandable list, CSS hide/show)
@@ -78,7 +61,6 @@ conftest.py            ← Pytest fixtures
 │   ├── workspace/
 │   │   ├── file_edit_handler.py ← Event handler wiring file.open → workspace tab
 │   │   ├── file_editor.py      ← FileEditor widget (read/write files in a tab)
-│   │   ├── query_editor.py     ← QueryEditor: split-pane SQL editor + results table
 │   │   ├── tabs.py             ← WorkspaceTabs (tab bar + content area, closeable tabs, state persistence)
 │   │   ├── welcome_view.py    ← WelcomeView (landing page for empty panes)
 │   │   ├── workspace.py       ← Recursive split-pane workspace + recomposition logic
@@ -86,20 +68,41 @@ conftest.py            ← Pytest fixtures
 │   └── __init__.py
 ├── plugins/           ← Bundled plugins (3-tier discoverable)
 │   ├── __init__.py
-│   └── database/
+│   ├── chat/          ← AI chat workspace tab plugin
+│   │   ├── SKILL.md
+│   │   ├── __init__.py
+│   │   ├── chat_display.py      ← ChatDisplay: Tree-based streaming message display
+│   │   ├── chat_input.py        ← ChatInput: Input wrapper, posts ChatSubmitted
+│   │   ├── chat_manager.py      ← ChatManager: orchestrates streaming loop + history/DB
+│   │   ├── chat_tab.py          ← ChatTabState, content factory, leader chords
+│   │   ├── commands.py          ← /clear, /new slash commands
+│   │   ├── command_palette.py   ← CommandPalette: fuzzy-search overlay for slash commands
+│   │   ├── command_suggester.py ← CommandSuggester: autocomplete for command palette
+│   │   ├── file_palette.py      ← File picker overlay
+│   │   ├── file_suggester.py    ← File path autocomplete
+│   │   ├── stream_section.py    ← Streaming section data model
+│   │   ├── tool_format.py       ← Tool call formatting utilities
+│   │   └── chat.tcss
+│   ├── database/
+│   │   ├── SKILL.md
+│   │   ├── __init__.py
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   ├── db_connections.py  ← DBProvider ABC, ConnectionManager
+│   │   │   └── providers/
+│   │   │       ├── __init__.py  ← Auto-discovers .py files at import time
+│   │   │       └── sqlite.py   ← @register_provider class SQLiteProvider
+│   │   ├── db_panel.py
+│   │   ├── connection_form.py
+│   │   ├── query_editor.py
+│   │   ├── services.py
+│   │   └── database.tcss
+│   └── terminal/      ← Embedded terminal workspace tab plugin
 │       ├── SKILL.md
 │       ├── __init__.py
-│       ├── core/
-│       │   ├── __init__.py
-│       │   ├── db_connections.py
-│       │   └── providers/
-│       │       ├── __init__.py  ← Auto-discovers .py files at import time
-│       │       └── sqlite.py   ← @register_provider class SQLiteProvider
-│       ├── db_panel.py
-│       ├── connection_form.py
-│       ├── query_editor.py
-│       ├── services.py
-│       └── database.tcss
+│       ├── terminal.py           ← TerminalView: PTY lifecycle + screen/display preservation
+│       ├── terminal_handler.py   ← Leader chord handler for terminal.open
+│       └── terminal.tcss
 ├── tools/              ← Agent-callable tools (registered at startup)
 │   ├── activate_skill.py    ← Load SKILL.md content into context
 │   ├── read_file.py         ← Read file tool
@@ -435,7 +438,7 @@ been resolved during the rewrite:
 │   └── write_file.py
 ├── ui/
 │   ├── __init__.py
-│   ├── chat/
+│   ├── chat/                   ← Moved to plugins/chat/
 │   │   ├── __init__.py
 │   │   ├── chat_display.py
 │   │   ├── chat_input.py
@@ -448,11 +451,10 @@ been resolved during the rewrite:
 │   │   ├── sidebar.py
 │   │   └── panels/
 │   │       ├── __init__.py
-│   │       ├── chat_panel.py
 │   │       ├── config_panel.py
 │   │       ├── file_browser.py
 │   │       └── vault_panel.py
-│   ├── terminal/
+│   ├── terminal/               ← Moved to plugins/terminal/
 │   │   ├── __init__.py
 │   │   ├── terminal.py
 │   │   └── terminal_handler.py
@@ -637,7 +639,7 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
 
 ### Step 15: Chat UI ✅
 
- - `ui/chat/` — ChatInput, ChatDisplay (Tree-based streaming), ChatManager, ChatPanel
+ - ``plugins/chat/`` — ChatInput, ChatDisplay (Tree-based streaming), ChatManager, ChatPanel
  - ChatDisplay uses Tree widget with content nodes; streaming via section updates
  - 44 tests across chat components
  - **COMPLETE**
@@ -738,7 +740,7 @@ was skipped (`_preserving=True`). `TerminalSnapshot.stop_emulator()` handles thi
  - `ui/sidebar/` — registry, Sidebar, SidebarContainer, panels/vault_panel, chat_panel, config_panel, file_browser
  - File browser uses Tree with lazy loading (`NodeNeedsChildren`) and action buttons
  - **COMPLETE**
- - **DONE:** `ui/db/` — DB sidebar tab + connection form + query editor (see Step 21)
+ - **DONE:** ``plugins/database/`` — DB sidebar tab + connection form + query editor (see Step 21)
 
 ### Step 18: main.py (wires everything)
 
@@ -803,7 +805,7 @@ Phase 1b: Config integration ✅
  - `bootstrap.py` — added `_init_db_connections()` phase
  - No changes to `core/database.py` (connections are in config, not DB tables)
 
-Phase 2: UI — Connection Form Modal (`ui/db/connection_form.py`) ✅
+Phase 2: UI — Connection Form Modal (``plugins/database/connection_form.py``) ✅
  - `ConnectionFormModal` — dynamic form driven by `provider.form_fields()`
  - Provider type dropdown auto-generates form fields
  - File-type fields get a Browse button
@@ -829,7 +831,7 @@ Phase 4: UI — Query Editor (`ui/workspace/query_editor.py`) ✅
  - Pre-filled queries from table browser auto-execute after mount
 
 Phase 5: Integration ✅
- - `ui/db/db_handler.py` — event handler `db.open_query` opens QueryEditor in workspace tabs (same pattern as `file_edit_handler.py`)
+ - ``plugins/database/db_panel.py`` — event handler ``db.open_query`` opens QueryEditor in workspace tabs
  - `ui/sidebar/panels/__init__.py` — imports `db_panel` for registration
  - CSS files: `db_panel.tcss`, `connection_form.tcss`, `query_editor.tcss`
  - 46 unit tests in `tests/test_db_connections.py`
@@ -891,14 +893,69 @@ This keeps the tool surface small, which is critical for LLM tool-selection accu
 
 ---
 
+### Step 23: Merge Plugins into Skills
+
+Eliminate the separate `plugins/` concept by merging all plugins into the skills
+system. Skills and plugins were functionally identical — both discovered via
+SKILL.md, both used 3-tier paths, both registered UI components. The git skill
+already demonstrated the merged concept (agent knowledge + UI components).
+
+The ``skill`` name is retained for ecosystem compatibility with Anthropic's
+skill specification (ClaudeCode, Codex), so users can install ecosystem skills
+without modification.
+
+Phase 1: Move plugin directories under `skills/` ⬜
+ - `plugins/chat/` → `skills/chat/`
+ - `plugins/terminal/` → `skills/terminal/`
+ - `plugins/database/` → `skills/database/`
+ - Delete `plugins/` directory and `plugins/__init__.py`
+
+Phase 2: Rewrite all `from plugins.X` imports to `from skills.X` ⬜
+ - Across moved skill files (~30 internal references)
+ - Across all test files (~25 references)
+ - `bootstrap.py` docstrings/comments
+
+Phase 3: Upgrade `core/skills.py` — unified skill loading ⬜
+ - `__init__.py` is **optional** — test for it, use if present, skip if not
+ - Ecosystem skills (Anthropic spec): no `__init__.py` → discovered, body available, scripts runnable
+ - UI skills: have `__init__.py` → full `importlib` load with `__path__`/`__package__` handling
+ - Add `get_skill_init_dirs()` — returns skill dirs containing `__init__.py`
+ - Add `SKILL_SERVICES` convention (replaces `PLUGIN_SERVICES`)
+ - Import error isolation for all skill Python loading
+
+Phase 4: Rewrite `bootstrap.py` ⬜
+ - Remove `_load_plugins()` phase entirely
+ - Expand skill loading to handle `__init__.py` entry points + `SKILL_SERVICES`
+ - Register `skills` as package in `sys.modules` (replaces `plugins` package)
+ - Services from `SKILL_SERVICES` wired into AppContext
+
+Phase 5: Simplify `core/paths.py` ⬜
+ - Remove `discover_plugins()` and `collect_plugin_tcss()`
+ - Remove `skip_plugins` parameter from `_find_tcss()` and `collect_tcss()`
+ - CSS collection walks everything uniformly (skills/ already included)
+
+Phase 6: Update tests ⬜
+ - All existing tests updated with new import paths
+ - New tests for optional `__init__.py` loading, `SKILL_SERVICES`, import error isolation
+
+**Design Decision — Unified Skill Concept:** Skills are the sole extension
+mechanism. A skill is a directory with a `SKILL.md` manifest. It can optionally
+have: agent knowledge (body), `__init__.py` (Python entry point for UI),
+`components/` (flat UI modules), `scripts/` (agent-runnable), `tools/` (agent
+tools), `cmd/` (slash commands), and `SKILL_SERVICES` (AppContext injection).
+Ecosystem skills without `__init__.py` work out of the box — they are discovered
+and their body is available for agent activation.
+
+---
+
 ## 8. Remaining Work
 
 | Item | Status | Notes |
 |---|---|---|
 | `core/themes.py` — 3-tier theme discovery | **DEFERRED** | Not blocking; CSS themes work manually |
-| `core/git.py` — git checkpoint utilities | **DONE** | Replaced by git skill (Step 22) — checkpoint scripts + `run_skill` instead of core module |
-| `FormModal` — structured input with labeled fields | **DONE** | `ConnectionFormModal` in Step 21 serves this purpose |
-| `ui/db/` — DB sidebar tab | **DONE** | Step 21: connection tree, schema browser, query editor |
+| `core/git.py` — git checkpoint utilities | **DONE** | Replaced by git skill (Step 22) |
+| `FormModal` — structured input with labeled fields | **DONE** | `ConnectionFormModal` in Step 21 |
+| ``plugins/database/`` — DB sidebar tab | **DONE** | Step 21 (now under skills/database/) |
 | App-wide CSS polish | **REMAINING** | Visual refinement of spacing, colors, borders |
 | Theme registration | **REMAINING** | Dynamic theme switching via config |
 | Smoke test | **REMAINING** | Full app launch + basic interaction test |

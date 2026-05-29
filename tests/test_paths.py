@@ -2,9 +2,7 @@
 
 import os
 
-import os
-
-from core.paths import agents_dir, cody_dir, collect_tcss, collect_plugin_tcss, discover_plugins, resolve
+from core.paths import agents_dir, cody_dir, collect_tcss, resolve
 
 
 class TestCodyDir:
@@ -146,75 +144,31 @@ class TestCollectTcss:
         assert len(result) == 1
         assert result[0].endswith(".tcss")
 
-
-class TestDiscoverPlugins:
-    def test_returns_list(self, tmp_path):
-        result = discover_plugins(str(tmp_path))
-        assert isinstance(result, list)
-
-    def test_empty_when_no_plugins_dir(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(tmp_path / "nonexistent"))
-        monkeypatch.setattr("core.paths.agents_dir", lambda: str(tmp_path / "nonexistent"))
-        result = discover_plugins(str(tmp_path))
-        assert result == []
-
-    def test_discovers_plugin_with_skill_md(self, tmp_path, monkeypatch):
+    def test_collects_skill_tcss(self, tmp_path, monkeypatch):
+        """CSS from skills/ directories is collected alongside core UI CSS."""
         cody = tmp_path / "cody"
-        os.makedirs(cody / "plugins" / "database")
-        (cody / "plugins" / "database" / "SKILL.md").write_text("---\nname: database\n---")
-        (cody / "plugins" / "database" / "__init__.py").write_text("")
+        os.makedirs(cody / "ui")
+        os.makedirs(cody / "skills" / "chat")
+        (cody / "ui" / "core.tcss").write_text("/* core */")
+        (cody / "skills" / "chat" / "chat.tcss").write_text("/* chat skill */")
 
         monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
-        result = discover_plugins(str(tmp_path))
 
-        assert len(result) == 1
-        assert result[0].endswith(os.path.join("plugins", "database"))
+        result = collect_tcss(str(tmp_path))
+        assert any("core.tcss" in p for p in result)
+        assert any("chat.tcss" in p for p in result)
 
-    def test_skips_dirs_without_skill_md(self, tmp_path, monkeypatch):
+    def test_collects_skill_tcss_from_nested_subpackages(self, tmp_path, monkeypatch):
+        """CSS from skills with nested sub-packages (e.g. database) is collected."""
         cody = tmp_path / "cody"
-        os.makedirs(cody / "plugins" / "notaplugin")
-        (cody / "plugins" / "notaplugin" / "__init__.py").write_text("")
-        # No SKILL.md — should be skipped
+        os.makedirs(cody / "skills" / "database" / "core" / "providers")
+        (cody / "skills" / "database" / "db.tcss").write_text("/* db */")
+        (cody / "skills" / "database" / "core" / "providers" / "sqlite.tcss").write_text("/* sqlite */")
 
         monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
-        result = discover_plugins(str(tmp_path))
-        assert result == []
 
-    def test_later_tier_overrides_earlier(self, tmp_path, monkeypatch):
-        cody = tmp_path / "cody"
-        agents = tmp_path / "agents"
-        os.makedirs(cody / "plugins" / "database")
-        os.makedirs(agents / "plugins" / "database")
-        (cody / "plugins" / "database" / "SKILL.md").write_text("---\nname: database-v1\n---")
-        (agents / "plugins" / "database" / "SKILL.md").write_text("---\nname: database-v2\n---")
-
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
-        monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents))
-
-        result = discover_plugins(str(tmp_path))
-        assert len(result) == 1
-        # The agents tier should override cody tier
-        assert "agents" in result[0]
-
-
-class TestCollectPluginTcss:
-    def test_returns_list(self, tmp_path):
-        result = collect_plugin_tcss(str(tmp_path))
-        assert isinstance(result, list)
-
-    def test_empty_when_no_plugins(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(tmp_path / "nonexistent"))
-        monkeypatch.setattr("core.paths.agents_dir", lambda: str(tmp_path / "nonexistent"))
-        result = collect_plugin_tcss(str(tmp_path))
-        assert result == []
-
-    def test_collects_tcss_from_plugin_dir(self, tmp_path, monkeypatch):
-        cody = tmp_path / "cody"
-        os.makedirs(cody / "plugins" / "database")
-        (cody / "plugins" / "database" / "SKILL.md").write_text("---\nname: database\n---")
-        (cody / "plugins" / "database" / "database.tcss").write_text("DBPanel {}")
-
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
-        result = collect_plugin_tcss(str(tmp_path))
-
-        assert any("database.tcss" in p for p in result)
+        result = collect_tcss(str(tmp_path))
+        db_tcss = [p for p in result if "db.tcss" in p]
+        sqlite_tcss = [p for p in result if "sqlite.tcss" in p]
+        assert len(db_tcss) == 1
+        assert len(sqlite_tcss) == 1

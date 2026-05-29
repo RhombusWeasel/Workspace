@@ -12,9 +12,9 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Markdown
 
-from plugins.chat.chat_manager import ChatManager
-from plugins.chat.chat_input import ChatInput
-from plugins.chat.chat_display import ChatDisplay
+from skills.chat.chat_manager import ChatManager
+from skills.chat.chat_input import ChatInput
+from skills.chat.chat_display import ChatDisplay
 from ui.tree.tree import Tree
 
 

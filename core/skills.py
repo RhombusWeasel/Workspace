@@ -107,6 +107,8 @@ class SkillManager:
         self._skills: dict[str, Skill] = {}
         # Set of *enabled* skill names (computed during scan).
         self._enabled: set[str] = set()
+        # Service factories collected by bootstrap during skill loading.
+        self._services: dict = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -162,9 +164,10 @@ class SkillManager:
                 self._enabled.add(name)
 
     def reset(self) -> None:
-        """Clear all skills and enabled state (for test isolation)."""
+        """Clear all skills, enabled state, and services (for test isolation)."""
         self._skills.clear()
         self._enabled.clear()
+        self._services.clear()
 
     # ------------------------------------------------------------------
     # Queries
@@ -207,6 +210,40 @@ class SkillManager:
             if os.path.isdir(tools_dir):
                 result.append(tools_dir)
         return result
+
+    def get_skill_init_dirs(self) -> list[str]:
+        """Return base directories of enabled skills that contain ``__init__.py``.
+
+        Skills with ``__init__.py`` are loaded at bootstrap with full
+        ``importlib`` treatment (``__path__``/``__package__`` handling)
+        so that nested sub-imports work.  Ecosystem skills (Anthropic spec)
+        do not have ``__init__.py`` — they are discovered and their body is
+        available for agent activation, but no Python code runs.
+        """
+        result: list[str] = []
+        for name in sorted(self._enabled):
+            init_path = os.path.join(self._skills[name].base_dir, "__init__.py")
+            if os.path.isfile(init_path):
+                result.append(self._skills[name].base_dir)
+        return result
+
+    def get_skill_services(self) -> dict:
+        """Return collected ``SKILL_SERVICES`` from loaded skill modules.
+
+        Services are populated by bootstrap's ``_load_skill_init_files()``
+        phase, which sets them via :meth:`set_skill_services`.  Returns an
+        empty dict before bootstrap has run the loading phase.
+        """
+        return dict(self._services)
+
+    def set_skill_services(self, services: dict) -> None:
+        """Store service factories collected during bootstrap loading.
+
+        Called by :meth:`bootstrap.Bootstrap._load_skill_init_files` after
+        each skill's ``__init__.py`` is loaded and its ``SKILL_SERVICES``
+        dict is collected.
+        """
+        self._services = dict(services)
 
     def get_skill_components_dirs(self) -> list[str]:
         """Return paths to ``components/`` directories that exist inside enabled skills.

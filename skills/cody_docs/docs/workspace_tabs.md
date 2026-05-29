@@ -266,8 +266,10 @@ class MyTabState(TabState):
 
 ### Step 2: Create the content widget
 
-The widget receives its `TabState` and uses it to set up its state.
-For Pattern 3, implement `flush_state()` and `set_state()`.
+The widget receives its ``TabState`` and uses it to set up its state.
+For Pattern 2 or 3, implement ``flush_state()``.  For Pattern 3, also
+implement ``set_state()`` to restore data into the widget's own fields
+after recomposition.
 
 ```python
 # plugins/my_plugin/my_widget.py
@@ -299,9 +301,11 @@ class MyWidget(Widget):
 
 ### Step 3: Define the content factory
 
-The content factory is a **callable** that receives a `TabState` and
-returns a new widget instance.  `WorkspaceTabs` calls it during
-`restore_state()` to create the fresh widget after recomposition.
+The content factory is a **callable** that receives a ``TabState`` and
+returns a new widget instance (or ``None``).  ``WorkspaceTabs`` calls it
+during ``restore_state()`` to create the fresh widget after recomposition.
+The factory may return ``None``; if it does, the tab's previous content
+widget is reused without recreation.
 
 ```python
 # plugins/my_plugin/my_tab.py (continued)

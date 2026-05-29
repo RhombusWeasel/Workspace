@@ -18,68 +18,70 @@ Called once at application startup.
 ```python
 class Bootstrap:
     def run(self) -> AppContext:
-        self._ensure_project_on_path()       # Phase 0
-        config = self._init_config()         # Phase 1
-        skills = self._discover_skills(config)  # Phase 2
-        self._load_tools(skills)             # Phase 3
-        self._load_commands(skills)          # Phase 4b
-        self._load_sidebar_panels(skills)    # Phase 4
-        database = self._init_database(config)  # Phase 5
-        vault = self._init_vault()           # Phase 6
-        plugin_services = self._load_plugins(config, vault)  # Phase 7
-        self._init_leader()                   # Phase 8
-        css_paths = self._collect_css()       # Phase 9
+        self._ensure_project_on_path()
+        config = self._init_config()
+        skills = self._discover_skills(config)
+        self._load_tools(skills)
+        self._load_commands(skills)
+        self._load_sidebar_panels(skills)
+        database = self._init_database(config)
+        vault = self._init_vault()
+        plugin_services = self._load_plugins(config, vault)
+        self._init_leader()
+        css_paths = self._collect_css()
         ...
 ```
 
-### Phase 0 — `sys.path` guarantee
+### Phase 0 — ``sys.path`` guarantee
 
-Adds the Cody project root to `sys.path` so that plugins (which may live
-outside the installation directory) can `from core.config import Config`
+Adds the Cody project root to ``sys.path`` so that plugins (which may live
+outside the installation directory) can ``from core.config import Config``
 regardless of their physical location.
 
-### Phase 1 — Config
+### Config
 
 Loads layered JSON config files from three tiers (bundled → user →
-project), feeds in module-level defaults from `get_registered_defaults()`,
-and calls `apply_defaults()`.
+project), feeds in module-level defaults from ``get_registered_defaults()``,
+and calls ``apply_defaults()``.
 
-### Phase 2 — Skills
+### Skills
 
-Scans the three `skills/` directories for `SKILL.md` files.  Builds the
+Scans the three ``skills/`` directories for ``SKILL.md`` files.  Builds the
 enabled skill catalog.
 
-### Phase 3 — Tools
+### Tools
 
-Imports every `.py` file in `tools/` (core) and each enabled skill's
-`tools/` subdirectory.  `@register_tool()` decorators fire at import time.
+Imports every ``.py`` file in ``tools/`` (core) and each enabled skill's
+``tools/`` subdirectory.  ``@register_tool()`` decorators fire at import time.
 
-### Phase 4 — Commands
+### Commands
 
-Imports every `.py` file in `cmd/` (core) and each enabled skill's `cmd/`
-subdirectory.  `@register_command()` decorators fire at import time.
+Imports every ``.py`` file in ``cmd/`` (core) and each enabled skill's ``cmd/``
+subdirectory.  ``@register_command()`` decorators fire at import time.
 
-### Phase 4a — Sidebar panels
+### Sidebar panels
 
-Imports sidebar panel modules to trigger `@register_sidebar_tab()`
-decorators.
+Imports sidebar panel modules to trigger ``@register_sidebar_tab()``
+decorators.  Also imports skill ``components/`` directories, which can
+contain sidebar panels, event handlers, leader chords, and config
+defaults using the same decorator pattern as plugins.
 
-### Phase 5 — Database
+### Database
 
-Creates a `DatabaseManager` backed by SQLite.  The database path comes
-from `config.database.path` or defaults to `{working_dir}/cody_data.db`.
+Creates a ``DatabaseManager`` backed by SQLite.  The database path comes
+from ``config.database.path`` or defaults to ``{working_dir}/cody_data.db``.
 
-### Phase 6 — Vault
+### Vault
 
-Creates a `VaultManager` with the master vault at `~/.agents/vault.enc`
+Creates a ``VaultManager`` with the master vault at ``~/.agents/vault.enc``
 and working directory for the local vault.
 
-### Phase 7 — Plugins
+### Plugins
 
-Discovers and loads plugins from the three `plugins/` tiers.  Each
-plugin's `__init__.py` is imported, which triggers all side-effect
-registrations.  Plugin factories declared in `PLUGIN_SERVICES` are
-called with `(config, vault)` and the results collected.
+Discovers and loads plugins from the three ``plugins/`` tiers.  Each
+plugin's ``__init__.py`` is imported, which triggers all side-effect
+registrations.  Plugin factories declared in ``PLUGIN_SERVICES`` are
+called with ``(config, vault)`` and the results collected.
 
 Plugin loading order:
 1. Register a synthetic `plugins` package in `sys.modules`
@@ -91,14 +93,14 @@ Plugin loading order:
    - Collect `PLUGIN_SERVICES` if declared
 3. Collect `.tcss` files from all plugin directories
 
-### Phase 8 — Leader chords
+### Leader chords
 
 Registers core leader chords (workspace split/close).  Plugin leader
-chords are registered during Phase 7 (at plugin load time).
+chords are registered during plugin loading (at plugin load time).
 
-### Phase 9 — CSS collection
+### CSS collection
 
-Collects `.tcss` files from all three tiers (core) and all plugin
+Collects ``.tcss`` files from all three tiers (core) and all plugin
 directories.  These paths are passed to the Textual app for CSS loading.
 
 ---

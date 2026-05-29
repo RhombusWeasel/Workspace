@@ -14,10 +14,10 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input
 
-from plugins.chat.chat_manager import ChatManager
-from plugins.chat.chat_input import ChatInput
-from plugins.chat.chat_display import ChatDisplay
-from plugins.chat.chat_tab import ChatTabState, _create_chat_content
+from skills.chat.chat_manager import ChatManager
+from skills.chat.chat_input import ChatInput
+from skills.chat.chat_display import ChatDisplay
+from skills.chat.chat_tab import ChatTabState, _create_chat_content
 from ui.tree.tree import Tree
 
 

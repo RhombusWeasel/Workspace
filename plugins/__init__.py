@@ -1,1 +1,0 @@
-"""Cody plugins — feature modules loaded dynamically via the 3-tier plugin system."""

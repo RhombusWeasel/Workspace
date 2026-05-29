@@ -130,7 +130,7 @@ The bootstrap sequence in `Bootstrap._load_plugins()`:
    - If the module declares a `PLUGIN_SERVICES` dict, each factory callable
      is called with `(config, vault)` and the result is collected.
 
-4. **CSS collection** — `collect_plugin_tcss()` gathers `.tcss` files from
+4. **CSS collection** — ``paths.collect_plugin_tcss()`` gathers ``.tcss`` files from
    all discovered plugin directories for Textual's CSS cascade.
 
 5. **Requirement installation** — If the SKILL.md declares a `requirements`

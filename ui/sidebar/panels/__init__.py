@@ -1,8 +1,8 @@
 """Sidebar panels.
 
 Core panels are imported here so their @register_sidebar_tab decorators
-fire at import time.  Plugin panels (e.g. database) are registered by
-the plugin system during bootstrap.
+fire at import time.  Skill panels (e.g. database) are registered by
+the skill system during bootstrap.
 """
 
 # Core panels — sidebar tabs that are always present.

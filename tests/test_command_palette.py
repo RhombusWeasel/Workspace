@@ -4,7 +4,7 @@ import pytest
 from textual.app import App, ComposeResult
 
 from core.commands import register_command, reset_commands
-from plugins.chat.command_palette import CommandPalette
+from skills.chat.command_palette import CommandPalette
 
 
 # ---------------------------------------------------------------------------

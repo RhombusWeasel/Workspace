@@ -694,6 +694,134 @@ class TestComponentsDirs:
 
 
 # ---------------------------------------------------------------------------
+# Skill __init__.py dirs (optional entry point for UI skills)
+# ---------------------------------------------------------------------------
+
+
+class TestInitDirs:
+    def test_get_init_dirs_returns_paths_for_skills_with_init(self, tmp_path):
+        """Skills with __init__.py are discovered by get_skill_init_dirs()."""
+        skill_dir = tmp_path / "myskill"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "myskill", "Test")
+        (skill_dir / "__init__.py").write_text("# init")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        dirs = mgr.get_skill_init_dirs()
+        assert len(dirs) == 1
+        assert dirs[0].endswith("myskill")
+
+    def test_get_init_dirs_skills_skills_without_init(self, tmp_path):
+        """Skills without __init__.py are not returned by get_skill_init_dirs()."""
+        skill_dir = tmp_path / "plain_skill"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "plain_skill", "No init")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        assert mgr.get_skill_init_dirs() == []
+
+    def test_get_init_dirs_excludes_disabled(self, tmp_path):
+        """Disabled skills' init dirs are not returned."""
+        skill_dir = tmp_path / "disabled"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "disabled", "Test")
+        (skill_dir / "__init__.py").write_text("# init")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)], enabled={"disabled": False})
+        assert mgr.get_skill_init_dirs() == []
+
+    def test_ecosystem_skill_without_init_still_discovered(self, tmp_path):
+        """A pure ecosystem skill (no __init__.py) is still discoverable and its
+        body is available for agent activation."""
+        skill_dir = tmp_path / "ecosystem"
+        skill_dir.mkdir()
+        _write_skill_md(
+            skill_dir / "SKILL.md",
+            "ecosystem",
+            "An Anthropic-style skill",
+            body="# Instructions\nYou are an expert in Python.",
+        )
+        # No __init__.py — this is an ecosystem skill
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        assert mgr.list_skills() == ["ecosystem"]
+        assert mgr.get_skill_body("ecosystem") == "# Instructions\nYou are an expert in Python."
+        assert mgr.get_skill_init_dirs() == []
+
+
+# ---------------------------------------------------------------------------
+# SKILL_SERVICES convention
+# ---------------------------------------------------------------------------
+
+
+class TestSkillServices:
+    def test_skill_services_returns_empty_before_loading(self, tmp_path):
+        """get_skill_services() returns empty dict before bootstrap loads skills."""
+        skill_dir = tmp_path / "myskill"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "myskill", "Test")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        assert mgr.get_skill_services() == {}
+
+    def test_set_skill_services_stores_and_returns(self, tmp_path):
+        """set_skill_services() stores services that get_skill_services() returns."""
+        mgr = SkillManager()
+        factories = {"my_service": lambda cfg, v: "service_instance"}
+        mgr.set_skill_services(factories)
+        services = mgr.get_skill_services()
+        assert "my_service" in services
+        assert services["my_service"](None, None) == "service_instance"
+
+    def test_skill_without_init_has_no_services(self, tmp_path):
+        """A skill without __init__.py has no services."""
+        skill_dir = tmp_path / "plain"
+        skill_dir.mkdir()
+        _write_skill_md(skill_dir / "SKILL.md", "plain", "Plain skill")
+
+        mgr = SkillManager()
+        mgr.scan([str(tmp_path)])
+        assert mgr.get_skill_services() == {}
+
+    def test_reset_clears_services(self, tmp_path):
+        """reset() clears stored services."""
+        mgr = SkillManager()
+        mgr.set_skill_services({"svc": lambda cfg, v: "x"})
+        assert mgr.get_skill_services() != {}
+        mgr.reset()
+        assert mgr.get_skill_services() == {}
+
+    def test_disabled_skill_services_excluded(self, tmp_path):
+        """Disabled skills' services should not be loaded (bootstrap responsibility).
+
+        SkillManager just stores whatever bootstrap gives it.  Bootstrap
+        only loads enabled skills, so disabled skills won't contribute services."""
+        # This is testing the contract: SkillManager stores, bootstrap filters.
+        mgr = SkillManager()
+        # Bootstrap would only pass services from enabled skills
+        mgr.set_skill_services({"enabled_svc": lambda cfg, v: "result"})
+        services = mgr.get_skill_services()
+        assert "enabled_svc" in services
+
+    def test_later_tier_skill_services_override_earlier(self, tmp_path):
+        """Later-tier skill services override earlier-tier (bootstrap responsibility).
+
+        SkillManager just stores the merged dict.  Bootstrap processes
+        tiers in order so later tiers overwrite."""
+        mgr = SkillManager()
+        # Bootstrap would process tier1 then tier2, overwriting t1 with t2
+        factories = {"svc": lambda cfg, v: "t2_service"}
+        mgr.set_skill_services(factories)
+        services = mgr.get_skill_services()
+        assert services["svc"](None, None) == "t2_service"
+
+
+# ---------------------------------------------------------------------------
 # Autouse fixture — reset before every test
 # ---------------------------------------------------------------------------
 

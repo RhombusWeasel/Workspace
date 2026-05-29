@@ -14,9 +14,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Label
 
-from plugins.terminal.terminal import TerminalState, TerminalView, next_terminal_id
+from skills.terminal.terminal import TerminalState, TerminalView, next_terminal_id
 from ui.workspace.tabs import TabState, WorkspaceTabs, SavedTab, SavedTabState, _TabLabelButton, _TabCloseButton
-from plugins.database.query_editor import QueryEditorState
+from skills.database.query_editor import QueryEditorState
 from ui.workspace.file_editor import FileEditorState
 from ui.workspace.workspace import Workspace, PaneContainer
 from core.pane_tree import get_leaves
@@ -215,7 +215,7 @@ class TestTerminalView:
         mock_pty = MagicMock()
         tv._pty = mock_pty
 
-        with patch("plugins.terminal.terminal.asyncio.create_task"):
+        with patch("skills.terminal.terminal.asyncio.create_task"):
             tv.on_mount()
 
         # The emulator should be adopted by the PTY
@@ -298,7 +298,7 @@ class TestQueryEditorState:
 
     def test_state_roundtrip(self):
         """QueryEditorState captures all editor state fields."""
-        from plugins.database.core.db_connections import QueryResult
+        from skills.database.core.db_connections import QueryResult
 
         result = QueryResult(
             columns=["id", "name"],
@@ -337,7 +337,7 @@ class TestQueryEditorState:
 
     def test_state_with_pagination(self):
         """QueryEditorState pagination state roundtrips correctly."""
-        from plugins.database.core.db_connections import QueryResult
+        from skills.database.core.db_connections import QueryResult
 
         result = QueryResult(
             columns=["id"],

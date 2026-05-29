@@ -6,7 +6,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import OptionList
 
-from plugins.chat.file_palette import FilePalette, scan_files, _IGNORED_NAMES
+from skills.chat.file_palette import FilePalette, scan_files, _IGNORED_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestScanFiles:
 
     async def test_display_cap_in_populate(self):
         """FilePalette caps display to _DISPLAY_CAP entries."""
-        from plugins.chat.file_palette import _DISPLAY_CAP
+        from skills.chat.file_palette import _DISPLAY_CAP
         tmpdir = tempfile.mkdtemp()
         try:
             # Create more files than the display cap

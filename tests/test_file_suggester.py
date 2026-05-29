@@ -4,8 +4,8 @@ import os
 import tempfile
 import pytest
 
-from plugins.chat.file_suggester import FileSuggester
-from plugins.chat.file_palette import scan_files
+from skills.chat.file_suggester import FileSuggester
+from skills.chat.file_palette import scan_files
 
 
 # ---------------------------------------------------------------------------

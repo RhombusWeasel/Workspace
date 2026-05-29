@@ -22,7 +22,7 @@ from ui.workspace import Workspace
 from core.terminal_passthrough import register_terminal_passthrough
 
 # App-level keys that must pass through the terminal widget.
-register_terminal_passthrough({"ctrl+q", "ctrl+space"})
+register_terminal_passthrough({"ctrl+q", "ctrl+space", "ctrl+@"})
 
 # ---------------------------------------------------------------------------
 # Config defaults — UI theme
@@ -60,7 +60,7 @@ class CodyApp(App):
 
     BINDINGS = [
         ("ctrl+q", "quit", "Quit"),
-        ("ctrl+space", "open_leader", "Leader"),
+        ("ctrl+space,ctrl+@", "open_leader", "Leader"),
     ]
 
     def __init__(self, context: AppContext):

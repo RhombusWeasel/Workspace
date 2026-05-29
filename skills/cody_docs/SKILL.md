@@ -54,6 +54,7 @@ run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
 | Agent | `docs/agent.md` | Tool-calling loop, template rendering, streaming, abort support |
 | Database | `docs/database.md` | Chat/message/agent/todo CRUD, section storage, history reconstruction |
 | Sidebar registry | `docs/sidebar.md` | `@register_sidebar_tab`, tab discovery, Nerd Font icons |
+| Terminal | `docs/terminal.md` | `TerminalView`, `TerminalState`, PTY lifecycle, screen/display preservation |
 | UI widgets | `docs/ui_widgets.md` | `InputModal`, `ConfirmModal`, pushing modals from handlers/tools/commands |
 | Bootstrap | `docs/bootstrap.md` | Startup sequence, phase ordering, error isolation |
 

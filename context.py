@@ -26,24 +26,32 @@ class AppContext:
     patterns (``@register_tool()``, ``SkillManager()``) are essential for
     drop-in extensibility.
 
-    ``db_connections`` is populated by the plugin system — the database
-    plugin's ``PLUGIN_SERVICES`` factory creates the ConnectionManager
-    at bootstrap time.
+    Skill services declared via ``SKILL_SERVICES`` are wired into the
+    ``services`` dict by bootstrap.  Known services (like ``db_connections``)
+    also get a dedicated field for convenience and type-safety.
     """
 
     config: Config | None = None
     skills: SkillManager | None = None
     database: DatabaseManager | None = None
     db_connections: Any = None
-    """Connection manager provided by the database plugin.
+    """Connection manager provided by the database skill.
 
     Set to a :class:`ConnectionManager` instance by bootstrap if the
-    database plugin is loaded; ``None`` otherwise.
+    database skill is loaded; ``None`` otherwise.
     """
     leader: LeaderRegistry | None = None
     vault: VaultManager | None = None
     working_directory: str = ""
     css_paths: list[str] = field(default_factory=list)
+    services: dict[str, Any] = field(default_factory=dict)
+    """Dynamic service instances from skill ``SKILL_SERVICES`` declarations.
+
+    Bootstrap populates this dict after loading skill ``__init__.py`` files
+    and calling their service factories.  Known services like
+    ``db_connections`` also get dedicated fields for convenience, but
+    everything lives in ``services`` too for generic access.
+    """
     app: Any = None
     """The running :class:`CodyApp` instance.
 
