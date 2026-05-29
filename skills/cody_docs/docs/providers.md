@@ -228,7 +228,7 @@ register_defaults({
 
 ### 5. Wire into application startup
 
-The provider is instantiated in the chat plugin (or wherever the `Agent`
+The provider is instantiated in the chat skill (or wherever the `Agent`
 is created).  The config's `session.provider` key determines which
 provider class to use.  Update the provider selection logic to recognize
 your new provider name.

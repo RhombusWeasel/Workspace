@@ -39,7 +39,7 @@ class AppContext:
 | `config` | `Config \| None` | Bootstrap | Layered JSON config with dot-path access |
 | `skills` | `SkillManager \| None` | Bootstrap | Skill catalog (discovered SKILL.md files) |
 | `database` | `DatabaseManager \| None` | Bootstrap | SQLite persistence (chats, messages, agents, todos) |
-| `db_connections` | `Any` | Database plugin | `ConnectionManager` if the database plugin is loaded; `None` otherwise |
+| `db_connections` | `Any` | Database skill | `ConnectionManager` if the database skill is loaded; `None` otherwise |
 | `leader` | `LeaderRegistry \| None` | Bootstrap | Keyboard chord tree for `Ctrl+Space` menu |
 | `vault` | `VaultManager \| None` | Bootstrap | Encrypted credential + secure note storage |
 | `working_directory` | `str` | Bootstrap | Current working directory (project root) |
@@ -51,12 +51,12 @@ class AppContext:
 ## Plugin-Provided Services
 
 The `db_connections` field is a special case — it's populated by the
-database plugin via the `PLUGIN_SERVICES` mechanism.  Plugins that need
+database skill via the `SKILL_SERVICES` mechanism.  Plugins that need
 to provide services to other parts of the application follow this pattern:
 
-1. The plugin declares `PLUGIN_SERVICES` in its `__init__.py`:
+1. The skill declares `SKILL_SERVICES` in its `__init__.py`:
    ```python
-   PLUGIN_SERVICES = {
+   SKILL_SERVICES = {
        "db_connections": create_connection_manager,
    }
    ```
@@ -66,14 +66,14 @@ to provide services to other parts of the application follow this pattern:
 
 3. The result is injected into `AppContext`:
    ```python
-   db_connections = plugin_services.get("db_connections")
+   db_connections = skill_services.get("db_connections")
    ```
 
-To add a new service from a plugin, you need to:
+To add a new service from a skill, you need to:
 
 1. Add the field to `AppContext` with type `Any` and default `None`
-2. Extract it from `plugin_services` in `Bootstrap.run()`
-3. Document the field so other plugins know it exists
+2. Extract it from `skill_services` in `Bootstrap.run()`
+3. Document the field so other skills know it exists
 
 ---
 
@@ -84,9 +84,9 @@ To add a new service from a plugin, you need to:
 Handlers receive `ctx` as the second parameter:
 
 ```python
-@register_handler("my_plugin.action")
+@register_handler("my_skill.action")
 def _on_action(data: dict, ctx: AppContext) -> None:
-    value = ctx.config.get("my_plugin.setting", "default")
+    value = ctx.config.get("my_skill.setting", "default")
     if ctx.vault and not ctx.vault.is_locked():
         cred = ctx.vault.get_credential("service_name")
     wd = ctx.working_directory
@@ -135,7 +135,7 @@ all services in order:
 
 ```python
 def run(self) -> AppContext:
-    self._ensure_project_on_path()   # sys.path for plugin imports
+    self._ensure_project_on_path()   # sys.path for skill imports
     config = self._init_config()     # Layered JSON → Config
     skills = self._discover_skills(config)
     self._load_tools(skills)         # @register_tool decorators fire
@@ -143,11 +143,11 @@ def run(self) -> AppContext:
     self._load_sidebar_panels(skills) # @register_sidebar_tab decorators fire
     database = self._init_database(config)
     vault = self._init_vault()
-    plugin_services = self._load_plugins(config, vault)
+    skill_services = self._load_skills(config, vault)
     self._init_leader()              # Leader chord registration
     css_paths = self._collect_css()   # .tcss from all tiers
 
-    db_connections = plugin_services.get("db_connections")
+    db_connections = skill_services.get("db_connections")
 
     return AppContext(
         config=config,
@@ -176,7 +176,7 @@ The `CodyApp` constructor then receives this context and sets
    constructor.  Handlers check `ctx.app is not None` before using it.
 
 3. **Plugin services are opt-in** — Not every field is populated by every
-   installation.  `db_connections` is `None` if the database plugin is
+   installation.  `db_connections` is `None` if the database skill is
    disabled.  Consumers check for `None`.
 
 4. **No global singleton** — `AppContext` is passed around, not imported

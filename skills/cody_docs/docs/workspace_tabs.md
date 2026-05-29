@@ -9,7 +9,7 @@
 
 Workspace tabs provide a tabbed container within each workspace pane.
 Each pane starts with a `WorkspaceTabs` widget that can host multiple
-closeable, switchable tabs.  Tabs are opened by plugins (chat, terminal,
+closeable, switchable tabs.  Tabs are opened by skills (chat, terminal,
 file editor) or by user actions (file browser, leader chords).
 
 The critical feature is **state persistence across workspace
@@ -247,7 +247,7 @@ reconstruct itself after recomposition.  Choose a pattern from the
 table above.
 
 ```python
-# plugins/my_plugin/my_tab.py
+# skills/my_skill/my_tab.py
 from ui.workspace.tabs import TabState
 
 
@@ -272,9 +272,9 @@ implement ``set_state()`` to restore data into the widget's own fields
 after recomposition.
 
 ```python
-# plugins/my_plugin/my_widget.py
+# skills/my_skill/my_widget.py
 from textual.widget import Widget
-from plugins.my_plugin.my_tab import MyTabState
+from skills.my_skill.my_tab import MyTabState
 
 
 class MyWidget(Widget):
@@ -308,7 +308,7 @@ The factory may return ``None``; if it does, the tab's previous content
 widget is reused without recreation.
 
 ```python
-# plugins/my_plugin/my_tab.py (continued)
+# skills/my_skill/my_tab.py (continued)
 
 def _create_my_content(state: TabState) -> MyWidget:
     """Content factory — creates MyWidget from TabState."""
@@ -319,20 +319,20 @@ def _create_my_content(state: TabState) -> MyWidget:
 
 ### Step 4: Open the tab programmatically
 
-When your plugin needs to open a tab (e.g. in response to an event
+When your skill needs to open a tab (e.g. in response to an event
 or leader chord), find the focused pane's `WorkspaceTabs` and call
 `open_tab()`.
 
 ```python
-# plugins/my_plugin/my_handler.py
+# skills/my_skill/my_handler.py
 from core.events import register_handler
 from context import AppContext
-from plugins.my_plugin.my_tab import MyTabState, _create_my_content
+from skills.my_skill.my_tab import MyTabState, _create_my_content
 
 
-@register_handler("my_plugin.open")
+@register_handler("my_skill.open")
 def _on_my_open(data: dict, ctx: AppContext) -> None:
-    """Open a my-plugin tab in the focused workspace pane."""
+    """Open a my-skill tab in the focused workspace pane."""
     app = ctx.app
     if app is None:
         return
@@ -388,16 +388,16 @@ If your tab should be openable via a keyboard chord, register it
 with the leader registry.
 
 ```python
-# plugins/my_plugin/__init__.py
+# skills/my_skill/__init__.py
 from core.leader import register_submenu, register_action
-from plugins.my_plugin.my_handler import _on_my_open  # noqa: F401
+from skills.my_skill.my_handler import _on_my_open  # noqa: F401
 
 def register_my_leader_chords() -> None:
     register_submenu(["m"], "My Plugin")
     register_action(
         ["m", "o"],
         "Open",
-        event_type="my_plugin.open",
+        event_type="my_skill.open",
     )
 
 register_my_leader_chords()
@@ -405,8 +405,8 @@ register_my_leader_chords()
 
 ### Step 6: Add CSS (optional)
 
-Create a `.tcss` file in your plugin directory for widget styling.
-Textual CSS is collected automatically from plugin directories.
+Create a `.tcss` file in your skill directory for widget styling.
+Textual CSS is collected automatically from skill directories.
 
 ---
 
@@ -562,19 +562,19 @@ Activates a tab without closing others.  Posts `TabSwitched` message.
 
 ## Example: Complete Minimal Tab Plugin
 
-This example shows a complete workspace-tab-backed plugin using
+This example shows a complete workspace-tab-backed skill using
 Pattern 1 (state on disk).  It opens a text file viewer in a
 workspace tab.
 
 ```python
-# plugins/viewer/__init__.py
-"""Viewer plugin — opens text files in workspace tabs."""
-from plugins.viewer.viewer_tab import register_viewer_chords  # noqa: F401
+# skills/viewer/__init__.py
+"""Viewer skill — opens text files in workspace tabs."""
+from skills.viewer.viewer_tab import register_viewer_chords  # noqa: F401
 register_viewer_chords()
 ```
 
 ```python
-# plugins/viewer/viewer_tab.py
+# skills/viewer/viewer_tab.py
 from ui.workspace.tabs import TabState, WorkspaceTabs
 from core.events import register_handler
 from core.leader import register_submenu, register_action

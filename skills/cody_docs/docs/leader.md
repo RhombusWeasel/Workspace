@@ -61,7 +61,7 @@ register_submenu(["m"], "My Plugin")
 register_action(
     ["m", "o"],
     "Open",
-    event_type="my_plugin.open",
+    event_type="my_skill.open",
 )
 ```
 
@@ -148,7 +148,7 @@ There are two ways a leaf action can dispatch:
    register_action(["q"], "Quit", handler=lambda: os._exit(0))
    ```
 
-**Prefer event-driven** for plugin actions — it decouples the leader
+**Prefer event-driven** for skill actions — it decouples the leader
 chord definition from the handler logic.
 
 ---
@@ -161,18 +161,18 @@ The registry detects conflicts at registration time:
 - Registering a submenu where an action already exists → `ValueError`
 - Registering an action at a path that already has an action → `ValueError`
 
-These are raised immediately during plugin loading, so conflicts are
+These are raised immediately during skill loading, so conflicts are
 caught at startup rather than at runtime.
 
 ---
 
 ## Registering Chords from a Plugin
 
-Chords are typically registered from the plugin's `__init__.py` at load
+Chords are typically registered from the skill's `__init__.py` at load
 time:
 
 ```python
-# plugins/my_plugin/__init__.py
+# skills/my_skill/__init__.py
 """My Plugin."""
 
 from core.leader import register_submenu, register_action
@@ -182,13 +182,13 @@ register_submenu(["m"], "My Plugin")
 register_action(
     ["m", "o"],
     "Open",
-    event_type="my_plugin.open",
+    event_type="my_skill.open",
     labels={"m": "My Plugin"},
 )
 register_action(
     ["m", "c"],
     "Configure",
-    event_type="my_plugin.configure",
+    event_type="my_skill.configure",
 )
 ```
 
@@ -202,7 +202,7 @@ blank in the overlay.
 
 When the embedded terminal has focus, it captures all key events.
 Key bindings registered with `register_terminal_passthrough()` bypass
-the terminal and reach the app's key handling.  If your plugin adds
+the terminal and reach the app's key handling.  If your skill adds
 key bindings (via Textual's `BINDINGS`), register the same keys:
 
 ```python
@@ -257,7 +257,7 @@ def test_leader_registry():
 
 2. **Event-driven by default** — Leaf actions post `CodyEvent` rather than
    calling handlers directly.  This decouples the chord definition from
-   the handler, letting handlers live in plugin modules.
+   the handler, letting handlers live in skill modules.
 
 3. **Conflict detection at registration time** — Overlapping chords fail
    fast and loud during startup, not silently at runtime.

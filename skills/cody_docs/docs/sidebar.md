@@ -7,7 +7,7 @@
 
 ## Purpose
 
-The sidebar registry lets plugins and core modules register panels in
+The sidebar registry lets skills and core modules register panels in
 the left or right sidebar.  Panels are registered at import time via the
 `@register_sidebar_tab()` decorator — the same self-registration pattern
 used throughout Cody.
@@ -93,11 +93,11 @@ class SidebarTab:
 The bootstrap loads sidebar panels from:
 
 1. **Core panels** — every `.py` file in `ui/sidebar/panels/`
-2. **Plugin panels** — any plugin that imports a module containing
+2. **Plugin panels** — any skill that imports a module containing
    `@register_sidebar_tab` from its `__init__.py`
 
 Core panel modules are imported during Phase 4a of bootstrap.  Plugin
-panels are registered during Phase 7 when the plugin's `__init__.py`
+panels are registered during Phase 7 when the skill's `__init__.py`
 is executed.
 
 ---
@@ -105,7 +105,7 @@ is executed.
 ## Complete Example: Plugin Sidebar Panel
 
 ```python
-# plugins/my_plugin/__init__.py
+# skills/my_skill/__init__.py
 """My Plugin — adds a sidebar panel."""
 from textual.containers import Container
 from textual.widgets import Static, Input, Button
@@ -116,7 +116,7 @@ from context import AppContext
 
 # Register config defaults
 register_defaults({
-    "my_plugin": {
+    "my_skill": {
         "greeting": "Hello",
     }
 })
@@ -186,4 +186,4 @@ def test_sidebar_registration():
 
 3. **Registration order preserved** — Tabs appear in the sidebar in
   the order they were registered.  Core panels register first, then
-  plugin panels.
+  skill panels.

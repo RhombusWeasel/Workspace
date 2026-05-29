@@ -3,8 +3,8 @@
 ## 1. Overview
 
 Cody is a Textual-based TUI application providing an AI coding assistant. It supports
-Ollama (local) and OpenAI as LLM backends, features a plugin architecture via "skills"
-and "plugins", and includes an encrypted password vault, multi-connection database management, git
+Ollama (local) and OpenAI as LLM backends, features a skill architecture
+for extensibility, and includes an encrypted password vault, multi-connection database management, git
 checkpointing, and a keyboard-driven leader menu system.
 
 This document captures the architecture of the codebase, design decisions made along
@@ -38,7 +38,7 @@ conftest.py            ← Pytest fixtures
 │       ├── base.py    ← BaseProvider protocol, ChatResponse, StreamChunk, TokenUsage
 │       ├── ollama.py  ← Ollama provider (chat + stream_chat, vault key resolution)
 │       └── __init__.py ← Provider registry + config defaults
-├── ui/                ← All Textual widgets (no plugin-level content)
+├── ui/                ← All Textual widgets
 │   ├── sidebar/
 │   │   ├── registry.py          ← Sidebar tab registration + discovery
 │   │   ├── sidebar.py           ← Sidebar + SidebarContainer (hides/shows)
@@ -66,9 +66,9 @@ conftest.py            ← Pytest fixtures
 │   │   ├── workspace.py       ← Recursive split-pane workspace + recomposition logic
 │   │   └── __init__.py
 │   └── __init__.py
-├── plugins/           ← Bundled plugins (3-tier discoverable)
+├── skills/            ← Bundled skills (3-tier discoverable)
 │   ├── __init__.py
-│   ├── chat/          ← AI chat workspace tab plugin
+│   ├── chat/          ← AI chat workspace tab
 │   │   ├── SKILL.md
 │   │   ├── __init__.py
 │   │   ├── chat_display.py      ← ChatDisplay: Tree-based streaming message display
@@ -97,7 +97,7 @@ conftest.py            ← Pytest fixtures
 │   │   ├── query_editor.py
 │   │   ├── services.py
 │   │   └── database.tcss
-│   └── terminal/      ← Embedded terminal workspace tab plugin
+│   └── terminal/      ← Embedded terminal workspace tab
 │       ├── SKILL.md
 │       ├── __init__.py
 │       ├── terminal.py           ← TerminalView: PTY lifecycle + screen/display preservation
@@ -117,7 +117,7 @@ conftest.py            ← Pytest fixtures
 ├── skills/             ← Bundled skills (extensible via SKILL.md)
 │   ├── cody_docs/     ← Core-systems documentation skill
 │   │   ├── SKILL.md
-│   │   ├── docs/       ← Markdown docs (events, config, vault, plugins, etc.)
+│   │   ├── docs/       ← Markdown docs (events, config, vault, skills, etc.)
 │   │   └── scripts/
 │   │       └── read_doc.py      ← Read doc files via run_skill
 │   └── git/           ← Git workflow skill (sidebar panel + scripts)
@@ -161,7 +161,7 @@ XML catalog for the agent system prompt. Manual scan — no implicit re-discover
 
 Skill `components/` directories contain Python modules that are auto-imported by
 the bootstrap loader, enabling skills to register sidebar panels, event handlers,
-leader chords, and config defaults using the same decorator pattern as plugins.
+leader chords, and config defaults.
 This means a skill can provide both LLM knowledge (via its SKILL.md body) and
 UI extensions (via `components/`), without adding new agent tools.
 
@@ -198,8 +198,8 @@ by each provider's ``execute_query()``.
 Providers are auto-discovered from the ``providers/`` sub-package.  Each
 provider module uses ``@register_provider`` to self-register at import time.
 Adding a new backend is just a matter of dropping a ``.py`` file into
-``plugins/database/core/providers/``.  See the plugin documentation
-(``skills/cody_docs/docs/plugins.md``) for details.
+``skills/database/core/providers/``.  See the skill loading documentation
+(``skills/cody_docs/docs/skill_loading.md``) for details.
 
 #### G. Leader Registry (`core/leader.py`)
 
@@ -211,37 +211,37 @@ from `SKILL.md` frontmatter.
 #### H. Path System (`core/paths.py`)
 
 Simplified to three functions: `cody_dir()`, `agents_dir()`, `resolve()`. 3-tier
-template expansion for skill/CSS/theme/plugin discovery. `collect_tcss()` gathers CSS
-from all tiers + skills. `discover_plugins()` scans all tiers for `SKILL.md`
-manifests under `plugins/` directories.
+template expansion for skill/CSS/theme discovery. `collect_tcss()` gathers CSS
+from all tiers uniformly (including skill directories).
 
-#### I. Plugin System (`core/paths.py`, `core/plugin_manager.py`, `bootstrap.py`)
+#### I. Skill System (`core/skills.py`, `core/skill_package_manager.py`, `bootstrap.py`)
 
-Plugins extend Cody with sidebar panels, event handlers, tools, and services.
-Each plugin is a directory containing a `SKILL.md` manifest and an `__init__.py`
-entry point. Discovery uses the same 3-tier path system as skills:
-`{cody_dir}/plugins/` → `~/.agents/plugins/` → `{wd}/.agents/plugins/`.
+Skills are the sole extension mechanism. A skill is a directory containing
+a `SKILL.md` manifest. Skills with `__init__.py` get full `importlib`
+loading with correct `__path__` and `__package__` attributes; skills without
+`__init__.py` (ecosystem / Anthropic spec) are discovered and their body is
+available for agent activation.
 
-The plugin manager (`core/plugin_manager.py`) handles installing, updating,
-removing, and listing plugins from git repositories. Plugins are always
-installed from a tagged release (never a live branch) and the `.git/`
+Discovery uses the 3-tier path system:
+`{cody_dir}/skills/` → `~/.agents/skills/` → `{wd}/.agents/skills/`.
+
+The skill package manager (`core/skill_package_manager.py`) handles installing,
+updating, removing, and listing skills from git repositories. Skills are
+always installed from a tagged release (never a live branch) and the `.git/`
 directory is stripped after cloning. Install metadata is stored in
-`.plugin.json` and mirrored to config (`plugins.installed`, `plugins.enabled`).
-The `/plugin` slash command provides the user-facing interface.
+`.skill.json` and mirrored to config (`skills.installed`, `skills.enabled`).
+The `/skill` slash command provides the user-facing interface.
 
-At bootstrap, each discovered plugin's `__init__.py` is loaded via
-`importlib.util.spec_from_file_location` with correct `__path__` and
-`__package__` attributes. This ensures sub-imports resolve from the plugin's
-own directory, even when the plugin lives outside the Cody installation.
-The Cody project root is added to `sys.path` before plugin loading so that
-plugins can import from `core/` and `context/`.
+At bootstrap, the `skills` package namespace is set up in `sys.modules` and
+each discovered skill with `__init__.py` is loaded via
+`importlib.util.spec_from_file_location`. The Cody project root is added to
+`sys.path` before loading so skills can import from `core/` and `context/`.
 
-Providers are auto-discovered from the `providers/` sub-package. Each
-provider module uses `@register_provider` to self-register at import time.
-Adding a new backend is just a matter of dropping a `.py` file into
-`plugins/database/core/providers/`.
+Skills can declare `SKILL_SERVICES` — service factories wired into
+`AppContext.services` at bootstrap.
 
-See `skills/cody_docs/docs/plugins.md` for full documentation.
+See `skills/cody_docs/docs/skills.md` and `skills/cody_docs/docs/skill_loading.md`
+for full documentation.
 
 #### J. Event System (`core/events.py`)
 
@@ -321,7 +321,7 @@ both the PTY process and the visible output. See §7 Step 16b for full details.
 
 ### 3.8 Git Integration: Skill, Not Plugin (No New Agent Tools)
 
-**Decision:** Implement git integration as a skill rather than a plugin or core module.
+**Decision:** Implement git integration as a skill rather than a core module.
 The agent activates the git skill to read its SKILL.md body, then uses the existing
 5 tools (`run_command`, `run_skill`, etc.) for all git operations. No new agent tools
 are added.
@@ -333,7 +333,7 @@ noticeably. By making git a skill:
 - Simple git operations use `run_command` (the agent already knows it)
 - Complex multi-step operations use `run_skill` + bundled scripts
 - The tool surface stays at 5, preserving model accuracy
-- Skills with `components/` directories can register UI (sidebar panels, leader chords) just like plugins
+- Skills with `components/` directories can register UI (sidebar panels, leader chords)
 
 ---
 
@@ -438,7 +438,7 @@ been resolved during the rewrite:
 │   └── write_file.py
 ├── ui/
 │   ├── __init__.py
-│   ├── chat/                   ← Moved to plugins/chat/
+│   ├── chat/                   ← AI chat (moved to skills/chat/)
 │   │   ├── __init__.py
 │   │   ├── chat_display.py
 │   │   ├── chat_input.py
@@ -454,7 +454,7 @@ been resolved during the rewrite:
 │   │       ├── config_panel.py
 │   │       ├── file_browser.py
 │   │       └── vault_panel.py
-│   ├── terminal/               ← Moved to plugins/terminal/
+│   ├── terminal/               ← Moved to skills/terminal/
 │   │   ├── __init__.py
 │   │   ├── terminal.py
 │   │   └── terminal_handler.py
@@ -536,20 +536,22 @@ Providers resolve keys directly from the vault (no separate `keys.py` module).
 `OllamaProvider` calls `vault.get_credential()` on demand. If the vault is locked,
 an async unlock flow is triggered.
 
-#### 6.5 Plugin Loading
+#### 6.5 Skill Loading
 
-Plugins are discovered by `paths.discover_plugins(working_dir)` which scans the
-three-tier `plugins/` directories for `SKILL.md` manifests.  Bootstrap loads each
-plugin's `__init__.py` via `importlib.util.spec_from_file_location`, setting
-`__path__` and `__package__` to ensure sub-imports work correctly regardless of
-which tier the plugin lives in.
+Skills are discovered by `SkillManager.scan()` which scans the three-tier
+`skills/` directories for `SKILL.md` manifests.  Skills with `__init__.py`
+are loaded via `importlib.util.spec_from_file_location`, setting `__path__` and
+`__package__` to ensure sub-imports work correctly regardless of which tier
+the skill lives in.  Skills without `__init__.py` (ecosystem / Anthropic spec)
+are discovered and their body is available for agent activation, but no Python
+code runs at import time.
 
-The Cody project root is added to `sys.path` before plugins load, guaranteeing
-that `from core.config import Config` (and similar) works from any plugin.
+The Cody project root is added to `sys.path` before skills load, guaranteeing
+that `from core.config import Config` (and similar) works from any skill.
 
-Later-tier plugins override earlier-tier plugins with the same directory name.
-Project-level plugins at `{wd}/.agents/plugins/` override user-level plugins at
-`~/.agents/plugins/`, which override bundled plugins at `{cody_dir}/plugins/`.
+Later-tier skills override earlier-tier skills with the same directory name.
+Project-level skills at `{wd}/.agents/skills/` override user-level skills at
+`~/.agents/skills/`, which override bundled skills at `{cody_dir}/skills/`.
 
 #### 6.6 CSS Collection
 
@@ -639,7 +641,7 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
 
 ### Step 15: Chat UI ✅
 
- - ``plugins/chat/`` — ChatInput, ChatDisplay (Tree-based streaming), ChatManager, ChatPanel
+ - ``skills/chat/`` — ChatInput, ChatDisplay (Tree-based streaming), ChatManager, ChatPanel
  - ChatDisplay uses Tree widget with content nodes; streaming via section updates
  - 44 tests across chat components
  - **COMPLETE**
@@ -654,9 +656,9 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
 
 #### 16a: Terminal View
 
- - `plugins/terminal/terminal.py` — `TerminalView` wraps `textual_terminal.Terminal`
+ - `skills/terminal/terminal.py` — `TerminalView` wraps `textual_terminal.Terminal`
    with lifecycle management, working directory context, `CodyEvent` integration
- - `plugins/terminal/terminal_handler.py` — leader chord handler for `terminal.open`
+ - `skills/terminal/terminal_handler.py` — leader chord handler for `terminal.open`
  - `core/terminal_passthrough.py` — key passthrough registry
  - Leader chord: `Ctrl+Space t o` opens terminal in focused pane
 
@@ -740,7 +742,7 @@ was skipped (`_preserving=True`). `TerminalSnapshot.stop_emulator()` handles thi
  - `ui/sidebar/` — registry, Sidebar, SidebarContainer, panels/vault_panel, chat_panel, config_panel, file_browser
  - File browser uses Tree with lazy loading (`NodeNeedsChildren`) and action buttons
  - **COMPLETE**
- - **DONE:** ``plugins/database/`` — DB sidebar tab + connection form + query editor (see Step 21)
+ - **DONE:** ``skills/database/`` — DB sidebar tab + connection form + query editor (see Step 21)
 
 ### Step 18: main.py (wires everything)
 
@@ -805,7 +807,7 @@ Phase 1b: Config integration ✅
  - `bootstrap.py` — added `_init_db_connections()` phase
  - No changes to `core/database.py` (connections are in config, not DB tables)
 
-Phase 2: UI — Connection Form Modal (``plugins/database/connection_form.py``) ✅
+Phase 2: UI — Connection Form Modal (``skills/database/connection_form.py``) ✅
  - `ConnectionFormModal` — dynamic form driven by `provider.form_fields()`
  - Provider type dropdown auto-generates form fields
  - File-type fields get a Browse button
@@ -831,14 +833,14 @@ Phase 4: UI — Query Editor (`ui/workspace/query_editor.py`) ✅
  - Pre-filled queries from table browser auto-execute after mount
 
 Phase 5: Integration ✅
- - ``plugins/database/db_panel.py`` — event handler ``db.open_query`` opens QueryEditor in workspace tabs
+ - ``skills/database/db_panel.py`` — event handler ``db.open_query`` opens QueryEditor in workspace tabs
  - `ui/sidebar/panels/__init__.py` — imports `db_panel` for registration
  - CSS files: `db_panel.tcss`, `connection_form.tcss`, `query_editor.tcss`
  - 46 unit tests in `tests/test_db_connections.py`
 
 ### Step 22: Git Skill ✅
 
-Git integration implemented as a **skill** (not a plugin) to keep the agent tool
+Git integration implemented as a **skill** to keep the agent tool
 surface at 5 tools. The agent learns git expertise by activating the skill's
 SKILL.md body, then uses `run_command` and `run_skill` with the existing tools.
 
@@ -846,7 +848,7 @@ Phase 1: Core — Skill `components/` auto-discovery ✅
  - `core/skills.py` — added `get_skill_components_dirs()` method
  - `bootstrap.py` — `_load_sidebar_panels()` now also imports from skill `components/` directories
  - Skills can register sidebar panels, event handlers, leader chords, and config defaults
-   using the same decorator pattern as plugins — no new `__init__.py` required
+   using the same decorator pattern — no new `__init__.py` required
  - 3 new tests in `test_skills.py::TestComponentsDirs`
 
 Phase 2: Git SKILL.md ✅
@@ -955,7 +957,7 @@ and their body is available for agent activation.
 | `core/themes.py` — 3-tier theme discovery | **DEFERRED** | Not blocking; CSS themes work manually |
 | `core/git.py` — git checkpoint utilities | **DONE** | Replaced by git skill (Step 22) |
 | `FormModal` — structured input with labeled fields | **DONE** | `ConnectionFormModal` in Step 21 |
-| ``plugins/database/`` — DB sidebar tab | **DONE** | Step 21 (now under skills/database/) |
+| ``skills/database/`` — DB sidebar tab | **DONE** | Step 21 |
 | App-wide CSS polish | **REMAINING** | Visual refinement of spacing, colors, borders |
 | Theme registration | **REMAINING** | Dynamic theme switching via config |
 | Smoke test | **REMAINING** | Full app launch + basic interaction test |

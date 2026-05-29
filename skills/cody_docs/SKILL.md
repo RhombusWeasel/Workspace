@@ -1,6 +1,6 @@
 ---
 name: cody_docs
-description: Cody core-systems documentation — events, config, vault, plugins, tools, commands, and architecture
+description: Cody core-systems documentation — events, config, vault, skills, tools, commands, and architecture
 ---
 
 # Cody Documentation
@@ -38,18 +38,18 @@ run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
 | Category | File | Summary |
 |---|---|---|
 | **Guide** | | |
-| Creating a Plugin | `docs/creating_a_plugin.md` | Step-by-step: anatomy, all registration types, examples, troubleshooting |
+| Creating a Skill | `docs/creating_a_skill.md` | Step-by-step: anatomy, all registration types, examples, troubleshooting |
 | **Core Systems** | | |
 | Event system | `docs/events.md` | `CodyEvent`, `@register_handler`, `dispatch`, event naming |
 | Config management | `docs/config.md` | Layered JSON, dot-path access, diff-save, registered defaults |
 | Password vault | `docs/vault.md` | Fernet encryption, master + local vaults, `VaultManager` |
-| Plugin system | `docs/plugins.md` | 3-tier plugin discovery, loading, authoring guide, requirements |
+| Skill loading | `docs/skill_loading.md` | 3-tier skill discovery, loading, `__init__.py` handling, `SKILL_SERVICES` |
 | Workspace tabs | `docs/workspace_tabs.md` | `TabState`, `flush_state()`, `content_factory`, persistence patterns |
 | Tool registry | `docs/tools.md` | `@register_tool`, tag grouping, enable/disable, context injection |
 | Slash commands | `docs/commands.md` | `@register_command`, auto-discovery from `cmd/` directories |
 | Leader chords | `docs/leader.md` | `register_action`, `register_submenu`, chord tree, terminal passthrough |
 | AppContext | `docs/context.md` | Service locator dataclass, all fields, access patterns |
-| Skills system | `docs/skills.md` | Skill discovery, SKILL.md format, skills vs plugins, `activate_skill` |
+| Skills system | `docs/skills.md` | Skill discovery, SKILL.md format, skill profiles, `activate_skill`, `SKILL_SERVICES` |
 | LLM providers | `docs/providers.md` | `BaseProvider` protocol, creating a new provider, API key resolution |
 | Agent | `docs/agent.md` | Tool-calling loop, template rendering, streaming, abort support |
 | Database | `docs/database.md` | Chat/message/agent/todo CRUD, section storage, history reconstruction |
@@ -78,7 +78,8 @@ run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
 | `config` | `Config` | Layered JSON config with dot-path access |
 | `skills` | `SkillManager` | Skill catalog (query available skills) |
 | `database` | `DatabaseManager` | Chat, message, agent, todo CRUD |
-| `db_connections` | `Any` | ConnectionManager from database plugin (or None) |
+| `db_connections` | `Any` | ConnectionManager from database skill (or None) |
+| `services` | `dict[str, Any]` | Dynamic service instances from skill `SKILL_SERVICES` |
 | `leader` | `LeaderRegistry` | Keyboard chord tree |
 | `vault` | `VaultManager` | Encrypted credential + note storage |
 | `working_directory` | `str` | Current project directory |

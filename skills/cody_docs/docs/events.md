@@ -163,9 +163,9 @@ Use dotted `"domain.action"` strings:
 | `workspace.*` | `workspace.split` | Workspace lifecycle events (data carries details) |
 | `vault.*` | `vault.needs_unlock` | Vault state events |
 | `app.*` | `app.open_leader` | Application-level commands |
-| `db.*` | `db.open_query` | Database plugin events |
+| `db.*` | `db.open_query` | Database skill events |
 | `files.*` | `files.edit` | File browser events |
-| `terminal.*` | `terminal.open` | Terminal plugin events |
+| `terminal.*` | `terminal.open` | Terminal skill events |
 | Skill domains | `analysis.complete` | Skill-specific events |
 
 Two or more dots is fine for sub-actions: `leader.workspace.toggle_left`.

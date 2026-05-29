@@ -1,18 +1,18 @@
-# Creating a Plugin — Complete Guide
+# Creating a Skill — Complete Guide
 
-This guide walks through everything you need to create a new Cody plugin,
+This guide walks through everything you need to create a new Cody skill,
 from understanding the architecture to writing, testing, and installing
-your plugin.
+your skill.
 
 ---
 
 ## Table of Contents
 
-1. [What Plugins Can Do](#what-plugins-can-do)
-2. [Plugin Anatomy](#plugin-anatomy)
+1. [What Skills Can Do](#what-skills-can-do)
+2. [Skill Anatomy](#skill-anatomy)
 3. [Choosing a Location](#choosing-a-location)
 4. [Step 1: Create SKILL.md](#step-1-create-skillmd)
-5. [Step 2: Create \_\_init\_\_.py](#step-2-create-__init__py)
+5. [Step 2: Decide on `__init__.py`](#step-2-decide-on-__init__py)
 6. [Step 3: Register Components](#step-3-register-components)
 7. [Step 4: Add CSS](#step-4-add-css)
 8. [Step 5: Test and Install](#step-5-test-and-install)
@@ -22,49 +22,70 @@ your plugin.
 
 ---
 
-## What Plugins Can Do
+## What Skills Can Do
 
-Plugins can register any combination of:
+Skills can register any combination of:
 
 | Component | How to Register | What It Does |
 |---|---|---|
+| Agent knowledge | SKILL.md body | Instructions the LLM reads via `activate_skill` |
 | Sidebar panel | `@register_sidebar_tab()` | Adds a panel to the left or right sidebar |
 | Event handler | `@register_handler()` | Responds to `CodyEvent` messages |
 | LLM tool | `@register_tool()` | Exposes a function the LLM can invoke |
 | Slash command | `@register_command()` | Adds a `/command` the user can type |
 | Leader chord | `register_action()` / `register_submenu()` | Adds keyboard shortcuts to `Ctrl+Space` menu |
 | Config defaults | `register_defaults()` | Provides default values for config keys |
-| Plugin services | `PLUGIN_SERVICES` dict | Provides services to other parts of the app |
-| CSS | `.tcss` file in plugin dir | Styles the plugin's widgets |
+| Skill services | `SKILL_SERVICES` dict | Provides services to other parts of the app |
+| CSS | `.tcss` file in skill dir | Styles the skill's widgets |
 
 ---
 
-## Plugin Anatomy
+## Skill Anatomy
 
-A minimal plugin directory:
+### Minimal skill (ecosystem compatible)
 
 ```
-my_plugin/
+my_skill/
 ├── SKILL.md              # Required — manifest with name + description
-└── __init__.py            # Required — entry point for registrations
+└── scripts/               # Optional — run via run_skill tool
+    └── deploy.py
 ```
 
-A full-featured plugin:
+No `__init__.py` — compatible with the Anthropic skill specification.
+
+### Full-featured UI skill
 
 ```
-my_plugin/
+my_skill/
 ├── SKILL.md              # Manifest (name, description, optional requirements)
 ├── __init__.py            # Entry point — imports modules with @register_*
-├── core/                  # Plugin internals
+├── core/                  # Skill internals
 │   ├── __init__.py
 │   └── connections.py
 ├── handlers.py            # Event handlers (@register_handler)
 ├── tools.py               # Agent-callable tools (@register_tool)
 ├── cmd/                   # Slash commands (auto-discovered)
 │   └── mycommand.py
-├── my_plugin.tcss         # Plugin CSS (auto-collected)
-└── services.py            # PLUGIN_SERVICES factory
+├── my_skill.tcss         # Skill CSS (auto-collected)
+└── services.py            # SKILL_SERVICES factory
 ```
+
+### Hybrid skill (agent knowledge + UI)
+
+```
+my_skill/
+├── SKILL.md              # Body = agent knowledge for the LLM
+├── scripts/               # Agent-runnable scripts
+│   └── status.py
+├── components/            # Auto-imported UI modules
+│   └── panel.py
+├── tools/                 # Auto-imported agent tools
+│   └── my_tool.py
+└── my_skill.tcss
+```
+
+No `__init__.py` — `components/`, `tools/`, and `cmd/` are imported as
+flat files by the bootstrap loader.
 
 ---
 
@@ -72,11 +93,11 @@ my_plugin/
 
 | Tier | Path | Scope | Override behavior |
 |---|---|---|---|
-| **Bundled** | `{cody_dir}/plugins/my_plugin/` | Ships with Cody | Overridden by user or project |
-| **User-global** | `~/.agents/plugins/my_plugin/` | Available in all projects | Overrides bundled, overridden by project |
-| **Project-local** | `{project}/.agents/plugins/my_plugin/` | Current project only | Highest precedence |
+| **Bundled** | `{cody_dir}/skills/my_skill/` | Ships with Cody | Overridden by user or project |
+| **User-global** | `~/.agents/skills/my_skill/` | Available in all projects | Overrides bundled, overridden by project |
+| **Project-local** | `{project}/.agents/skills/my_skill/` | Current project only | Highest precedence |
 
-For most plugins, use **user-global** (`~/.agents/plugins/`).  Use
+For most skills, use **user-global** (`~/.agents/skills/`).  Use
 **project-local** for project-specific tools.
 
 ---
@@ -87,27 +108,27 @@ The manifest uses YAML frontmatter:
 
 ```markdown
 ---
-name: my_plugin
+name: my_skill
 description: Short description shown in the skill catalog
 requirements:
   - requests>=2.28
   - psycopg2-binary>=2.9
 ---
 
-# My Plugin
+# My Skill
 
-Longer markdown documentation about what the plugin does.
+Longer markdown documentation about what the skill does.
 This body is available via the `activate_skill` tool if the LLM asks.
 ```
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | **Yes** | Unique plugin name (letters, numbers, hyphens, underscores) |
-| `description` | **Yes** | Short description (shown in catalog and plugin list) |
+| `name` | **Yes** | Unique skill name (letters, numbers, hyphens, underscores) |
+| `description` | **Yes** | Short description (shown in catalog and skill list) |
 | `requirements` | No | YAML list of pip-format package specifiers |
 
 If `requirements` is declared, `uv pip install` (or `pip install`) is run
-when installing via `/plugin install`.  For manually-created plugins,
+when installing via `/skill install`.  For manually-created skills,
 install dependencies yourself:
 
 ```bash
@@ -118,7 +139,7 @@ Or use **lazy imports** so the module can load even if the package isn't
 installed yet:
 
 ```python
-@register_handler("my_plugin.fetch")
+@register_handler("my_skill.fetch")
 def _on_fetch(data, ctx):
     import requests  # imported only when the handler is called
     ...
@@ -126,36 +147,47 @@ def _on_fetch(data, ctx):
 
 ---
 
-## Step 2: Create \_\_init\_\_.py
+## Step 2: Decide on `__init__.py`
 
-The `__init__.py` is the entry point.  It must import all modules that
-contain `@register_*` decorators — otherwise the decorators never execute:
+`__init__.py` is **optional**.  Whether you need it depends on the skill
+type:
+
+| Skill type | Need `__init__.py`? | Why |
+|---|---|---|
+| Ecosystem / knowledge only | ❌ | No Python code needs to run at import time |
+| Flat UI components | ❌ | `components/`, `tools/`, `cmd/` are auto-imported |
+| Complex UI with sub-packages | ✅ | Needed for correct `__path__`/`__package__` resolution |
+| Skills with `SKILL_SERVICES` | ✅ | Services must be declared in a module-level dict |
+
+If you add `__init__.py`, it's the entry point.  It must import all modules
+that contain `@register_*` decorators — otherwise the decorators never execute:
 
 ```python
-# plugins/my_plugin/__init__.py
-"""My Plugin — does something useful."""
+# skills/my_skill/__init__.py
+"""My Skill — does something useful."""
 
 # Side-effect imports trigger decorator registrations.
-from plugins.my_plugin.handlers import register_handlers  # noqa: F401
-from plugins.my_plugin.services import PLUGIN_SERVICES      # noqa: F401
+from skills.my_skill.handlers import register_handlers  # noqa: F401
+from skills.my_skill.services import SKILL_SERVICES      # noqa: F401
 
 # Direct registrations can also go here:
 from core.leader import register_submenu, register_action
 
-register_submenu(["m"], "My Plugin")
-register_action(["m", "o"], "Open", event_type="my_plugin.open")
+register_submenu(["m"], "My Skill")
+register_action(["m", "o"], "Open", event_type="my_skill.open")
 
 # Declare services for other components
-PLUGIN_SERVICES = {
+SKILL_SERVICES = {
     "my_service": create_my_service,
 }
 
-__all__ = ["PLUGIN_SERVICES"]
+__all__ = ["SKILL_SERVICES"]
 ```
 
 **The golden rule:** If a module has a `@register_handler`, `@register_tool`,
 `@register_sidebar_tab`, or `@register_command` decorator, it must be
-imported (directly or transitively) by `__init__.py`.
+imported (directly or transitively) by `__init__.py` or live in a
+auto-discovered directory (`components/`, `tools/`, `cmd/`).
 
 ---
 
@@ -166,7 +198,7 @@ imported (directly or transitively) by `__init__.py`.
 ```python
 from ui.sidebar.registry import register_sidebar_tab
 
-@register_sidebar_tab(name="my_panel", icon="★", side="left", tooltip="My Plugin")
+@register_sidebar_tab(name="my_panel", icon="★", side="left", tooltip="My Skill")
 class MyPanel(Container):
     def compose(self):
         yield Static("My panel content")
@@ -180,13 +212,13 @@ See [Sidebar Registry](sidebar.md) for full details.
 from core.events import register_handler
 from context import AppContext
 
-@register_handler("my_plugin.greet")
+@register_handler("my_skill.greet")
 def _on_greet(data: dict, ctx: AppContext) -> None:
     app = ctx.app
     if app is None:
         return
     name = data.get("name", "stranger")
-    app.notify(f"Hello, {name}!", title="My Plugin")
+    app.notify(f"Hello, {name}!", title="My Skill")
 ```
 
 See [Events](events.md) for full details.
@@ -198,7 +230,7 @@ from core.tools import register_tool
 
 @register_tool(
     name="my_lookup",
-    tags=["my_plugin"],
+    tags=["my_skill"],
     description="Look up information in my service.",
     parameters={
         "type": "object",
@@ -221,11 +253,11 @@ See [Tools](tools.md) for full details.
 
 ### Slash Command
 
-Place in your plugin's `cmd/` directory for auto-discovery, or import
+Place in your skill's `cmd/` directory for auto-discovery, or import
 from `__init__.py`:
 
 ```python
-# plugins/my_plugin/cmd/greet.py
+# skills/my_skill/cmd/greet.py
 from core.commands import register_command
 
 @register_command(name="greet", description="Show a greeting")
@@ -242,10 +274,10 @@ See [Commands](commands.md) for full details.
 ```python
 from core.leader import register_submenu, register_action
 
-register_submenu(["m"], "My Plugin")
+register_submenu(["m"], "My Skill")
 register_action(
-    ["m", "o"], "Open", event_type="my_plugin.open",
-    labels={"m": "My Plugin"},
+    ["m", "o"], "Open", event_type="my_skill.open",
+    labels={"m": "My Skill"},
 )
 ```
 
@@ -257,7 +289,7 @@ See [Leader Chords](leader.md) for full details.
 from core.config import register_defaults
 
 register_defaults({
-    "my_plugin": {
+    "my_skill": {
         "max_items": 100,
         "auto_refresh": True,
         "greeting": "Hello",
@@ -290,7 +322,7 @@ class MyWidget(Widget):
 def _create_my_content(state: TabState) -> MyWidget:
     return MyWidget(state)
 
-@register_handler("my_plugin.open_tab")
+@register_handler("my_skill.open_tab")
 def _on_open_tab(data: dict, ctx: AppContext) -> None:
     app = ctx.app
     if app is None:
@@ -318,43 +350,45 @@ def _on_open_tab(data: dict, ctx: AppContext) -> None:
 
     state = MyTabState(my_param=data.get("param", "default"))
     tabs.open_tab(
-        "my-tab", "My Plugin", state=state,
+        "my-tab", "My Skill", state=state,
         content_factory=_create_my_content,
     )
 ```
 
 See [Workspace Tabs](workspace_tabs.md) for persistence patterns and full details.
 
-### Plugin Services
+### Skill Services
 
 ```python
-# plugins/my_plugin/services.py
+# skills/my_skill/services.py
 from core.config import Config
 from core.vault import VaultManager
 
 def create_my_service(config: Config, vault: VaultManager):
     return MyService(config, vault)
 
-# plugins/my_plugin/__init__.py
-from plugins.my_plugin.services import create_my_service
+# skills/my_skill/__init__.py
+from skills.my_skill.services import create_my_service
 
-PLUGIN_SERVICES = {
+SKILL_SERVICES = {
     "my_service": create_my_service,
 }
 ```
 
-Bootstrap calls each factory with `(config, vault)` and injects the
-result into `AppContext`.  Other components access it via `ctx.my_service`.
+Bootstrap calls each factory with `(config, vault)` and stores the
+result in `AppContext.services`.  Other components access it via
+`ctx.services["my_service"]` or, for known services like
+`db_connections`, via `ctx.db_connections`.
 
 ---
 
 ## Step 4: Add CSS
 
-Create a `.tcss` file in the plugin directory.  It's auto-collected by
-`collect_plugin_tcss()`:
+Create a `.tcss` file in the skill directory.  It's auto-collected by
+`collect_tcss()`:
 
 ```css
-/* my_plugin.tcss */
+/* my_skill.tcss */
 MyPanel {
     height: 100%;
     background: $surface;
@@ -375,7 +409,7 @@ Textual CSS supports variables, nesting, and layout.  See the
 
 ### Manual testing
 
-1. Place the plugin in `~/.agents/plugins/my_plugin/`
+1. Place the skill in `~/.agents/skills/my_skill/`
 2. Restart Cody
 3. Check stderr for any import errors
 4. Test your registered components
@@ -383,41 +417,71 @@ Textual CSS supports variables, nesting, and layout.  See the
 ### Installing from a git repo
 
 ```bash
-/plugin install https://github.com/you/cody-my-plugin
+/skill install https://github.com/you/cody-my-skill
 ```
 
-This clones the repo, installs dependencies, writes `.plugin.json`, and
+This clones the repo, installs dependencies, writes `.skill.json`, and
 updates config.
 
 ### Updating
 
 ```bash
-/plugin update my_plugin
-/plugin update my_plugin --version v1.2.0
-/plugin update --all
+/skill update my_skill
+/skill update my_skill --version v1.2.0
+/skill update --all
 ```
 
 ### Removing
 
 ```bash
-/plugin remove my_plugin
-/plugin remove my_plugin --local    # project-local only
+/skill remove my_skill
+/skill remove my_skill --local    # project-local only
 ```
 
 ### Listing
 
 ```bash
-/plugin list
+/skill list
 ```
 
 ---
 
 ## Complete Examples
 
-### Example 1: Minimal Plugin (sidebar panel + handler)
+### Example 1: Minimal Knowledge Skill
 
 ```
-~/.agents/plugins/greeter/
+~/.agents/skills/deployment/
+├── SKILL.md
+└── scripts/
+    └── deploy.py
+```
+
+```markdown
+<!-- SKILL.md -->
+---
+name: deployment
+description: Deployment procedures and best practices
+---
+
+# Deployment Guide
+
+## Staging
+
+Run `./deploy.sh staging` from the project root...
+
+## Production
+
+Production deployments require approval...
+```
+
+No `__init__.py` — this is an ecosystem-compatible knowledge skill.
+The LLM activates it via `activate_skill` and reads the instructions.
+
+### Example 2: UI Skill with Sidebar Panel
+
+```
+~/.agents/skills/greeter/
 ├── SKILL.md
 └── __init__.py
 ```
@@ -436,7 +500,7 @@ Shows a greeting in the sidebar.
 
 ```python
 # __init__.py
-"""Greeter plugin."""
+"""Greeter skill."""
 from textual.containers import Container
 from textual.widgets import Static
 from ui.sidebar.registry import register_sidebar_tab
@@ -462,10 +526,10 @@ def _on_update(data: dict, ctx: AppContext) -> None:
         ctx.app.notify(f"Name updated to {name}", title="Greeter")
 ```
 
-### Example 2: Tool Plugin with Confirmation
+### Example 3: Tool Skill with Confirmation
 
 ```
-~/.agents/plugins/deployer/
+~/.agents/skills/deployer/
 ├── SKILL.md
 ├── __init__.py
 ├── tools.py
@@ -488,8 +552,8 @@ LLM-callable tools for deploying the project to staging/production.
 
 ```python
 # __init__.py
-"""Deployer plugin."""
-from plugins.deployer.tools import register_deployer_tools  # noqa: F401
+"""Deployer skill."""
+from skills.deployer.tools import register_deployer_tools  # noqa: F401
 register_deployer_tools()
 ```
 
@@ -559,7 +623,7 @@ async def deploy(environment: str, confirm: bool = True, ctx: AppContext | None 
     return f"Deploy failed (exit {proc.returncode}): {stderr.decode()}"
 ```
 
-### Example 3: Workspace Tab Plugin
+### Example 4: Workspace Tab Skill
 
 See the [Workspace Tabs](workspace_tabs.md) document for a complete
 example of a tab that opens a file viewer in a workspace pane with
@@ -571,15 +635,15 @@ state persistence across splits.
 
 ### Auto-Discovery Provider Pattern
 
-When your plugin supports multiple backends (e.g. different database
+When your skill supports multiple backends (e.g. different database
 types), use the auto-discovery pattern:
 
 1. Define an ABC and a decorator registry in your core module.
 2. Create a `providers/` sub-package that auto-imports all `.py` files.
 3. Each provider self-registers via the decorator at import time.
 
-See the [Plugins](plugins.md) document for the full pattern with the
-database plugin as an example.
+See the [Skills](skills.md) document and the database skill for the
+full pattern.
 
 ### Lazy Imports for Optional Dependencies
 
@@ -587,13 +651,13 @@ If a dependency isn't always available, import it inside the function
 that uses it rather than at the top of the module:
 
 ```python
-@register_tool(name="my_tool", tags=["my_plugin"], ...)
+@register_tool(name="my_tool", tags=["my_skill"], ...)
 async def my_tool(query: str) -> str:
     import heavy_dependency  # only imported when the tool is called
     return heavy_dependency.search(query)
 ```
 
-This lets the plugin load successfully even if the dependency isn't
+This lets the skill load successfully even if the dependency isn't
 installed.  The tool will fail only when actually invoked.
 
 ### Accessing AppContext from Widgets
@@ -615,7 +679,7 @@ Event handlers are synchronous, but modals require `await`.  Use
 `app.run_worker()`:
 
 ```python
-@register_handler("my_plugin.prompt")
+@register_handler("my_skill.prompt")
 def _on_prompt(data: dict, ctx: AppContext) -> None:
     app = ctx.app
     if app is None:
@@ -625,50 +689,52 @@ def _on_prompt(data: dict, ctx: AppContext) -> None:
         from ui.widgets.input_modal import InputModal
         result = await app.push_screen_wait(InputModal("Enter value:"))
         if result is not None:
-            ctx.config.set("my_plugin.value", result)
+            ctx.config.set("my_skill.value", result)
             ctx.config.save()
             app.notify("Value saved!")
 
     app.run_worker(do_prompt())
 ```
 
-### Disabling a Bundled Plugin
+### Disabling a Bundled Skill
 
 Create an empty override in a higher tier:
 
 ```bash
-mkdir -p ~/.agents/plugins/database
-echo '---\nname: database\ndescription: Disabled\n---' > ~/.agents/plugins/database/SKILL.md
-echo '"""Disabled."""' > ~/.agents/plugins/database/__init__.py
+mkdir -p ~/.agents/skills/database
+echo '---\nname: database\ndescription: Disabled\n---' > ~/.agents/skills/database/SKILL.md
+echo '"""Disabled."""' > ~/.agents/skills/database/__init__.py
 ```
 
-Or set `"database": false` in config under `plugins.enabled`.
+Or set `"database": false` in config under `skills.enabled`.
 
 ---
 
 ## Troubleshooting
 
-### Plugin not discovered
+### Skill not discovered
 
 - Ensure `SKILL.md` exists with valid YAML frontmatter (`name` + `description` required).
 - Check the directory name and location match the tier path.
 
 ### Import errors
 
-- Verify `__init__.py` exists.
+- If the skill has `__init__.py`, verify it exists and is syntactically valid.
 - Use fully-qualified imports: `from core.events import ...`, not `from ..core.events import ...`.
 - The project root is on `sys.path` — don't manipulate it yourself.
+- For `__init__.py` skills, sub-imports should use `from skills.my_skill.core import X`.
 
 ### Handlers not firing
 
-- Modules with `@register_handler` must be imported by `__init__.py`.
+- Modules with `@register_handler` must be imported by `__init__.py`
+  or live in a `components/` directory.
 
 ### Tool not showing up
 
-- Modules with `@register_tool` must be imported by `__init__.py`.
-- Or place tools in a `tools/` directory for auto-discovery (skills only — plugins need explicit import).
+- Modules with `@register_tool` must be imported by `__init__.py`
+  or live in a `tools/` directory (auto-discovered).
 
-### Plugin fails to load (missing dependency)
+### Skill fails to load (missing dependency)
 
 - Check stderr for the warning message.
 - List the dependency in `requirements:` in SKILL.md.
@@ -677,8 +743,8 @@ Or set `"database": false` in config under `plugins.enabled`.
 
 ### CSS not applied
 
-- The `.tcss` file must be in the plugin directory.
-- File is auto-collected by `collect_plugin_tcss()`.
+- The `.tcss` file must be in the skill directory.
+- File is auto-collected by `collect_tcss()`.
 - Check the file extension is `.tcss` (not `.css`).
 
 ### Leader chord conflicts
@@ -710,10 +776,11 @@ Or set `"database": false` in config under `plugins.enabled`.
 | `config` | `Config` | Layered JSON config with dot-path access |
 | `skills` | `SkillManager` | Skill catalog (query available skills) |
 | `database` | `DatabaseManager` | Chat, message, agent, todo CRUD |
-| `db_connections` | `Any` | ConnectionManager from database plugin (or None) |
+| `db_connections` | `Any` | ConnectionManager from database skill (or None) |
 | `leader` | `LeaderRegistry` | Keyboard chord tree |
 | `vault` | `VaultManager` | Encrypted credential + note storage |
 | `working_directory` | `str` | Current project directory |
+| `services` | `dict[str, Any]` | Dynamic service instances from skill `SKILL_SERVICES` |
 | `app` | `CodyApp` | Running Textual app instance (set after construction) |
 
 ---
@@ -722,11 +789,10 @@ Or set `"database": false` in config under `plugins.enabled`.
 
 | File | Where | Auto-discovered? | What it registers |
 |---|---|---|---|
-| `SKILL.md` | Plugin root | Yes (discovery marker) | Plugin name, description, requirements |
-| `__init__.py` | Plugin root | Yes (entry point) | All `@register_*` via side-effect imports |
-| `*.tcss` | Plugin root (any depth) | Yes | Widget styles |
-| `cmd/*.py` | Skills only | Yes | `@register_command()` |
-| `tools/*.py` | Skills only | Yes | `@register_tool()` |
-
-**Important:** Plugin code must be explicitly imported from `__init__.py`.
-Auto-discovery of `cmd/` and `tools/` directories only works for skills.
+| `SKILL.md` | Skill root | Yes (discovery marker) | Skill name, description, requirements |
+| `__init__.py` | Skill root | Yes (entry point for UI skills) | All `@register_*` via side-effect imports |
+| `*.tcss` | Skill directory (any depth) | Yes | Widget styles |
+| `components/*.py` | Skill subdirectory | Yes | `@register_sidebar_tab()`, `@register_handler()`, etc. |
+| `cmd/*.py` | Skill subdirectory | Yes | `@register_command()` |
+| `tools/*.py` | Skill subdirectory | Yes | `@register_tool()` |
+| `scripts/*.py` | Skill subdirectory | No (run via `run_skill`) | Agent-runnable scripts |

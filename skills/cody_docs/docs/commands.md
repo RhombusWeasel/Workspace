@@ -8,7 +8,7 @@
 ## Purpose
 
 Slash commands are user-typed `:prefix` commands in the chat input (e.g.
-`/plugin list`, `/clear`).  They are distinct from tools (LLM-invoked)
+`/skill list`, `/clear`).  They are distinct from tools (LLM-invoked)
 and leader chords (keyboard-driven menu).  Commands register at import
 time via `@register_command()`.
 
@@ -17,7 +17,7 @@ time via `@register_command()`.
 ## Architecture
 
 ```
-User types "/plugin install <url>"
+User types "/skill install <url>"
        │
        ▼
 ChatInput.on_input_submitted() or CommandPalette
@@ -100,10 +100,10 @@ The bootstrap sequence loads commands from two sources:
 2. **Skill commands** — every `.py` file in each enabled skill's `cmd/`
    subdirectory is imported.
 
-Put your command in a `cmd/` subdirectory within your plugin or skill:
+Put your command in a `cmd/` subdirectory within your skill or skill:
 
 ```
-plugins/my_plugin/
+skills/my_skill/
 ├── SKILL.md
 ├── __init__.py
 ├── cmd/
@@ -126,7 +126,7 @@ skills/my_skill/
 ## Writing a Command: Complete Example
 
 ```python
-# plugins/my_plugin/cmd/greet.py
+# skills/my_skill/cmd/greet.py
 from core.commands import register_command
 
 @register_command(name="greet", description="Show a greeting notification")
@@ -137,13 +137,13 @@ async def greet(app, args: str) -> str:
 ```
 
 **Important:** the module containing `@register_command` must be imported
-at plugin load time.  If the file lives in the skil's `cmd/` directory,
+at skill load time.  If the file lives in the skil's `cmd/` directory,
 the bootstrap loader discovers and imports it automatically.  If it lives
 elsewhere, import it from `__init__.py`:
 
 ```python
-# plugins/my_plugin/__init__.py
-from plugins.my_plugin.cmd import greet  # noqa: F401
+# skills/my_skill/__init__.py
+from skills.my_skill.cmd import greet  # noqa: F401
 ```
 
 ---
@@ -194,7 +194,7 @@ async def test_my_command():
    `/command`), chords (keyboard menu).  This avoids confusion about
    who triggers what.
 
-3. **Auto-discovery from `cmd/` directories** — Skills and plugins can
+3. **Auto-discovery from `cmd/` directories** — Skills and skills can
    contribute commands by dropping `.py` files into `cmd/`.  No manual
    wiring needed.
 

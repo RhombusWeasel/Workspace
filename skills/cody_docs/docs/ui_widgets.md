@@ -146,7 +146,7 @@ functions, but modal screens require `await`.  Use `app.run_worker()` to
 bridge this gap:
 
 ```python
-@register_handler("my_plugin.prompt")
+@register_handler("my_skill.prompt")
 def _on_prompt(data: dict, ctx: AppContext) -> None:
     app = ctx.app
     if app is None:
@@ -158,7 +158,7 @@ def _on_prompt(data: dict, ctx: AppContext) -> None:
         )
         if result is not None:
             # Process the result
-            ctx.config.set("my_plugin.value", result)
+            ctx.config.set("my_skill.value", result)
             ctx.config.save()
 
     app.run_worker(do_prompt())

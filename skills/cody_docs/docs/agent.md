@@ -150,7 +150,7 @@ The `execute_tool()` function from `core.tools` handles context injection
 
 ## Using the Agent in a Plugin
 
-The chat plugin demonstrates creating and using an Agent:
+The chat skill demonstrates creating and using an Agent:
 
 ```python
 from core.agent import Agent

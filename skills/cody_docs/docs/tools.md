@@ -7,7 +7,7 @@
 
 ## Purpose
 
-The tool registry lets plugins, skills, and core modules expose Python
+The tool registry lets skills, skills, and core modules expose Python
 functions that the LLM can invoke during a conversation.  Tools register
 themselves at import time via the `@register_tool()` decorator — the same
 self-registration pattern used by `@register_handler()`, `@register_command()`,
@@ -189,7 +189,7 @@ Tags group tools for filtering and bulk enable/disable.  Convention:
 | `files` | File read/write | `read_file`, `write_file` |
 | `skills` | Skill activation | `activate_skill`, `run_skill` |
 
-Plugins should use their plugin name as a tag:
+Plugins should use their skill name as a tag:
 
 ```python
 @register_tool(name="db_query", tags=["database"], ...)
@@ -212,10 +212,10 @@ registers the tool in the module-level `_tools` dict.
 
 ## Writing a Tool: Complete Example
 
-This example shows a tool registered by a plugin that queries a database:
+This example shows a tool registered by a skill that queries a database:
 
 ```python
-# plugins/database/tools/db_query.py
+# skills/database/tools/db_query.py
 from core.tools import register_tool
 from typing import TYPE_CHECKING
 
@@ -257,8 +257,8 @@ def db_query(sql: str, connection: str = "default", ctx: AppContext | None = Non
 ```
 
 **Important:** the module containing this tool must be imported (directly
-or transitively) by the plugin's `__init__.py`.  Put tools in a
-`tools/` subdirectory within your plugin or skill, and the bootstrap
+or transitively) by the skill's `__init__.py`.  Put tools in a
+`tools/` subdirectory within your skill or skill, and the bootstrap
 loader will discover them automatically.
 
 ---
