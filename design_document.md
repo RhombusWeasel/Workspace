@@ -904,18 +904,18 @@ The ``skill`` name is retained for ecosystem compatibility with Anthropic's
 skill specification (ClaudeCode, Codex), so users can install ecosystem skills
 without modification.
 
-Phase 1: Move plugin directories under `skills/` ⬜
+Phase 1: Move plugin directories under `skills/` ✅
  - `plugins/chat/` → `skills/chat/`
  - `plugins/terminal/` → `skills/terminal/`
  - `plugins/database/` → `skills/database/`
  - Delete `plugins/` directory and `plugins/__init__.py`
 
-Phase 2: Rewrite all `from plugins.X` imports to `from skills.X` ⬜
+Phase 2: Rewrite all `from plugins.X` imports to `from skills.X` ✅
  - Across moved skill files (~30 internal references)
  - Across all test files (~25 references)
  - `bootstrap.py` docstrings/comments
 
-Phase 3: Upgrade `core/skills.py` — unified skill loading ⬜
+Phase 3: Upgrade `core/skills.py` — unified skill loading ✅
  - `__init__.py` is **optional** — test for it, use if present, skip if not
  - Ecosystem skills (Anthropic spec): no `__init__.py` → discovered, body available, scripts runnable
  - UI skills: have `__init__.py` → full `importlib` load with `__path__`/`__package__` handling
@@ -923,18 +923,18 @@ Phase 3: Upgrade `core/skills.py` — unified skill loading ⬜
  - Add `SKILL_SERVICES` convention (replaces `PLUGIN_SERVICES`)
  - Import error isolation for all skill Python loading
 
-Phase 4: Rewrite `bootstrap.py` ⬜
+Phase 4: Rewrite `bootstrap.py` ✅
  - Remove `_load_plugins()` phase entirely
  - Expand skill loading to handle `__init__.py` entry points + `SKILL_SERVICES`
  - Register `skills` as package in `sys.modules` (replaces `plugins` package)
  - Services from `SKILL_SERVICES` wired into AppContext
 
-Phase 5: Simplify `core/paths.py` ⬜
+Phase 5: Simplify `core/paths.py` ✅
  - Remove `discover_plugins()` and `collect_plugin_tcss()`
  - Remove `skip_plugins` parameter from `_find_tcss()` and `collect_tcss()`
  - CSS collection walks everything uniformly (skills/ already included)
 
-Phase 6: Update tests ⬜
+Phase 6: Update tests ✅
  - All existing tests updated with new import paths
  - New tests for optional `__init__.py` loading, `SKILL_SERVICES`, import error isolation
 
