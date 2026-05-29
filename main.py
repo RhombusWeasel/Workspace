@@ -35,6 +35,9 @@ register_defaults({"ui": {"theme": _UI_DEFAULT_THEME}})
 import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handler registration
 # Import file edit handler so its @register_handler("files.edit") runs.
 import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for handler registration
+# Import inline suggestion module so its register_defaults() runs
+# before bootstrap's apply_defaults().
+import core.inline_suggest  # noqa: F401 — side-effect import for config defaults
 # Terminal handler is now registered by the terminal plugin
 # (plugins/terminal/__init__.py) at plugin load time.
 
