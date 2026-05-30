@@ -158,10 +158,14 @@ class FormModal(ModalScreen[dict[str, str] | None]):
 
         if ctrl.type == "select":
             options = [(opt, opt) for opt in (ctrl.options or [])]
-            default = ctrl.default if ctrl.default else Select.DEFAULT
+            # Use Select.NULL for no default, or the default value if provided.
+            if ctrl.default and ctrl.default in (ctrl.options or []):
+                default_val = ctrl.default
+            else:
+                default_val = Select.NULL
             yield Select(
                 options=options,
-                value=default,
+                value=default_val,
                 id=f"form-field-{ctrl.name}",
                 classes="form-field-input",
             )
@@ -348,7 +352,7 @@ class FormModal(ModalScreen[dict[str, str] | None]):
             try:
                 sel = self.query_one(f"#{field_id}", Select)
                 val = sel.value
-                if val is Select.DEFAULT:
+                if val is Select.NULL:
                     return ""
                 return str(val)
             except Exception:
