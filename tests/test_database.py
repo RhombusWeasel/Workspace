@@ -263,7 +263,7 @@ class TestAgentCRUD:
         agent = db.get_agent(agent_id)
         assert agent["name"] == "Helper"
         assert agent["description"] == "Desc"
-        assert agent["system_prompt"] == "Prompt"
+        assert agent["template"] == "Prompt"
         assert agent["model"] == "llama3"
 
     def test_create_agent_default_model(self, db):
@@ -295,7 +295,7 @@ class TestAgentCRUD:
                 "id": "coding-assistant",
                 "name": "Coding Assistant",
                 "description": "Helps with code",
-                "system_prompt": "You are a coding assistant.",
+                "template": "You are a coding assistant.",
                 "model": "codellama",
             }
         ]
@@ -309,7 +309,7 @@ class TestAgentCRUD:
                 "id": "existing",
                 "name": "Overwrite Attempt",
                 "description": "Should not appear",
-                "system_prompt": "Should not appear",
+                "template": "Should not appear",
             }
         ]
         db.seed_agents(agents)

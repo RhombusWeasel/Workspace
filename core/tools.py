@@ -88,15 +88,20 @@ def register_tool(
 
 def get_tools(
     tags: str | list[str] | None = None,
+    filtered: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Return enabled tools as JSON Schema function-definition dicts.
 
     Parameters
     ----------
     tags:
-        Optional filter.  When a single string, only tools tagged with it
+        Optional tag filter.  When a single string, only tools tagged with it
         are returned.  When a list, tools matching **any** tag are returned
         (union).  When ``None``, all enabled tools are returned.
+    filtered:
+        Optional list of allowed tool **names**.  When provided, only tools
+        whose name appears in this list are returned.  Combined with *tags*
+        using AND logic — a tool must match both filters to be included.
     """
     # Normalise tag filter to a set (None means "match all").
     tag_set: set[str] | None
@@ -107,6 +112,8 @@ def get_tools(
     else:
         tag_set = set(tags)
 
+    name_set: set[str] | None = set(filtered) if filtered else None
+
     result: list[dict[str, Any]] = []
     for name, (fn, tool_tags, desc, params) in _tools.items():
         # --- visibility checks ---
@@ -115,6 +122,8 @@ def get_tools(
         if any(tag in _disabled_groups for tag in tool_tags):
             continue
         if tag_set is not None and not tag_set.intersection(tool_tags):
+            continue
+        if name_set is not None and name not in name_set:
             continue
 
         result.append(

@@ -41,7 +41,7 @@ _DEFAULT_MODEL = "deepseek-v4-pro:cloud"
 
 # Register config defaults so they flow through bootstrap → Config.apply_defaults()
 register_defaults({
-    "session": {"provider": "ollama", "model": _DEFAULT_MODEL},
+    "session": {"model": _DEFAULT_MODEL},
     "ollama": {"base_url": _DEFAULT_BASE_URL},
 })
 
@@ -58,6 +58,9 @@ class OllamaProvider(BaseProvider):
     model:
         Explicit model override.  Falls back to ``config.session.model``
         then to the default model.
+    base_url:
+        Explicit base URL override.  Falls back to
+        ``config.ollama.base_url`` then to the default URL.
     """
 
     def __init__(
@@ -65,11 +68,12 @@ class OllamaProvider(BaseProvider):
         config: Config,
         vault: VaultManager | None = None,
         model: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         super().__init__(vault=vault, config=config)
         self._app_config = config
         self.model = model or config.get("session.model") or _DEFAULT_MODEL
-        self.base_url = config.get("ollama.base_url") or _DEFAULT_BASE_URL
+        self.base_url = base_url or config.get("ollama.base_url") or _DEFAULT_BASE_URL
 
     # ------------------------------------------------------------------
     # BaseProvider implementation (receives already-redacted messages)
@@ -257,3 +261,15 @@ class OllamaProvider(BaseProvider):
             thinking=thinking,
             tool_calls=tool_calls,
         )
+
+
+# ---------------------------------------------------------------------------
+# Auto-registration with the provider registry
+# ---------------------------------------------------------------------------
+
+def register(registry: Any) -> None:
+    """Register the Ollama provider type with a :class:`ProviderRegistry`.
+
+    Called by bootstrap after creating the registry instance.
+    """
+    registry.register_type("ollama", OllamaProvider)

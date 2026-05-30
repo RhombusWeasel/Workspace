@@ -23,7 +23,8 @@ With AI tooling and customization at it's core your Workspace can truly become y
 
 ## Skills System
     Extend Workspace's functionality through a modular skills system. Each skill can register UI components, access the vault, and interact with the LLM to provide specialized tooling for your workflow.
-    The Skill system provides tiered loading of skills allowing you to customize skills for specific workflows.  Skills can be defined globally in ~/.agents/skills/ which agents anywhere will be able to use or locally in a project directory allowing forspecialized skills to live only where they are needed.
+    The Skill system provides tiered loading of skills allowing you to customize skills for specific workflows.  Skills can be defined globally in ~/.agents/skills/ which agents anywhere will be able 
+    to use or locally in a project directory allowing forspecialized skills to live only where they are needed.
 
 # Default LLM Skills:
     **Git Integration**: Interact with Git repositories, view diffs, commit changes, and manage branches directly from the TUI or ask your agent to do so.

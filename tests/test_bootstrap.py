@@ -69,7 +69,7 @@ class TestBootstrap:
         cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
-            "session": {"provider": "ollama", "model": "test-model"},
+            "session": {"default_provider": "ollama", "model": "test-model"},
             "database": {"path": str(working_dir / "data.db")},
             "skills": {"enabled": {}},
         }))
@@ -131,8 +131,19 @@ class TestBootstrap:
 
         # Verify config
         assert ctx.config is not None
-        assert ctx.config.get("session.provider") == "ollama"
+        assert ctx.config.get("session.default_provider") == "ollama"
         assert ctx.config.get("session.model") == "project-model"  # project overrides bundled
+
+        # Verify provider registry
+        assert ctx.providers is not None
+        from core.providers.registry import ProviderRegistry
+        assert isinstance(ctx.providers, ProviderRegistry)
+        assert "ollama" in ctx.providers.list_types()
+
+        # Verify agent registry
+        assert ctx.agents is not None
+        from core.agent_registry import AgentManager
+        assert isinstance(ctx.agents, AgentManager)
 
         # Verify skills
         assert ctx.skills is not None
@@ -208,7 +219,7 @@ class TestBootstrap:
         cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
-            "session": {"provider": "ollama", "model": "bundled-model"},
+            "session": {"default_provider": "ollama", "model": "bundled-model"},
             "ollama": {"base_url": "http://localhost:11434"},
         }))
 
@@ -232,7 +243,7 @@ class TestBootstrap:
         ctx = b.run()
 
         # Bundled config provides these
-        assert ctx.config.get("session.provider") == "ollama"
+        assert ctx.config.get("session.default_provider") == "ollama"
         assert ctx.config.get("session.model") == "bundled-model"
         assert ctx.config.get("ollama.base_url") == "http://localhost:11434"
 
@@ -266,7 +277,7 @@ class TestBootstrap:
         cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
-            "session": {"provider": "ollama", "model": "bundled-model"},
+            "session": {"default_provider": "ollama", "model": "bundled-model"},
         }))
 
         # Project config overrides
@@ -294,7 +305,7 @@ class TestBootstrap:
         ctx = b.run()
 
         # Project overrides the bundled default for model
-        assert ctx.config.get("session.provider") == "ollama"  # from bundled
+        assert ctx.config.get("session.default_provider") == "ollama"  # from bundled
         assert ctx.config.get("session.model") == "project-override"  # from project
 
         # Module default still applies (project didn't override it)
@@ -347,7 +358,7 @@ class TestSkillLoadErrorIsolation:
         cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
-            "session": {"provider": "ollama"},
+            "session": {"default_provider": "ollama"},
         }))
 
         # Create a broken skill with __init__.py in the bundled tier
@@ -408,7 +419,7 @@ class TestSkillLoadErrorIsolation:
         cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
-            "session": {"provider": "ollama"},
+            "session": {"default_provider": "ollama"},
         }))
 
         # Create a skill with SKILL_SERVICES

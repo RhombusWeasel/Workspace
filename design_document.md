@@ -23,6 +23,7 @@ context.py             ← AppContext dataclass (config, skills, database, leade
 conftest.py            ← Pytest fixtures
 ├── core/              ← Core systems (zero UI dependency)
 │   ├── agent.py       ← Agent: system prompt builder, tool-calling loop, streaming
+│   ├── agent_registry.py   ← AgentManager: agent definition registry, template rendering
 │   ├── commands.py    ← Slash-command loader (CommandBase, 3-tier discovery)
 │   ├── config.py      ← Config manager (layered JSON, dot-path, diff-save, registered defaults)
 │   ├── database.py    ← Database manager (SQLite provider, CRUD)
@@ -37,7 +38,8 @@ conftest.py            ← Pytest fixtures
 │   └── providers/
 │       ├── base.py    ← BaseProvider protocol, ChatResponse, StreamChunk, TokenUsage
 │       ├── ollama.py  ← Ollama provider (chat + stream_chat, vault key resolution)
-│       └── __init__.py ← Provider registry + config defaults
+│       ├── registry.py ← ProviderRegistry (named instances, lazy creation)
+│       └── __init__.py ← Provider types registry + config defaults
 ├── ui/                ← All Textual widgets
 │   ├── sidebar/
 │   │   ├── registry.py          ← Sidebar tab registration + discovery
@@ -895,13 +897,28 @@ This keeps the tool surface small, which is critical for LLM tool-selection accu
 
 ---
 
-### Step 24: Prompt Registry
+### Step 24: Prompt Registry → Agents Skill + Provider Registry
 
-Replace hard-coded system prompts with a database-backed prompt registry
-that supports `{{key}}` template substitution with dynamic variable providers.
+**Phase 1 (COMPLETE):** Replace hard-coded system prompts with a database-backed
+prompt registry supporting `{{key}}` template substitution with dynamic variable
+providers.  Deprecates the `agents` table (absorbed into `prompts` table).
 
-Deprecates the `agents` table (absorbed into `prompts` table). See
-`docs/PROMPT_REGISTRY_PLAN.md` for the full design.
+**Phase 2 (COMPLETE):** Extend the prompt registry into an **Agents skill** with
+per-agent model, provider, tools, skills, temperature, and max_tool_iterations.
+Replace the single `ctx.provider` with a **Provider Registry** supporting named
+provider instances.  Add `/agent` slash command for mid-conversation switching.
+See §25 for the full design.
+
+Key changes:
+- `core/prompt_registry.py` → `core/agent_registry.py` (AgentManager)
+- `core/providers/registry.py` — ProviderRegistry (new)
+- `skills/prompts/` → `skills/agents/` (renamed, new SKILL.md + panel)
+- `ctx.provider` → `ctx.providers` (ProviderRegistry, with backward-compat property)
+- `ctx.prompts` → `ctx.agents` (AgentManager, with deprecated alias)
+- `session.provider` → `session.default_provider`
+- `prompt.default_id` → `agent.default_id`
+- Agent table schema: added provider, tools, skills, temperature, max_tool_iterations
+- `cmd/agent.py` — `/agent` slash command for agent switching
 
 **Status: COMPLETE**
 
@@ -976,7 +993,7 @@ and their body is available for agent activation.
 | Bundled skills (coding, todo, brave_search) | **NOT STARTED** | Step 19 (git skill done in Step 22) |
 | Default themes | **NOT STARTED** | Step 19 |
 | E2E tests | **NOT STARTED** | Step 19 |
-| Prompt registry | **DONE** | See `docs/PROMPT_REGISTRY_PLAN.md` |
+| Agent registry + Provider registry | **DONE** | See §25 — replaced PromptManager with AgentManager + ProviderRegistry |
 
 ---
 
@@ -1025,7 +1042,167 @@ and their body is available for agent activation.
 | `test_workspace.py` | Workspace split/close/navigate | — |
 | `test_workspace_tabs.py` | WorkspaceTabs open/close/switch | — |
 | `test_git_skill.py` | Git skill scripts (status, checkpoint, diff, log, branch) | 17 |
-| `test_prompt_registry.py` | PromptManager CRUD, render, dynamic providers, seeding | 35 |
+| `test_agent_registry.py` | AgentManager CRUD, render, resolve helpers, migration | 58 |
+| `test_provider_registry.py` | ProviderRegistry, lazy creation, type registration | 15 |
 | `test_text_editor_modal.py` | TextEditorModal construction, language, read-only | 4 |
 
 **Total: ~42 test files**
+---
+
+## 25. Agents Skill + Provider Registry
+
+### 25.1 Overview
+
+The **Agents skill** replaces the former **Prompts skill** and `PromptManager`.
+Where the prompt registry managed only system prompt templates, the agent
+registry manages full agent *definitions* — each of which is a prompt
+template **plus** optional overrides for model, provider, tool permissions,
+skill filtering, temperature, and max tool iterations.
+
+Concurrently, the **Provider Registry** replaces the single `ctx.provider`
+field with a named-instance model.  Multiple provider instances (e.g.
+`ollama-local`, `ollama-cloud`, `openai-main`) can be defined in config, and
+each agent can route through a specific named instance.
+
+### 25.2 Provider Registry
+
+**File:** `core/providers/registry.py`
+
+Provider instances are defined in config under `providers.instances`:
+
+```json
+{
+  "providers": {
+    "instances": {
+      "ollama-local": {
+        "type": "ollama",
+        "base_url": "http://localhost:11434",
+        "model": "deepseek-r1:14b"
+      },
+      "ollama-cloud": {
+        "type": "ollama",
+        "model": "deepseek-v4-pro:cloud"
+      }
+    }
+  },
+  "session": {
+    "default_provider": "ollama-cloud"
+  }
+}
+```
+
+Key methods:
+
+| Method | Purpose |
+|---|---|
+| `register_type(name, cls)` | Register a provider class for a type name |
+| `get(name)` | Get a named provider instance (lazily created) |
+| `get_default()` | Get the default provider (from `session.default_provider`) |
+| `list_instances()` | List configured instance names |
+| `has_instance(name)` | Check if an instance is configured |
+
+Provider types auto-register at import time (e.g. `ollama.py` exposes a
+`register(registry)` function called by bootstrap).
+
+### 25.3 Agent Registry
+
+**File:** `core/agent_registry.py`
+
+Replaces `core/prompt_registry.py`.  The `AgentManager` class extends the
+former `PromptManager` with:
+
+| Field | Purpose | Default if empty |
+|---|---|---|
+| `model` | Override the LLM model | Session default (`session.model`) |
+| `provider` | Named provider instance | Session default (`session.default_provider`) |
+| `tools` | JSON list of allowed tool names/tags | All tools |
+| `skills` | JSON list of skill names to activate | All skills (via `{{skills}}`) |
+| `temperature` | Sampling temperature override | Provider default |
+| `max_tool_iterations` | Tool-loop safety limit | 10 |
+
+Resolve helpers provide clean access:
+
+```python
+model = agents.resolve_model(agent_def, ctx)
+provider_name = agents.resolve_provider_name(agent_def, ctx)
+tool_filter = agents.resolve_tools(agent_def)       # None = all
+skill_filter = agents.resolve_skills(agent_def)      # None = all
+temp = agents.resolve_temperature(agent_def)         # None = default
+mti = agents.resolve_max_tool_iterations(agent_def) # None = default
+```
+
+### 25.4 Database Schema
+
+The `agents` table replaces both the legacy `agents` table (deprecated) and
+the `prompts` table:
+
+```sql
+CREATE TABLE IF NOT EXISTS agents (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    template            TEXT NOT NULL,
+    model               TEXT NOT NULL DEFAULT '',
+    provider            TEXT NOT NULL DEFAULT '',
+    scope               TEXT NOT NULL DEFAULT 'global',
+    tools               TEXT NOT NULL DEFAULT '',
+    skills              TEXT NOT NULL DEFAULT '',
+    temperature         TEXT NOT NULL DEFAULT '',
+    max_tool_iterations TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+```
+
+Migration: On first run, `DatabaseManager._migrate_agents_table()` detects
+the old `agents` table (by checking for `system_prompt` column) and renames
+it to `agents_legacy`.  Then `AgentManager._migrate_legacy_tables()` copies
+rows from both `agents_legacy` and `prompts` into the new `agents` table
+and drops the legacy tables.
+
+### 25.5 Agent Switching
+
+The `/agent` slash command (`cmd/agent.py`) allows mid-conversation
+switching of the active agent.  Usage:
+
+- `/agent` — show current agent and list available agents
+- `/agent <id>` — switch the current chat to use the named agent
+
+The command re-wires the `ChatManager` by calling `_wire_agent(ctx)`,
+which resolves the new agent's prompt, provider, model, tools, and skills.
+
+### 25.6 Sidebar Panel
+
+`skills/agents/components/agent_panel.py` — `AgentPanel` replaces the
+former `PromptPanel`.  Each agent node in the tree shows:
+
+- Name and scope
+- Model and provider overrides (if set)
+- Template preview
+- Tools, skills, temperature, max_tool_iterations (if set)
+
+The **+ New** button creates an agent via a multi-step modal flow:
+name → provider → model → template.
+
+### 25.7 Config Changes
+
+| Old key | New key |
+|---|---|
+| `session.provider` | `session.default_provider` |
+| `prompt.default_id` | `agent.default_id` |
+| `prompt.inline_suggest_id` | `agent.inline_suggest_id` |
+| *(none)* | `providers.instances` |
+
+The `{{provider}}` template variable is now available, resolving to the
+default provider instance name.
+
+### 25.8 Backward Compatibility
+
+- `AppContext.provider` is preserved as a **property** that delegates to
+  `ctx.providers.get_default()`.  Existing code still works.
+- `AppContext.prompts` is set to the same `AgentManager` instance as
+  `ctx.agents` during bootstrap.  Code referencing `ctx.prompts` still works
+  (deprecated).
+- Old `DatabaseManager` agent CRUD methods (`create_agent`, `get_agent`,
+  `list_agents`, `delete_agent`, `seed_agents`) emit `DeprecationWarning`
+  but still function, writing to the new `agents` table.

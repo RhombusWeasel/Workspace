@@ -10,9 +10,11 @@ Called once at application startup.  Steps through:
 6. Load skill __init__.py entry points (full package load for UI skills).
 7. Initialize SQLite database.
 8. Create vault manager (master + optional local vault).
-9. Build leader chord tree (core module chords).
-10. Collect CSS paths.
-11. Return an :class:`AppContext`.
+9. Create provider registry and register provider types.
+10. Create agent manager (system prompt templates + agent definitions).
+11. Build leader chord tree (core module chords).
+12. Collect CSS paths.
+13. Return an :class:`AppContext`.
 
 Skills are the unified extension mechanism.  A skill is a directory with
 a ``SKILL.md`` manifest.  Skills with ``__init__.py`` are loaded with full
@@ -38,7 +40,8 @@ from core import paths
 from core.config import Config, get_registered_defaults
 from core.skills import skill_manager
 from core.database import DatabaseManager
-from core.prompt_registry import PromptManager
+from core.agent_registry import AgentManager
+from core.providers.registry import ProviderRegistry
 from core.leader import leader as leader_registry
 from core.vault import VaultManager
 
@@ -70,10 +73,10 @@ class Bootstrap:
         self._load_skill_components(skills)
         skill_service_factories = self._load_skill_init_files(skills)
         database = self._init_database(config)
-        prompts = self._init_prompt_registry(database)
         vault = self._init_vault()
-        self._register_prompt_providers(prompts, skills)
-        provider = self._init_provider(config, vault)
+        providers = self._init_provider_registry(config, vault)
+        agents = self._init_agent_registry(database)
+        self._register_agent_providers(agents, skills, providers)
         self._init_leader()
         css_paths = self._collect_css()
 
@@ -98,9 +101,10 @@ class Bootstrap:
             config=config,
             skills=skills,
             database=database,
-            prompts=prompts,
+            agents=agents,
+            prompts=agents,  # deprecated alias
             vault=vault,
-            provider=provider,
+            providers=providers,
             leader=leader_registry,
             working_directory=self.wd,
             css_paths=css_paths,
@@ -255,7 +259,7 @@ class Bootstrap:
         sub-imports resolve from the skill's own directory.  This is
         essential for skills with deep sub-packages (e.g. ``database``).
 
-        Skills without ``__init__.py`` (ecoscosystem / Anthropic spec skills)
+        Skills without ``__init__.py`` (ecosystem / Anthropic spec skills)
         are not loaded here — they are discovered and their SKILL.md body
         is available for agent activation, but no Python code runs.
 
@@ -350,49 +354,6 @@ class Bootstrap:
         return DatabaseManager(db_path)
 
     # ------------------------------------------------------------------
-    # Phase 7a — Prompt Registry
-    # ------------------------------------------------------------------
-
-    def _init_prompt_registry(self, db: DatabaseManager) -> PromptManager:
-        """Create a PromptManager backed by the database.
-
-        Seeds the default prompts (chat assistant, inline suggest)
-        on first run.
-        """
-        return PromptManager(db, working_directory=self.wd)
-
-    def _register_prompt_providers(self, prompts: PromptManager, skills) -> None:
-        """Register dynamic variable providers for prompt templates."""
-        prompts.register_dynamic(
-            "skills",
-            lambda ctx: {
-                "__default__": skill_manager.get_catalog_xml(),
-                "catalog": skill_manager.get_catalog_xml(),
-                "names": ", ".join(skill_manager.list_skills()),
-            },
-        )
-        prompts.register_dynamic(
-            "working_directory",
-            lambda ctx: ctx.working_directory if ctx and ctx.working_directory else self.wd,
-        )
-        prompts.register_dynamic(
-            "project_name",
-            lambda ctx: os.path.basename(
-                ctx.working_directory if ctx and ctx.working_directory else self.wd
-            ),
-        )
-        from datetime import timezone
-        from datetime import datetime as _dt
-        prompts.register_dynamic(
-            "date",
-            lambda ctx: _dt.now(timezone.utc).strftime("%Y-%m-%d"),
-        )
-        prompts.register_dynamic(
-            "model",
-            lambda ctx: ctx.config.get("session.model", "") if ctx and ctx.config else "",
-        )
-
-    # ------------------------------------------------------------------
     # Phase 7 — Vault
     # ------------------------------------------------------------------
 
@@ -402,25 +363,93 @@ class Bootstrap:
         return VaultManager(master_path, self.wd)
 
     # ------------------------------------------------------------------
-    # Phase 7b — Provider
+    # Phase 8 — Provider Registry
     # ------------------------------------------------------------------
 
-    def _init_provider(self, config: Config, vault: VaultManager):
-        """Create the LLM provider for the current session.
+    def _init_provider_registry(self, config: Config, vault: VaultManager) -> ProviderRegistry:
+        """Create the provider registry and register all known provider types.
 
-        Reads ``session.provider`` from config to determine which
-        provider to use (currently only ``"ollama"``).  The provider
-        receives the vault and config so it can:
+        Provider types are registered explicitly so the registry can
+        instantiate the correct class for each named instance in config.
 
-        * Resolve API keys exclusively from the vault.
-        * Automatically redact secrets from all messages.
+        The default bundled instance ``"ollama"`` is created lazily on
+        first access — no provider is contacted at bootstrap time.
         """
-        from core.providers.ollama import OllamaProvider
+        registry = ProviderRegistry(config=config, vault=vault)
 
-        return OllamaProvider(config=config, vault=vault)
+        # Register bundled provider types.
+        from core.providers.ollama import register as register_ollama
+        register_ollama(registry)
+
+        # Future: register additional provider types here.
+        # from core.providers.openai import register as register_openai
+        # register_openai(registry)
+
+        return registry
 
     # ------------------------------------------------------------------
-    # Phase 8 — Leader chords
+    # Phase 9 — Agent Registry
+    # ------------------------------------------------------------------
+
+    def _init_agent_registry(self, db: DatabaseManager) -> AgentManager:
+        """Create an AgentManager backed by the database.
+
+        Seeds the default agent definitions (chat assistant, inline suggest)
+        on first run.  Also handles migration from legacy ``prompts`` and
+        ``agents`` tables.
+        """
+        return AgentManager(db, working_directory=self.wd)
+
+    def _register_agent_providers(
+        self,
+        agents: AgentManager,
+        skills,
+        providers: ProviderRegistry,
+    ) -> None:
+        """Register dynamic variable providers for agent templates."""
+        agents.register_dynamic(
+            "skills",
+            lambda ctx: {
+                "__default__": skill_manager.get_catalog_xml(),
+                "catalog": skill_manager.get_catalog_xml(),
+                "names": ", ".join(skill_manager.list_skills()),
+            },
+        )
+        agents.register_dynamic(
+            "working_directory",
+            lambda ctx: ctx.working_directory if ctx and ctx.working_directory else self.wd,
+        )
+        agents.register_dynamic(
+            "project_name",
+            lambda ctx: os.path.basename(
+                ctx.working_directory if ctx and ctx.working_directory else self.wd
+            ),
+        )
+        from datetime import timezone
+        from datetime import datetime as _dt
+        agents.register_dynamic(
+            "date",
+            lambda ctx: _dt.now(timezone.utc).strftime("%Y-%m-%d"),
+        )
+        agents.register_dynamic(
+            "model",
+            lambda ctx: (
+                ctx.config.get("session.model", "")
+                if ctx and ctx.config
+                else ""
+            ),
+        )
+        agents.register_dynamic(
+            "provider",
+            lambda ctx: (
+                ctx.config.get("session.default_provider", "ollama")
+                if ctx and ctx.config
+                else "ollama"
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 10 — Leader chords
     # ------------------------------------------------------------------
 
     def _init_leader(self) -> None:
@@ -430,7 +459,7 @@ class Bootstrap:
         register_workspace_leader_chords()
 
     # ------------------------------------------------------------------
-    # Phase 9 — CSS
+    # Phase 11 — CSS
     # ------------------------------------------------------------------
 
     def _collect_css(self) -> list[str]:

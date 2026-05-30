@@ -38,10 +38,14 @@ import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for h
 # Import inline suggestion module so its register_defaults() runs
 # before bootstrap's apply_defaults().
 import core.inline_suggest  # noqa: F401 — side-effect import for config defaults
-# Import prompt registry so its config defaults are registered.
-import core.prompt_registry  # noqa: F401 — side-effect import for config defaults
+# Import agent registry so its config defaults are registered.
+import core.agent_registry  # noqa: F401 — side-effect import for config defaults
+# Import provider registry so its config defaults are registered.
+import core.providers.registry  # noqa: F401 — side-effect import for config defaults
 # Import provider base so redaction config defaults register early.
 import core.providers.base  # noqa: F401 — side-effect import for redaction defaults
+# Import ollama provider so its config defaults register.
+import core.providers.ollama  # noqa: F401 — side-effect import for config defaults
 # Terminal handler is now registered by the terminal plugin
 # (plugins/terminal/__init__.py) at plugin load time.
 

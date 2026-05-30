@@ -249,7 +249,7 @@ class ChatManager(Widget):
         """Wire agent, tools, and database from an ``AppContext``.
 
         If no agent was explicitly set, this creates a default agent
-        using ``OllamaProvider`` and the current skill catalog.
+        using the provider and agent registries.
         """
         if ctx.database is not None:
             self._db = ctx.database
@@ -261,36 +261,75 @@ class ChatManager(Widget):
         from core.agent import Agent
         from core.tools import get_tools
 
-        provider = ctx.provider
+        # Resolve the agent definition from the agent registry.
+        agent_id = ctx.config.get("agent.default_id", "default")
+        agent_def = None
+        if ctx.agents is not None:
+            agent_def = ctx.agents.get_agent(agent_id)
 
-        # Resolve the system prompt from the prompt registry.
-        prompt_id = ctx.config.get("prompt.default_id", "default")
-        if ctx.prompts is not None:
+        # Resolve the provider — agent may specify a named provider instance.
+        if ctx.providers is not None:
+            if agent_def and agent_def.get("provider"):
+                try:
+                    provider = ctx.providers.get(agent_def["provider"])
+                except (ValueError, KeyError):
+                    provider = ctx.providers.get_default()
+            else:
+                provider = ctx.providers.get_default()
+        else:
+            provider = ctx.provider  # backward compat property
+
+        # Resolve the system prompt from the agent registry.
+        if ctx.agents is not None and agent_def is not None:
             try:
-                system_prompt = ctx.prompts.render(prompt_id, ctx)
+                system_prompt = ctx.agents.render(agent_id, ctx)
             except ValueError:
-                # Prompt not found — fall back to a bare-bones default.
                 system_prompt = "You are a helpful AI coding assistant."
         else:
             system_prompt = "You are a helpful AI coding assistant."
 
-        # Determine the model — prompt template may specify an override.
+        # Determine the model — agent definition may specify an override.
         model = ""
-        if ctx.prompts is not None:
-            prompt_row = ctx.prompts.get_prompt(prompt_id)
-            if prompt_row and prompt_row.get("model"):
-                model = prompt_row["model"]
-        if not model and ctx.config is not None:
+        if agent_def and ctx.agents is not None:
+            model = ctx.agents.resolve_model(agent_def, ctx)
+        elif ctx.config is not None:
             model = ctx.config.get("session.model", "")
+
+        # Resolve tools — agent may specify a subset.
+        tool_filter = None
+        if agent_def and ctx.agents is not None:
+            tool_filter = ctx.agents.resolve_tools(agent_def)
+
+        if tool_filter is not None:
+            tools = get_tools(filtered=tool_filter)
+        else:
+            tools = get_tools()
+
+        # Resolve max_tool_iterations — agent may override.
+        max_tool_iterations = 10
+        if agent_def and ctx.agents is not None:
+            mt = ctx.agents.resolve_max_tool_iterations(agent_def)
+            if mt is not None:
+                max_tool_iterations = mt
+
+        # Resolve per-agent skills XML if agent specifies a skill subset.
+        skills_xml = ""
+        if agent_def and ctx.agents is not None:
+            skill_names = ctx.agents.resolve_skills(agent_def)
+            if skill_names is not None and ctx.skills is not None:
+                # Agent wants specific skills — build XML for just those.
+                skills_xml = ctx.skills.render_selected(skill_names)
 
         agent = Agent(
             provider=provider,
             template=system_prompt,
             model=model,
+            skills_xml=skills_xml,
+            max_tool_iterations=max_tool_iterations,
             ctx=ctx,
         )
         self._agent = agent
-        self._tools = get_tools()
+        self._tools = tools
 
     # ------------------------------------------------------------------
     # Command palette selection
