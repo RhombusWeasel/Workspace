@@ -4,8 +4,7 @@ Displays all agents in a tree.  Each agent shows its name, model, and
 scope, with an **Edit** button to modify the template and a **Delete**
 button to remove it.  A **+ New** button at the top creates a new agent.
 
-Leaf nodes show the agent's template preview, provider, tools,
-skills, and generation parameters.
+Uses the schema-driven :class:`FormModal` for creating agents.
 
 Registered as a sidebar tab via ``@register_sidebar_tab``.
 """
@@ -13,15 +12,17 @@ Registered as a sidebar tab via ``@register_sidebar_tab``.
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.widgets import Button, Static
 
 from context import AppContext
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode, TreeRow, RowButton
+from ui.widgets.form_modal import FormControl, FormModal
 from core.agent_registry import AgentManager
-from utils.icons import EDIT, DELETE, ADD_FILE
+from utils.icons import EDIT, DELETE
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -29,11 +30,10 @@ from utils.icons import EDIT, DELETE, ADD_FILE
 
 _EDIT = "edit"
 _DELETE = "delete"
-_NEW = "new"
 
 _SCOPE_ICONS = {
-    "global": "󰌘",   # globe
-    "project": "󰢷",  # folder
+    "global": "󰌘",
+    "project": "󰢷",
 }
 
 
@@ -45,11 +45,18 @@ def _agent_buttons() -> list[RowButton]:
 
 
 def _truncate(text: str, max_len: int = 60) -> str:
-    """Truncate text for preview, replacing newlines."""
     preview = text.replace("\n", " ↵ ")[:max_len]
     if len(text) > max_len:
         preview += "…"
     return preview
+
+
+def _provider_options(ctx: AppContext | None) -> list[str]:
+    """Build list of available provider instance names for a select field."""
+    if ctx is not None and ctx.providers is not None:
+        instances = ctx.providers.list_instances()
+        return instances if instances else []
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +67,7 @@ def _truncate(text: str, max_len: int = 60) -> str:
 @register_sidebar_tab(name="agents", icon="󱙺", side="left",
                        tooltip="Agents")
 class AgentPanel(Container):
-    """Sidebar panel showing agent definitions as an editable tree.
-
-    Each agent is a branch node whose children show the template
-    preview, model, provider, scope, tools, and skills.  Edit/Delete
-    buttons on each agent row.
-    """
+    """Sidebar panel showing agent definitions as an editable tree."""
 
     def __init__(self):
         super().__init__()
@@ -98,7 +100,6 @@ class AgentPanel(Container):
     # ------------------------------------------------------------------
 
     def _rebuild(self) -> None:
-        """Rebuild the tree from the agent registry."""
         if self._agents is None:
             root = TreeNode("agents-root", "Agents (not available)")
             self._tree.set_root(root)
@@ -112,7 +113,6 @@ class AgentPanel(Container):
             scope = a.get("scope", "global")
             scope_icon = _SCOPE_ICONS.get(scope, "󰌘")
 
-            # Build detail line for the label
             details: list[str] = []
             if a.get("model"):
                 details.append(f"model={a['model']}")
@@ -120,11 +120,9 @@ class AgentPanel(Container):
                 details.append(f"provider={a['provider']}")
             detail_str = f"  · {'  · '.join(details)}" if details else ""
 
-            # Truncate template for preview
             template = a.get("template", "")
             preview = _truncate(template)
 
-            # Build sub-nodes for agent config details
             sub_nodes: list[TreeNode] = [
                 TreeNode(
                     id=f"agent-{agent_id}-template",
@@ -138,39 +136,30 @@ class AgentPanel(Container):
                 ),
             ]
 
-            # Show provider if set
             if a.get("provider"):
                 sub_nodes.append(TreeNode(
                     id=f"agent-{agent_id}-provider",
                     label=f"󰢷 Provider: {a['provider']}",
                     data={"type": "provider-info", "agent_id": agent_id},
                 ))
-
-            # Show tools if set
             if a.get("tools"):
                 sub_nodes.append(TreeNode(
                     id=f"agent-{agent_id}-tools",
                     label=f"🔧 Tools: {a['tools']}",
                     data={"type": "tools-info", "agent_id": agent_id},
                 ))
-
-            # Show skills if set
             if a.get("skills"):
                 sub_nodes.append(TreeNode(
                     id=f"agent-{agent_id}-skills",
                     label=f"󱙺 Skills: {a['skills']}",
                     data={"type": "skills-info", "agent_id": agent_id},
                 ))
-
-            # Show temperature if set
             if a.get("temperature"):
                 sub_nodes.append(TreeNode(
                     id=f"agent-{agent_id}-temperature",
                     label=f"🌡 Temperature: {a['temperature']}",
                     data={"type": "temp-info", "agent_id": agent_id},
                 ))
-
-            # Show max_tool_iterations if set
             if a.get("max_tool_iterations"):
                 sub_nodes.append(TreeNode(
                     id=f"agent-{agent_id}-mti",
@@ -178,7 +167,6 @@ class AgentPanel(Container):
                     data={"type": "mti-info", "agent_id": agent_id},
                 ))
 
-            # Branch node for the agent
             agent_node = TreeNode(
                 id=f"agent-{agent_id}",
                 label=f"{scope_icon} {a['name']}{detail_str}",
@@ -205,7 +193,6 @@ class AgentPanel(Container):
     # ------------------------------------------------------------------
 
     def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
-        """Handle Edit / Delete button presses on agent nodes."""
         event.stop()
         node = event.node
         data = node.data or {}
@@ -221,7 +208,6 @@ class AgentPanel(Container):
             self._agent_delete(agent_id)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle the + New button."""
         event.stop()
         if event.button.id == "agent-new-btn":
             self._agent_create()
@@ -231,9 +217,7 @@ class AgentPanel(Container):
     # ------------------------------------------------------------------
 
     def _agent_edit(self, agent_id: str) -> None:
-        """Open a multi-line text editor modal for editing an agent template."""
-        from ui.widgets.text_editor_modal import TextEditorModal
-
+        """Open a form modal pre-filled with the agent's current values."""
         if self._agents is None:
             return
 
@@ -241,30 +225,45 @@ class AgentPanel(Container):
         if agent is None:
             return
 
-        template = agent.get("template", "")
+        ctx = getattr(self.app, "context", None)
+        provider_opts = _provider_options(ctx)
+
+        controls = self._build_controls(
+            provider_opts,
+            defaults={
+                "name": agent.get("name", ""),
+                "provider": agent.get("provider", ""),
+                "model": agent.get("model", ""),
+                "template": agent.get("template", ""),
+                "tools": agent.get("tools", ""),
+                "skills": agent.get("skills", ""),
+                "temperature": agent.get("temperature", ""),
+                "max_tool_iterations": agent.get("max_tool_iterations", ""),
+            },
+        )
 
         async def do_edit() -> None:
-            modal = TextEditorModal(
-                f"Edit agent: {agent['name']}",
-                text=template,
-                language="markdown",
+            modal = FormModal(
+                f"Edit Agent: {agent.get('name', agent_id)}",
+                controls,
+                confirm_label="Save",
             )
             result = await self.app.push_screen_wait(modal)
             if result is None:
                 return
-
-            self._agents.update_agent(agent_id, template=result)
+            self._agents.update_agent(agent_id, **result)
             self._rebuild()
 
         self.app.run_worker(do_edit())
 
     def _agent_delete(self, agent_id: str) -> None:
-        """Delete an agent after confirmation."""
         from ui.widgets.confirm_modal import ConfirmModal
 
-        # Don't allow deleting built-in agents
         if not agent_id.startswith("custom:"):
             self.app.notify("Built-in agents cannot be deleted", severity="warning")
+            return
+
+        if self._agents is None:
             return
 
         async def do_delete() -> None:
@@ -275,7 +274,6 @@ class AgentPanel(Container):
             confirmed = await self.app.push_screen_wait(modal)
             if not confirmed:
                 return
-
             self._agents.delete_agent(agent_id)
             self._rebuild()
             self.app.notify(f"Deleted agent '{agent_id}'")
@@ -283,68 +281,132 @@ class AgentPanel(Container):
         self.app.run_worker(do_delete())
 
     def _agent_create(self) -> None:
-        """Create a new agent via a multi-step modal flow.
-
-        First asks for a name via a single-line InputModal, then
-        optional provider/model via InputModal, then opens a
-        TextEditorModal for the template body.
-        """
-        from ui.widgets.input_modal import InputModal
-        from ui.widgets.text_editor_modal import TextEditorModal
-
+        """Create a new agent via the schema-driven FormModal."""
         if self._agents is None:
             return
 
+        ctx = getattr(self.app, "context", None)
+        provider_opts = _provider_options(ctx)
+        controls = self._build_controls(provider_opts)
+
         async def do_create() -> None:
-            # Step 1: Name (single-line)
-            name_modal = InputModal(
-                "New Agent",
-                label="Name",
-                default="",
-            )
-            name = await self.app.push_screen_wait(name_modal)
-            if not name or not name.strip():
-                return
-
-            # Step 2: Provider (optional)
-            provider_modal = InputModal(
-                f"Provider for: {name.strip()}",
-                label="Provider instance name (leave empty for default)",
-                default="",
-            )
-            provider = await self.app.push_screen_wait(provider_modal)
-            if provider is None:
-                return
-
-            # Step 3: Model (optional)
-            model_modal = InputModal(
-                f"Model for: {name.strip()}",
-                label="Model name (leave empty for default)",
-                default="",
-            )
-            model = await self.app.push_screen_wait(model_modal)
-            if model is None:
-                return
-
-            # Step 4: Template (multi-line)
-            template_modal = TextEditorModal(
-                f"Template for: {name.strip()}",
-                text="You are a helpful assistant. {{skills}}",
-                language="markdown",
-            )
-            template = await self.app.push_screen_wait(template_modal)
-            if template is None:
+            modal = FormModal("New Agent", controls)
+            result = await self.app.push_screen_wait(modal)
+            if result is None:
                 return
 
             agent_id = self._agents.create_agent(
-                name=name.strip(),
+                name=result.get("name", ""),
                 description="",
-                template=template,
-                model=model.strip() if model else "",
-                provider=provider.strip() if provider else "",
+                template=result.get("template", ""),
+                model=result.get("model", ""),
+                provider=result.get("provider", ""),
                 scope="global",
+                tools=result.get("tools", ""),
+                skills=result.get("skills", ""),
+                temperature=result.get("temperature", ""),
+                max_tool_iterations=result.get("max_tool_iterations", ""),
             )
             self._rebuild()
-            self.app.notify(f"Created agent '{name.strip()}'")
+            self.app.notify(f"Created agent '{result.get('name', agent_id)}'")
 
         self.app.run_worker(do_create())
+
+    # ------------------------------------------------------------------
+    # Form control builder
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_controls(
+        provider_options: list[str],
+        defaults: dict[str, str] | None = None,
+    ) -> list[FormControl]:
+        """Build the list of FormControl descriptors for the agent form.
+
+        Uses current provider options from the registry and optional
+        default values (for editing existing agents).
+        """
+        d = defaults or {}
+
+        controls: list[FormControl] = [
+            FormControl(
+                name="name",
+                label="Name",
+                default=d.get("name", ""),
+                required=True,
+            ),
+        ]
+
+        # Provider — use select if instances are configured, else text.
+        if provider_options:
+            controls.append(FormControl(
+                name="provider",
+                label="Provider",
+                type="select",
+                options=provider_options,
+                default=d.get("provider", ""),
+                required=False,
+                placeholder="Default provider",
+            ))
+        else:
+            controls.append(FormControl(
+                name="provider",
+                label="Provider instance name",
+                default=d.get("provider", ""),
+                required=False,
+                placeholder="Leave empty for default",
+            ))
+
+        controls.extend([
+            FormControl(
+                name="model",
+                label="Model",
+                default=d.get("model", ""),
+                required=False,
+                placeholder="Leave empty for default",
+            ),
+            FormControl(
+                name="template",
+                label="System Prompt",
+                type="textarea",
+                default=d.get("template", ""),
+                required=True,
+            ),
+            FormControl(
+                name="tools",
+                label="Tools (JSON list)",
+                type="taglist",
+                default=d.get("tools", ""),
+                required=False,
+                placeholder='e.g. ["read_file", "run_command"]',
+            ),
+            FormControl(
+                name="skills",
+                label="Skills (JSON list)",
+                type="taglist",
+                default=d.get("skills", ""),
+                required=False,
+                placeholder='e.g. ["git", "chat"]',
+            ),
+            FormControl(
+                name="temperature",
+                label="Temperature",
+                type="number",
+                default=d.get("temperature", ""),
+                required=False,
+                min=0,
+                max=2,
+                placeholder="0.0 – 2.0",
+            ),
+            FormControl(
+                name="max_tool_iterations",
+                label="Max Tool Iterations",
+                type="number",
+                default=d.get("max_tool_iterations", ""),
+                required=False,
+                min=1,
+                placeholder="Default: 10",
+            ),
+        ])
+
+        return controls

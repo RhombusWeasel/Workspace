@@ -1,0 +1,66 @@
+FormModal {
+    align: center middle;
+}
+
+FormModal #form-dialog {
+    width: 60;
+    max-height: 30;
+    background: $surface;
+    border: thick $accent;
+    padding: 1 2;
+}
+
+FormModal #form-title {
+    text-style: bold;
+    color: $text;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+FormModal #form-fields {
+    height: auto;
+    max-height: 20;
+    margin-bottom: 1;
+}
+
+FormModal .form-field-label {
+    color: $text-muted;
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+FormModal .form-field-input {
+    margin-bottom: 0;
+}
+
+FormModal .form-textarea-row {
+    height: 3;
+    align: center middle;
+}
+
+FormModal .form-textarea-row Input {
+    width: 1fr;
+}
+
+FormModal .form-edit-btn {
+    margin-left: 1;
+    min-width: 6;
+}
+
+FormModal #form-status {
+    color: $warning;
+    height: 1;
+    margin: 0;
+    padding: 0;
+}
+
+FormModal #form-buttons {
+    align: center middle;
+    height: 3;
+    margin-top: 1;
+}
+
+FormModal #form-buttons Button {
+    margin: 0 1;
+    min-width: 10;
+}
