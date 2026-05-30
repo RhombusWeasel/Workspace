@@ -5,6 +5,12 @@ tool-calling cycle: send messages → receive tool calls → execute via
 ``execute_tool()`` → feed results back → continue until the LLM
 produces a final text response.
 
+Message redaction is handled automatically by the
+:class:`~core.providers.base.BaseProvider` — every call to
+:meth:`provider.chat` and :meth:`provider.stream_chat` scrubs secrets
+before they leave the process.  The Agent no longer needs its own
+redaction logic.
+
 Supports prompt template rendering (``{{key}}`` substitution) and
 optional skills XML injection.
 """
@@ -60,6 +66,7 @@ class Agent:
     ----------
     provider:
         The LLM backend (e.g. :class:`~core.providers.ollama.OllamaProvider`).
+        Redaction is handled automatically by the provider's base class.
     template:
         System prompt template with optional ``{{key}}`` placeholders.
     variables:
@@ -113,7 +120,9 @@ class Agent:
     ) -> list[Message]:
         """Build the full message list for a turn.
 
-        Returns ``[system, ...history..., user]``.
+        Returns ``[system, ...history..., user]``.  Redaction happens
+        automatically when the provider sends the messages — the Agent
+        no longer redacts here.
         """
         messages: list[Message] = [
             Message(role="system", content=self.system_prompt)
@@ -131,13 +140,12 @@ class Agent:
                     )
                     for tc in raw_tcs
                 ]
-            msg = Message(
+            messages.append(Message(
                 role=entry["role"],
                 content=entry.get("content", ""),
                 tool_calls=tc_list,
                 name=entry.get("tool_name"),
-            )
-            messages.append(msg)
+            ))
         messages.append(Message(role="user", content=user_text))
         return messages
 
@@ -157,7 +165,6 @@ class Agent:
         Raises ``asyncio.CancelledError`` if :meth:`abort` was called.
         """
         self._aborted = False
-
         messages = self.build_messages(history, user_text)
 
         for _ in range(self._max_tool_iterations + 1):
@@ -172,14 +179,12 @@ class Agent:
             if not response.tool_calls:
                 return response
 
-            # Execute tools and append results
-            messages.append(
-                Message(
-                    role="assistant",
-                    content=response.content or "",
-                    tool_calls=response.tool_calls,
-                )
-            )
+            # Append assistant message and tool results.
+            messages.append(Message(
+                role="assistant",
+                content=response.content or "",
+                tool_calls=response.tool_calls,
+            ))
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc)
                 messages.append(
@@ -207,7 +212,6 @@ class Agent:
         executed and the loop continues with the tool results.
         """
         self._aborted = False
-
         messages = self.build_messages(history, user_text)
 
         for _ in range(self._max_tool_iterations + 1):
@@ -240,16 +244,14 @@ class Agent:
                 # Final response done — nothing more to do.
                 return
 
-            # Tools were called — append assistant + tool results to messages
-            # and continue the loop.
+            # Tools were called — append assistant + tool results
+            # to messages and continue the loop.
             assistant_content = "".join(collected_content)
-            messages.append(
-                Message(
-                    role="assistant",
-                    content=assistant_content,
-                    tool_calls=tool_calls,
-                )
-            )
+            messages.append(Message(
+                role="assistant",
+                content=assistant_content,
+                tool_calls=tool_calls,
+            ))
             for tc in tool_calls:
                 result = await self._execute_tool_call(tc)
                 messages.append(

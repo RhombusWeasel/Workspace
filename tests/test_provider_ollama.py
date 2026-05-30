@@ -12,6 +12,29 @@ from core.providers.ollama import OllamaProvider
 from core.vault import VaultManager
 
 
+def _fake_resp():
+    """Create a minimal fake Ollama response for _make_client tests."""
+    class FakeMsg:
+        role = "assistant"
+        content = "ok"
+
+    class FakeResp:
+        message = FakeMsg()
+        prompt_eval_count = 0
+        eval_count = 0
+
+    return FakeResp()
+
+
+def _capture_client(fake_client):
+    """Return a side_effect function that captures host/headers on the fake client."""
+    def _make(host=None, headers=None, **kwargs):
+        fake_client._host = host
+        fake_client._headers = headers
+        return fake_client
+    return _make
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -729,6 +752,7 @@ class TestChatMethod:
             provider = OllamaProvider(config=config, model="phi3")
             await provider.chat(
                 messages=[Message(role="user", content="Hi")],
+                model=None,
             )
 
         assert fake_client.chat_calls[0]["model"] == "phi3"
@@ -739,6 +763,8 @@ class TestChatMethod:
             tmp_path,
             {"ollama": {"base_url": "http://ollama.local:1234"}},
         )
+        vault = _make_vault(tmp_path)
+        vault.register_credential("ollama", "apiuser", "sk-test-key")
 
         class FakeMsg:
             role = "assistant"
@@ -759,7 +785,7 @@ class TestChatMethod:
         with patch(
             "core.providers.ollama.AsyncClient", side_effect=make_client
         ):
-            provider = OllamaProvider(config=config, model="llama3")
+            provider = OllamaProvider(config=config, vault=vault, model="llama3")
             await provider.chat(
                 messages=[Message(role="user", content="Hi")],
                 model="llama3",
@@ -962,9 +988,118 @@ class TestStreamChat:
         assert chunks[0].tool_calls[0].id == ""  # ollama has no id
 
 
+
 # ---------------------------------------------------------------------------
-# Error handling
+# Auth header behaviour
 # ---------------------------------------------------------------------------
+
+
+class TestAuthHeaders:
+    """The auth header is always set explicitly to suppress the ollama
+    library's OLLAMA_API_KEY env var fallback.  When the vault has a key
+    it's sent as a Bearer token; otherwise an empty header is sent.  The
+    Ollama server ignores auth for local models and uses it for remote ones,
+    so we always send it and let the server decide."""
+
+    @pytest.mark.asyncio
+    async def test_vault_with_key_sends_bearer(self, tmp_path):
+        config = _make_config(tmp_path)
+        vault = _make_vault(tmp_path)
+        vault.register_credential("ollama", "user", "sk-test-key")
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=vault)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._headers == {"Authorization": "Bearer sk-test-key"}
+
+    @pytest.mark.asyncio
+    async def test_locked_vault_sends_empty_auth(self, tmp_path):
+        """Locked vault can't read key, sends empty auth header."""
+        config = _make_config(tmp_path)
+        vault = _make_vault(tmp_path, unlocked=False)
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=vault)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._headers == {"Authorization": ""}
+
+    @pytest.mark.asyncio
+    async def test_no_vault_sends_empty_auth(self, tmp_path):
+        """No vault at all sends empty auth (suppresses OLLAMA_API_KEY)."""
+        config = _make_config(tmp_path)
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=None)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._headers == {"Authorization": ""}
+
+    @pytest.mark.asyncio
+    async def test_unlocked_vault_no_credential_sends_empty_auth(self, tmp_path):
+        """Unlocked vault with no 'ollama' credential sends empty auth."""
+        config = _make_config(tmp_path)
+        vault = _make_vault(tmp_path)  # unlocked but no ollama credential
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=vault)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._headers == {"Authorization": ""}
+
+    @pytest.mark.asyncio
+    async def test_env_var_suppressed_when_vault_has_key(self, tmp_path, monkeypatch):
+        """OLLAMA_API_KEY env var must never override the vault key."""
+        monkeypatch.setenv("OLLAMA_API_KEY", "sk-env-leak")
+        config = _make_config(tmp_path)
+        vault = _make_vault(tmp_path)
+        vault.register_credential("ollama", "user", "sk-vault-key")
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=vault)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._headers == {"Authorization": "Bearer sk-vault-key"}
+
+    @pytest.mark.asyncio
+    async def test_env_var_suppressed_when_no_key(self, tmp_path, monkeypatch):
+        """OLLAMA_API_KEY env var must not be used even when vault has no key."""
+        monkeypatch.setenv("OLLAMA_API_KEY", "sk-env-leak")
+        config = _make_config(tmp_path)
+        vault = _make_vault(tmp_path)  # no ollama credential
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=vault)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._headers == {"Authorization": ""}
+
+    @pytest.mark.asyncio
+    async def test_ollama_host_env_var_suppressed(self, tmp_path, monkeypatch):
+        """OLLAMA_HOST env var must not override configured host."""
+        monkeypatch.setenv("OLLAMA_HOST", "http://evil-server:11434")
+        config = _make_config(tmp_path)  # default localhost
+
+        fake_client = FakeOllamaAsyncClient(chat_return=_fake_resp())
+
+        with patch("core.providers.ollama.AsyncClient", side_effect=_capture_client(fake_client)):
+            provider = OllamaProvider(config=config, vault=None)
+            await provider.chat(messages=[Message(role="user", content="Hi")], model="llama3")
+
+        assert fake_client._host == "http://localhost:11434"
 
 
 class TestErrorHandling:

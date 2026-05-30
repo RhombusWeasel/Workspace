@@ -259,11 +259,10 @@ class ChatManager(Widget):
 
     def _wire_agent(self, ctx: Any) -> None:
         from core.agent import Agent
-        from core.providers.ollama import OllamaProvider
         from core.tools import get_tools
         from core.skills import skill_manager
 
-        provider = OllamaProvider(ctx.config)
+        provider = ctx.provider
         agent = Agent(
             provider=provider,
             template="You are a helpful AI assistant. {{extra}}",

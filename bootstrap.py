@@ -70,6 +70,7 @@ class Bootstrap:
         skill_service_factories = self._load_skill_init_files(skills)
         database = self._init_database(config)
         vault = self._init_vault()
+        provider = self._init_provider(config, vault)
         self._init_leader()
         css_paths = self._collect_css()
 
@@ -95,6 +96,7 @@ class Bootstrap:
             skills=skills,
             database=database,
             vault=vault,
+            provider=provider,
             leader=leader_registry,
             working_directory=self.wd,
             css_paths=css_paths,
@@ -351,6 +353,24 @@ class Bootstrap:
         """Create a VaultManager with master vault at ~/.agents/vault.enc."""
         master_path = os.path.join(self._agents_dir, "vault.enc")
         return VaultManager(master_path, self.wd)
+
+    # ------------------------------------------------------------------
+    # Phase 7b — Provider
+    # ------------------------------------------------------------------
+
+    def _init_provider(self, config: Config, vault: VaultManager):
+        """Create the LLM provider for the current session.
+
+        Reads ``session.provider`` from config to determine which
+        provider to use (currently only ``"ollama"``).  The provider
+        receives the vault and config so it can:
+
+        * Resolve API keys exclusively from the vault.
+        * Automatically redact secrets from all messages.
+        """
+        from core.providers.ollama import OllamaProvider
+
+        return OllamaProvider(config=config, vault=vault)
 
     # ------------------------------------------------------------------
     # Phase 8 — Leader chords

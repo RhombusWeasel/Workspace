@@ -283,3 +283,96 @@ class TestGetInlineSuggestion:
         )
         assert result is not None
         assert len(result.split("\n")) <= 3
+
+
+# ---------------------------------------------------------------------------
+# Redaction in inline suggestions
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestionRedaction:
+    """Secrets in file content are redacted by the provider before reaching the LLM."""
+
+    @pytest.mark.asyncio
+    async def test_secret_redacted_before_send(self, tmp_path):
+        """Vault secrets in the file content are redacted in the prompt."""
+        from core.providers.base import REDACTED
+        from core.redaction import Redactor
+
+        # Build a provider that has a redactor with a known secret.
+        from core.config import Config
+        import json, os
+        config_path = str(tmp_path / "config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump({}, f)
+        cfg = Config([config_path])
+        cfg.set("redaction.enabled", True)
+        cfg.set("redaction.patterns", [])
+        cfg.apply_defaults()
+
+        from core.providers.ollama import OllamaProvider
+        provider = OllamaProvider(config=cfg, vault=None)
+        # Inject a redactor manually to test the path
+        provider._cached_secrets = ["super_secret"]
+
+        captured_messages = []
+
+        class _CapturingProvider(OllamaProvider):
+            async def _do_chat(self, messages, model, tools=None):
+                captured_messages.extend(messages)
+                return ChatResponse(content="completion")
+
+        p = _CapturingProvider(config=cfg, vault=None)
+        p._cached_secrets = ["super_secret"]
+
+        result = await get_inline_suggestion(
+            provider=p,
+            model="test",
+            file_path="config.py",
+            file_content="password = 'super_secret'\n",
+            cursor_row=0,
+            cursor_col=24,
+        )
+
+        # The prompt sent to the _do_chat should have the secret redacted.
+        user_msg = captured_messages[1].content
+        assert "super_secret" not in user_msg
+        assert REDACTED in user_msg
+
+    @pytest.mark.asyncio
+    async def test_no_secrets_no_redaction(self, tmp_path):
+        """When there are no secrets, content passes through unchanged."""
+        import json, os
+        from core.config import Config
+        from core.providers.ollama import OllamaProvider
+
+        config_path = str(tmp_path / "config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump({}, f)
+        cfg = Config([config_path])
+        cfg.apply_defaults()
+
+        captured_messages = []
+
+        class _CapturingProvider(OllamaProvider):
+            async def _do_chat(self, messages, model, tools=None):
+                captured_messages.extend(messages)
+                return ChatResponse(content="completion")
+
+        p = _CapturingProvider(config=cfg, vault=None)
+
+        result = await get_inline_suggestion(
+            provider=p,
+            model="test",
+            file_path="test.py",
+            file_content="x = 1\n",
+            cursor_row=0,
+            cursor_col=4,
+        )
+
+        user_msg = captured_messages[1].content
+        # The cursor marker is inserted, so check for the partial content
+        assert "x = " in user_msg
+        assert "1" in user_msg

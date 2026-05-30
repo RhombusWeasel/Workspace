@@ -268,8 +268,7 @@ class FileEditor(Widget):
         }
 
     def _make_provider_and_model(self):
-        """Create an :class:`~core.providers.ollama.OllamaProvider` and
-        resolve the model name.
+        """Return the shared provider and model from the app context.
 
         Falls back to ``session.model`` if ``inline_suggest.model`` is
         not set.
@@ -278,9 +277,7 @@ class FileEditor(Widget):
         """
         try:
             ctx = self.app.context
-            from core.providers.ollama import OllamaProvider
-
-            provider = OllamaProvider(ctx.config, ctx.vault)
+            provider = ctx.provider
             model = ctx.config.get("inline_suggest.model", "")
             if not model:
                 model = ctx.config.get("session.model", "")
@@ -380,6 +377,7 @@ class FileEditor(Widget):
 
         Verifies the cursor position before setting the suggestion to
         avoid showing stale completions after the user has moved.
+        Redaction is handled automatically by the provider.
         """
         provider, model = self._make_provider_and_model()
         if provider is None or not model:

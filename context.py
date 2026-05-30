@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from core.config import Config
     from core.database import DatabaseManager
     from core.leader import LeaderRegistry
+    from core.providers.base import BaseProvider
     from core.skills import SkillManager
     from core.vault import VaultManager
 
@@ -41,6 +42,14 @@ class AppContext:
     database skill is loaded; ``None`` otherwise.
     """
     leader: LeaderRegistry | None = None
+    provider: BaseProvider | None = None
+    """LLM provider (e.g. :class:`~core.providers.ollama.OllamaProvider`).
+
+    Created once during bootstrap and shared by all consumers
+    (agent, inline suggestions, etc.).  Consumers should use the
+    :class:`~core.providers.base.BaseProvider` interface, not the
+    concrete class.
+    """
     vault: VaultManager | None = None
     working_directory: str = ""
     css_paths: list[str] = field(default_factory=list)

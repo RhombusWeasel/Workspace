@@ -5,6 +5,10 @@ building a focused prompt, calling the LLM directly (without the
 Agent / tool-calling loop), and extracting the completion text
 from the response.
 
+Message redaction is handled automatically by the
+:class:`~core.providers.base.BaseProvider` — every call to
+:meth:`provider.chat` scrubs secrets before they leave the process.
+
 Designed for low latency — uses a non-streaming ``chat()`` call with
 a concise system prompt.  Config defaults are registered via
 :func:`~core.config.register_defaults` so they flow through bootstrap.
@@ -85,6 +89,7 @@ async def get_inline_suggestion(
 
     Uses a direct ``provider.chat()`` call — no Agent, no tools,
     no streaming.  This minimizes latency for interactive completions.
+    Messages are redacted automatically by the provider's base class.
     """
     from core.context_snippets import gather_context
 
