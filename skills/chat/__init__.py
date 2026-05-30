@@ -7,7 +7,7 @@ Importing this module triggers all side-effect registrations:
 - ``@register_command("clear")`` and ``@register_command("new")``
 
 The chat tab is opened via the leader chord or by posting a
-``CodyEvent("chat.open")``.  It is NOT auto-opened on startup.
+``WorkspaceEvent("chat.open")``.  It is NOT auto-opened on startup.
 """
 
 # Side-effect imports — trigger decorator registrations.

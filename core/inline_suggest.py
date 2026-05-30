@@ -26,6 +26,7 @@ Both are accepted with ``Ctrl+F`` and dismissed with ``Escape``.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from core.providers.base import BaseProvider, Message
 from core.config import register_defaults
@@ -81,6 +82,7 @@ async def get_inline_suggestion(
     context_lines_above: int = 40,
     context_lines_below: int = 20,
     max_suggestion_lines: int = 8,
+    ctx: Any = None,
 ) -> str | None:
     """Request a code completion from the LLM.
 
@@ -102,8 +104,17 @@ async def get_inline_suggestion(
         lines_below=context_lines_below,
     )
 
+    # Resolve system prompt from the prompt registry.
+    system_prompt = _SYSTEM_PROMPT  # fallback
+    if ctx is not None and ctx.prompts is not None:
+        try:
+            prompt_id = ctx.config.get("prompt.inline_suggest_id", "inline-suggest")
+            system_prompt = ctx.prompts.render(prompt_id, ctx)
+        except (ValueError, AttributeError):
+            pass  # Fall back to hardcoded prompt
+
     messages = [
-        Message(role="system", content=_SYSTEM_PROMPT),
+        Message(role="system", content=system_prompt),
         Message(role="user", content=context),
     ]
 

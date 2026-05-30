@@ -1,0 +1,23 @@
+PromptPanel {
+    height: 100%;
+    background: $surface;
+}
+
+PromptPanel .prompt-panel-header {
+    height: 3;
+    padding: 0 1;
+    background: $surface;
+    align: center middle;
+}
+
+PromptPanel .prompt-panel-title {
+    text-style: bold;
+    color: $text;
+    width: 1fr;
+}
+
+PromptPanel .prompt-new-btn {
+    min-width: 3;
+    height: 1;
+    border: none;
+}

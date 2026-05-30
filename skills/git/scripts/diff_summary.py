@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Git diff summary script — groups changes by staged, unstaged, and untracked.
 
-Called by the Cody agent via the ``run_skill`` tool:
+Called by the Workspace agent via the ``run_skill`` tool:
 
     run_skill(skill_name="git", script="scripts/diff_summary.py")
 

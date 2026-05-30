@@ -172,8 +172,8 @@ class TestScanFiles:
         """scan_files finds files in deeply nested directories."""
         tmpdir = tempfile.mkdtemp()
         try:
-            # Create skills/cody_docs/docs/style.md nested structure
-            deep = os.path.join(tmpdir, "skills", "cody_docs", "docs")
+            # Create skills/workspace_docs/docs/style.md nested structure
+            deep = os.path.join(tmpdir, "skills", "workspace_docs", "docs")
             os.makedirs(deep)
             with open(os.path.join(deep, "style.md"), "w") as f:
                 f.write("# Style")
@@ -183,7 +183,7 @@ class TestScanFiles:
 
             result = scan_files(tmpdir)
             assert "main.py" in result
-            assert os.path.join("skills", "cody_docs", "docs", "style.md") in result
+            assert os.path.join("skills", "workspace_docs", "docs", "style.md") in result
         finally:
             import shutil
             shutil.rmtree(tmpdir)

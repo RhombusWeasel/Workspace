@@ -1,8 +1,8 @@
-# Cody Rewrite — Design Document
+# Workspace Rewrite — Design Document
 
 ## 1. Overview
 
-Cody is a Textual-based TUI application providing an AI coding assistant. It supports
+Workspace is a Textual-based TUI application providing an AI coding assistant. It supports
 Ollama (local) and OpenAI as LLM backends, features a skill architecture
 for extensibility, and includes an encrypted password vault, multi-connection database management, git
 checkpointing, and a keyboard-driven leader menu system.
@@ -17,7 +17,7 @@ the way, and remaining work items.
 ### 2.1 High-Level Component Map
 
 ```
-main.py                 ← Entry point: CodyApp, leader bindings, compose/paste/mount
+main.py                 ← Entry point: WorkspaceApp, leader bindings, compose/paste/mount
 bootstrap.py            ← Bootstrap: config → skills → tools → DB → leader → context
 context.py             ← AppContext dataclass (config, skills, database, leader, working_directory)
 conftest.py            ← Pytest fixtures
@@ -26,10 +26,10 @@ conftest.py            ← Pytest fixtures
 │   ├── commands.py    ← Slash-command loader (CommandBase, 3-tier discovery)
 │   ├── config.py      ← Config manager (layered JSON, dot-path, diff-save, registered defaults)
 │   ├── database.py    ← Database manager (SQLite provider, CRUD)
-│   ├── events.py      ← CodyEvent message system (leader chords → workspace/terminal actions)
+│   ├── events.py      ← WorkspaceEvent message system (leader chords → workspace/terminal actions)
 │   ├── leader.py      ← Leader registry (tree of keyboard chords for Ctrl+Space menu)
 │   ├── pane_tree.py   ← Pure data model: LeafPane, SplitPane, split/close/navigate ops
-│   ├── paths.py       ← 3-tier path resolution ($CODY_DIR, ~/.agents, project)
+│   ├── paths.py       ← 3-tier path resolution ($WORKSPACE_DIR, ~/.agents, project)
 │   ├── skills.py      ← Skill discovery & catalog (SKILL.md, YAML frontmatter, 3-tier)
 │   ├── terminal_passthrough.py ← Key passthrough registry (prevent terminal stealing app shortcuts)
 │   ├── tools.py       ← Tool registry (@register_tool, tag-based grouping, enable/disable)
@@ -115,7 +115,7 @@ conftest.py            ← Pytest fixtures
 │   ├── icons.py         ← Nerd Font icon constants (file types, actions, folders)
 │   └── __init__.py
 ├── skills/             ← Bundled skills (extensible via SKILL.md)
-│   ├── cody_docs/     ← Core-systems documentation skill
+│   ├── workspace_docs/     ← Core-systems documentation skill
 │   │   ├── SKILL.md
 │   │   ├── docs/       ← Markdown docs (events, config, vault, skills, etc.)
 │   │   └── scripts/
@@ -155,7 +155,7 @@ register lock callbacks. API key resolution: vault → config → environment va
 
 #### C. Skills System (`core/skills.py`)
 
-Discovers skills via `SKILL.md` YAML frontmatter. 3-tier search: `$CODY_DIR/skills/`
+Discovers skills via `SKILL.md` YAML frontmatter. 3-tier search: `$WORKSPACE_DIR/skills/`
 → `~/.agents/skills/` → `{wd}/.agents/skills/`. Per-skill enable/disable. Generates
 XML catalog for the agent system prompt. Manual scan — no implicit re-discovery.
 
@@ -199,7 +199,7 @@ Providers are auto-discovered from the ``providers/`` sub-package.  Each
 provider module uses ``@register_provider`` to self-register at import time.
 Adding a new backend is just a matter of dropping a ``.py`` file into
 ``skills/database/core/providers/``.  See the skill loading documentation
-(``skills/cody_docs/docs/skill_loading.md``) for details.
+(``skills/workspace_docs/docs/skill_loading.md``) for details.
 
 #### G. Leader Registry (`core/leader.py`)
 
@@ -210,7 +210,7 @@ from `SKILL.md` frontmatter.
 
 #### H. Path System (`core/paths.py`)
 
-Simplified to three functions: `cody_dir()`, `agents_dir()`, `resolve()`. 3-tier
+Simplified to three functions: `workspace_dir()`, `agents_dir()`, `resolve()`. 3-tier
 template expansion for skill/CSS/theme discovery. `collect_tcss()` gathers CSS
 from all tiers uniformly (including skill directories).
 
@@ -223,7 +223,7 @@ loading with correct `__path__` and `__package__` attributes; skills without
 available for agent activation.
 
 Discovery uses the 3-tier path system:
-`{cody_dir}/skills/` → `~/.agents/skills/` → `{wd}/.agents/skills/`.
+`{workspace_dir}/skills/` → `~/.agents/skills/` → `{wd}/.agents/skills/`.
 
 The skill package manager (`core/skill_package_manager.py`) handles installing,
 updating, removing, and listing skills from git repositories. Skills are
@@ -234,19 +234,19 @@ The `/skill` slash command provides the user-facing interface.
 
 At bootstrap, the `skills` package namespace is set up in `sys.modules` and
 each discovered skill with `__init__.py` is loaded via
-`importlib.util.spec_from_file_location`. The Cody project root is added to
+`importlib.util.spec_from_file_location`. The Workspace project root is added to
 `sys.path` before loading so skills can import from `core/` and `context/`.
 
 Skills can declare `SKILL_SERVICES` — service factories wired into
 `AppContext.services` at bootstrap.
 
-See `skills/cody_docs/docs/skills.md` and `skills/cody_docs/docs/skill_loading.md`
+See `skills/workspace_docs/docs/skills.md` and `skills/workspace_docs/docs/skill_loading.md`
 for full documentation.
 
 #### J. Event System (`core/events.py`)
 
-`CodyEvent` — a Textual `Message` subclass for inter-component communication.
-Leader chords post `CodyEvent` messages which widgets route via `on_cody_event`
+`WorkspaceEvent` — a Textual `Message` subclass for inter-component communication.
+Leader chords post `WorkspaceEvent` messages which widgets route via `on_workspace_event`
 handlers. Used for workspace navigation, terminal opening, and file opening.
 
 #### K. Terminal Passthrough (`core/terminal_passthrough.py`)
@@ -361,15 +361,15 @@ been resolved during the rewrite:
 ├── bootstrap.py               ← Bootstrap class: config → skills → tools → DB → leader → context
 ├── conftest.py                ← Pytest fixtures
 ├── context.py                 ← AppContext dataclass
-├── main.py                    ← Entry point: CodyApp, compose, leader bindings
-├── cody_data.db               ← SQLite database (runtime)
+├── main.py                    ← Entry point: WorkspaceApp, compose, leader bindings
+├── workspace_data.db               ← SQLite database (runtime)
 ├── core/
 │   ├── __init__.py
 │   ├── agent.py               ← Agent: system prompt, tool-calling loop, streaming
 │   ├── commands.py            ← Slash-command loader
 │   ├── config.py              ← Layered JSON config, dot-path, diff-save
 │   ├── database.py            ← SQLite DB manager, CRUD, agent seeding
-│   ├── events.py              ← CodyEvent message system
+│   ├── events.py              ← WorkspaceEvent message system
 │   ├── leader.py              ← Leader chord tree registry
 │   ├── pane_tree.py           ← Pure data model: split/close/navigate
 │   ├── paths.py               ← 3-tier path resolution, collect_tcss()
@@ -546,12 +546,12 @@ the skill lives in.  Skills without `__init__.py` (ecosystem / Anthropic spec)
 are discovered and their body is available for agent activation, but no Python
 code runs at import time.
 
-The Cody project root is added to `sys.path` before skills load, guaranteeing
+The Workspace project root is added to `sys.path` before skills load, guaranteeing
 that `from core.config import Config` (and similar) works from any skill.
 
 Later-tier skills override earlier-tier skills with the same directory name.
 Project-level skills at `{wd}/.agents/skills/` override user-level skills at
-`~/.agents/skills/`, which override bundled skills at `{cody_dir}/skills/`.
+`~/.agents/skills/`, which override bundled skills at `{workspace_dir}/skills/`.
 
 #### 6.6 CSS Collection
 
@@ -575,7 +575,7 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
 
 ### Step 3: Path System ✅
 
- - `core/paths.py` — 3-tier resolution, `cody_dir()`, `agents_dir()`, `resolve()`
+ - `core/paths.py` — 3-tier resolution, `workspace_dir()`, `agents_dir()`, `resolve()`
  - **COMPLETE**
 
 ### Step 4: Config Manager ✅
@@ -657,7 +657,7 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
 #### 16a: Terminal View
 
  - `skills/terminal/terminal.py` — `TerminalView` wraps `textual_terminal.Terminal`
-   with lifecycle management, working directory context, `CodyEvent` integration
+   with lifecycle management, working directory context, `WorkspaceEvent` integration
  - `skills/terminal/terminal_handler.py` — leader chord handler for `terminal.open`
  - `core/terminal_passthrough.py` — key passthrough registry
  - Leader chord: `Ctrl+Space t o` opens terminal in focused pane
@@ -746,7 +746,7 @@ was skipped (`_preserving=True`). `TerminalSnapshot.stop_emulator()` handles thi
 
 ### Step 18: main.py (wires everything)
 
- - `main.py` — `CodyApp` class with leader bindings, compose, vault/chat wire-up
+ - `main.py` — `WorkspaceApp` class with leader bindings, compose, vault/chat wire-up
  - No separate `app.py` — all wiring lives in `main.py`
  - **DONE** — core wiring works
  - **REMAINING:** app-wide CSS polish, theme registration, smoke test
@@ -770,7 +770,7 @@ Phase 3: WorkspaceTabs ✅
 Phase 4: File Browser Panel ✅
  - `ui/sidebar/panels/file_browser.py` — lazy directory tree with action buttons
  - Registered as sidebar tab with `@register_sidebar_tab`
- - Posts `CodyEvent("files.open")`, `CodyEvent("files.new_file")`, etc.
+ - Posts `WorkspaceEvent("files.open")`, `WorkspaceEvent("files.new_file")`, etc.
  - Show-hidden toggle button (``EYE_OFF``/``EYE`` icon) controls whether dotfiles/dotdirs appear
  - Sorting uses ``name`` from node data (not the icon-prefixed ``label``) for correct alphabetical order
  - ``_IGNORED_NAMES`` always filtered regardless of hidden toggle; ``startswith(".")`` entries respect the toggle
@@ -779,7 +779,7 @@ Phase 5: File Editor + Workspace Integration ✅
  - `ui/workspace/file_editor.py` — `FileEditor` reads/writes files in a tab
  - `ui/workspace/file_edit_handler.py` — routes `files.open` events to tabs
  - `ui/workspace/welcome_view.py` — landing page for empty panes
- - `ui/workspace/workspace.py` — handles `CodyEvent` for file opening
+ - `ui/workspace/workspace.py` — handles `WorkspaceEvent` for file opening
 
  **COMPLETE**
 
@@ -820,7 +820,7 @@ Phase 3: UI — DB Sidebar Panel (`ui/sidebar/panels/db_panel.py`) ✅
  - Action buttons per connection: 🔍 open query, 🖉 edit, 🗑 delete, ⟳ refresh
  - Table rows have a 📋 button that opens a SELECT * pre-filled query
  - `+ Add Connection` button opens ConnectionFormModal
- - `db.open_query` CodyEvent posted to open query editor in workspace
+ - `db.open_query` WorkspaceEvent posted to open query editor in workspace
 
 Phase 4: UI — Query Editor (`ui/workspace/query_editor.py`) ✅
  - `QueryEditor` — split-pane widget (query input above, results below)
@@ -859,7 +859,7 @@ Phase 2: Git SKILL.md ✅
 
 Phase 3: Git scripts ✅
  - `skills/git/scripts/status.py` — detailed repo status (branch, tracking, stash, file groups)
- - `skills/git/scripts/checkpoint.py` — create/list/restore WIP checkpoints (tagged `cody-checkpoint/`)
+ - `skills/git/scripts/checkpoint.py` — create/list/restore WIP checkpoints (tagged `workspace-checkpoint/`)
  - `skills/git/scripts/diff_summary.py` — staged/unstaged/untracked change summary
  - `skills/git/scripts/log.py` — formatted commit history with branch info
  - `skills/git/scripts/branch_info.py` — current branch, tracking, remotes, tags
@@ -892,6 +892,18 @@ tools (`activate_skill`, `read_file`, `run_command`, `run_skill`, `write_file`) 
 sufficient — the agent activates the git skill to learn git expertise, then uses
 `run_command` for simple operations and `run_skill` + scripts for complex ones.
 This keeps the tool surface small, which is critical for LLM tool-selection accuracy.
+
+---
+
+### Step 24: Prompt Registry
+
+Replace hard-coded system prompts with a database-backed prompt registry
+that supports `{{key}}` template substitution with dynamic variable providers.
+
+Deprecates the `agents` table (absorbed into `prompts` table). See
+`docs/PROMPT_REGISTRY_PLAN.md` for the full design.
+
+**Status: COMPLETE**
 
 ---
 
@@ -964,6 +976,7 @@ and their body is available for agent activation.
 | Bundled skills (coding, todo, brave_search) | **NOT STARTED** | Step 19 (git skill done in Step 22) |
 | Default themes | **NOT STARTED** | Step 19 |
 | E2E tests | **NOT STARTED** | Step 19 |
+| Prompt registry | **DONE** | See `docs/PROMPT_REGISTRY_PLAN.md` |
 
 ---
 
@@ -986,7 +999,7 @@ and their body is available for agent activation.
 | `test_config_panel.py` | ConfigPanel editing | — |
 | `test_database.py` | CRUD, provider swapping | — |
 | `test_db_connections.py` | Connection manager, providers, pagination | 49 |
-| `test_events.py` | CodyEvent dispatch | — |
+| `test_events.py` | WorkspaceEvent dispatch | — |
 | `test_file_browser.py` | File tree browser | — |
 | `test_file_editor.py` | File editor tab | — |
 | `test_icons.py` | Icon mapping | — |
@@ -1012,5 +1025,7 @@ and their body is available for agent activation.
 | `test_workspace.py` | Workspace split/close/navigate | — |
 | `test_workspace_tabs.py` | WorkspaceTabs open/close/switch | — |
 | `test_git_skill.py` | Git skill scripts (status, checkpoint, diff, log, branch) | 17 |
+| `test_prompt_registry.py` | PromptManager CRUD, render, dynamic providers, seeding | 35 |
+| `test_text_editor_modal.py` | TextEditorModal construction, language, read-only | 4 |
 
 **Total: ~42 test files**

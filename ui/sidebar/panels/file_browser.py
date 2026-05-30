@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Button, Static
 
-from core.events import CodyEvent
+from core.events import WorkspaceEvent
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeNeedsChildren, NodeSelected
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
@@ -286,7 +286,7 @@ class FileBrowserPanel(Container):
 
     def _edit_file(self, path: str) -> None:
         """Post a files.edit event with the file path."""
-        self.post_message(CodyEvent("files.edit", {"path": path}))
+        self.post_message(WorkspaceEvent("files.edit", {"path": path}))
 
     # ------------------------------------------------------------------
     # Actions — Add File

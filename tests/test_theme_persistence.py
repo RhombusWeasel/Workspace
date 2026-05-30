@@ -1,7 +1,7 @@
 """Tests for theme persistence — loading theme from config at startup
 and saving theme changes back to config.
 
-The CodyApp registers ``ui.theme`` defaults via ``register_defaults()``,
+The WorkspaceApp registers ``ui.theme`` defaults via ``register_defaults()``,
 loads theme from config on mount, and persists changes via ``_watch_theme``.
 """
 
@@ -111,17 +111,17 @@ class TestThemeConfigRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Tests — integration with CodyApp (requires running Textual app)
+# Tests — integration with WorkspaceApp (requires running Textual app)
 # ---------------------------------------------------------------------------
 
 
-class TestCodyAppThemePersistence:
-    """Integration tests verifying the CodyApp loads and saves theme."""
+class TestWorkspaceAppThemePersistence:
+    """Integration tests verifying the WorkspaceApp loads and saves theme."""
 
     async def test_loads_theme_from_config_on_mount(self, tmp_path):
         """App reads ui.theme from config and applies it on mount."""
         from context import AppContext
-        from main import CodyApp
+        from main import WorkspaceApp
 
         # Reset registered defaults so the import side-effect re-registers
         reset_registered_defaults()
@@ -130,7 +130,7 @@ class TestCodyAppThemePersistence:
         cfg = _make_config({"ui": {"theme": "gruvbox"}}, tmp_path)
         ctx = AppContext(config=cfg)
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.theme == "gruvbox"
@@ -138,7 +138,7 @@ class TestCodyAppThemePersistence:
     async def test_persists_theme_change_to_config(self, tmp_path):
         """When user changes theme, it's saved back to config."""
         from context import AppContext
-        from main import CodyApp
+        from main import WorkspaceApp
 
         reset_registered_defaults()
         import main  # noqa: F401
@@ -146,7 +146,7 @@ class TestCodyAppThemePersistence:
         cfg = _make_config({"ui": {"theme": "gruvbox"}}, tmp_path)
         ctx = AppContext(config=cfg)
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
 
@@ -167,7 +167,7 @@ class TestCodyAppThemePersistence:
     async def test_defaults_to_textual_dark_when_not_configured(self, tmp_path):
         """When no theme is in config, defaults to textual-dark."""
         from context import AppContext
-        from main import CodyApp
+        from main import WorkspaceApp
 
         reset_registered_defaults()
         import main  # noqa: F401
@@ -178,7 +178,7 @@ class TestCodyAppThemePersistence:
 
         ctx = AppContext(config=cfg)
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.theme == "textual-dark"
@@ -186,7 +186,7 @@ class TestCodyAppThemePersistence:
     async def test_theme_survives_app_restart(self, tmp_path):
         """Theme saved by one app instance loads in a new instance."""
         from context import AppContext
-        from main import CodyApp
+        from main import WorkspaceApp
 
         reset_registered_defaults()
         import main  # noqa: F401
@@ -195,7 +195,7 @@ class TestCodyAppThemePersistence:
         cfg = _make_config({"ui": {"theme": "gruvbox"}}, tmp_path)
         ctx = AppContext(config=cfg)
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.theme = "tokyo-night"
@@ -207,7 +207,7 @@ class TestCodyAppThemePersistence:
         cfg2.apply_defaults()
 
         ctx2 = AppContext(config=cfg2)
-        app2 = CodyApp(ctx2)
+        app2 = WorkspaceApp(ctx2)
         async with app2.run_test() as pilot:
             await pilot.pause()
             assert app2.theme == "tokyo-night"
@@ -215,7 +215,7 @@ class TestCodyAppThemePersistence:
     async def test_textual_theme_picker_saves_to_config(self, tmp_path):
         """Changing theme via Textual's action_change_theme persists to config."""
         from context import AppContext
-        from main import CodyApp
+        from main import WorkspaceApp
 
         reset_registered_defaults()
         import main  # noqa: F401
@@ -224,7 +224,7 @@ class TestCodyAppThemePersistence:
         cfg = _make_config({"ui": {"theme": "textual-dark"}}, tmp_path)
         ctx = AppContext(config=cfg)
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.theme == "textual-dark"
@@ -259,9 +259,9 @@ class TestConfigPanelThemeBridge:
         cfg = _make_config({"ui": {"theme": "textual-dark"}}, tmp_path)
         ctx = AppContext(config=cfg)
 
-        from main import CodyApp
+        from main import WorkspaceApp
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.theme == "textual-dark"
@@ -299,9 +299,9 @@ class TestConfigPanelThemeBridge:
         cfg = _make_config({"ui": {"theme": "textual-dark"}}, tmp_path)
         ctx = AppContext(config=cfg)
 
-        from main import CodyApp
+        from main import WorkspaceApp
 
-        app = CodyApp(ctx)
+        app = WorkspaceApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.theme == "textual-dark"

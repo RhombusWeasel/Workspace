@@ -1,6 +1,6 @@
 """Welcome view — landing page shown in the initial workspace tab.
 
-Displays a helpful introduction to Cody with key bindings and tips
+Displays a helpful introduction to Workspace with key bindings and tips
 for getting started.  Rendered as Markdown inside a scrollable container.
 """
 
@@ -12,7 +12,7 @@ from textual.widgets import Markdown
 
 
 _WELCOME_MARKDOWN = """\
-# Welcome to Cody
+# Welcome to Workspace
 
 Your AI-powered coding assistant, right in your terminal.
 

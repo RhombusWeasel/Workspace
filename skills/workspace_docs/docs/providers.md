@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Providers are the abstraction layer between Cody and LLM backends.  The
+Providers are the abstraction layer between Workspace and LLM backends.  The
 `BaseProvider` protocol defines the interface every provider must satisfy.
 The `Agent` class wraps a provider and handles the tool-calling loop —
 providers only need to implement `chat()` and `stream_chat()`.
@@ -259,7 +259,7 @@ vault.register_credential("openai", "api-key", "sk-...")
    providers don't need to inherit from a base class.  Duck typing works.
 
 2. **Normalized data classes** — `ChatResponse`, `StreamChunk`, `ToolCall`,
-   and `Message` insulate the rest of Cody from provider-specific response
+   and `Message` insulate the rest of Workspace from provider-specific response
   formats.  Each provider does its own normalization.
 
 3. **API keys from vault only** — No fallback to config or env vars.

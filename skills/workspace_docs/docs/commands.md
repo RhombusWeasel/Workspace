@@ -30,7 +30,7 @@ _commands[name].handler(app, args)  →  async function
 ```
 
 - Commands are async functions that receive `(app, args)`.
-- `app` is the running `CodyApp` instance.
+- `app` is the running `WorkspaceApp` instance.
 - `args` is the raw text after the command name (may be empty).
 
 ---
@@ -96,7 +96,7 @@ class Command:
 
 The bootstrap sequence loads commands from two sources:
 
-1. **Core commands** — every `.py` file in `{cody_dir}/cmd/` is imported.
+1. **Core commands** — every `.py` file in `{workspace_dir}/cmd/` is imported.
 2. **Skill commands** — every `.py` file in each enabled skill's `cmd/`
    subdirectory is imported.
 

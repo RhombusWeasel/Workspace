@@ -1,6 +1,6 @@
 """Terminal handler — opens a terminal in the focused workspace pane.
 
-Handles the ``terminal.open`` CodyEvent by creating a
+Handles the ``terminal.open`` WorkspaceEvent by creating a
 :class:`~skills.terminal.terminal.TerminalView` tab in the focused
 workspace pane's :class:`~ui.workspace.tabs.WorkspaceTabs`.
 

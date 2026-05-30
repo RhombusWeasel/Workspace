@@ -1,4 +1,4 @@
-"""Base pytest fixtures for the Cody project."""
+"""Base pytest fixtures for the Workspace project."""
 
 import pytest
 

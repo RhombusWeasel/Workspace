@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from core.config import Config
 
 from core.paths import agents_dir as _default_agents_dir
-from core.paths import cody_dir as _default_cody_dir
+from core.paths import workspace_dir as _default_workspace_dir
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +96,9 @@ class SkillPackageManager:
     agents_dir:
         The global ``~/.agents`` directory.  Defaults to
         :func:`core.paths.agents_dir` if not specified.
-    cody_dir:
-        The Cody installation directory.  Defaults to
-        :func:`core.paths.cody_dir` if not specified.
+    workspace_dir:
+        The Workspace installation directory.  Defaults to
+        :func:`core.paths.workspace_dir` if not specified.
     """
 
     def __init__(
@@ -107,12 +107,12 @@ class SkillPackageManager:
         working_dir: str,
         *,
         agents_dir: str | None = None,
-        cody_dir: str | None = None,
+        workspace_dir: str | None = None,
     ) -> None:
         self._config = config
         self._working_dir = working_dir
         self._agents_dir = agents_dir or _default_agents_dir()
-        self._cody_dir = cody_dir or _default_cody_dir()
+        self._workspace_dir = workspace_dir or _default_workspace_dir()
 
     # ------------------------------------------------------------------
     # Public API
@@ -182,7 +182,7 @@ class SkillPackageManager:
             if not os.path.isfile(skill_md):
                 raise SkillInstallError(
                     "No SKILL.md found in repository. "
-                    "Is this a valid Cody skill?"
+                    "Is this a valid Workspace skill?"
                 )
 
             parsed = self._parse_skill_md(skill_md)
@@ -367,7 +367,7 @@ class SkillPackageManager:
         """
         # Scan all three tiers for skill directories with SKILL.md
         tier_dirs = [
-            os.path.join(self._cody_dir, "skills"),
+            os.path.join(self._workspace_dir, "skills"),
             os.path.join(self._agents_dir, "skills"),
             os.path.join(self._working_dir, ".agents", "skills"),
         ]
@@ -455,7 +455,7 @@ class SkillPackageManager:
         """
         self._check_git()
 
-        temp_dir = tempfile.mkdtemp(prefix="cody_skill_")
+        temp_dir = tempfile.mkdtemp(prefix="workspace_skill")
 
         try:
             cmd = ["git", "clone", "--depth", "1"]
@@ -612,7 +612,7 @@ class SkillPackageManager:
 
         Uses ``uv pip install`` if available (the project's preferred
         installer), falling back to ``pip install``.  Requirements are
-        installed into the same venv that runs Cody, since skills are
+        installed into the same venv that runs Workspace, since skills are
         loaded in-process and need their dependencies on ``sys.path``.
 
         Raises :class:`SkillInstallError` if installation fails.

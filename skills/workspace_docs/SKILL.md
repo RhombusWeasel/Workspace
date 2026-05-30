@@ -1,12 +1,12 @@
 ---
-name: cody_docs
-description: Cody core-systems documentation — events, config, vault, skills, tools, commands, and architecture
+name: workspace_docs
+description: Workspace core-systems documentation — events, config, vault, skills, tools, commands, and architecture
 ---
 
-# Cody Documentation
+# Workspace Documentation
 
-Internal documentation for Cody's core systems.  Use these docs when extending
-Cody with new features, skills, or UI components.
+Internal documentation for Workspace's core systems.  Use these docs when extending
+Workspace with new features, skills, or UI components.
 
 ## How to Read These Docs
 
@@ -16,12 +16,12 @@ this skill:
 
 **List available docs:**
 ```
-run_skill(skill_name="cody_docs", script="scripts/read_doc.py")
+run_skill(skill_name="workspace_docs", script="scripts/read_doc.py")
 ```
 
 **Read a specific doc:**
 ```
-run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["docs/events.md"])
+run_skill(skill_name="workspace_docs", script="scripts/read_doc.py", args=["docs/events.md"])
 ```
 
 The `args` value is the doc filename — you can use either the short form
@@ -30,7 +30,7 @@ the script lists all available docs automatically.
 
 **Read every doc at once** (large — ~166KB total):
 ```
-run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
+run_skill(skill_name="workspace_docs", script="scripts/read_doc.py", args=["--all"])
 ```
 
 ## Documentation Index
@@ -40,7 +40,7 @@ run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
 | **Guide** | | |
 | Creating a Skill | `docs/creating_a_skill.md` | Step-by-step: anatomy, all registration types, examples, troubleshooting |
 | **Core Systems** | | |
-| Event system | `docs/events.md` | `CodyEvent`, `@register_handler`, `dispatch`, event naming |
+| Event system | `docs/events.md` | `WorkspaceEvent`, `@register_handler`, `dispatch`, event naming |
 | Config management | `docs/config.md` | Layered JSON, dot-path access, diff-save, registered defaults |
 | Password vault | `docs/vault.md` | Fernet encryption, master + local vaults, `VaultManager` |
 | Skill loading | `docs/skill_loading.md` | 3-tier skill discovery, loading, `__init__.py` handling, `SKILL_SERVICES` |
@@ -83,4 +83,4 @@ run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["--all"])
 | `leader` | `LeaderRegistry` | Keyboard chord tree |
 | `vault` | `VaultManager` | Encrypted credential + note storage |
 | `working_directory` | `str` | Current project directory |
-| `app` | `CodyApp` | Running Textual app instance |
+| `app` | `WorkspaceApp` | Running Textual app instance |

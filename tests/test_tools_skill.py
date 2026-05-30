@@ -41,8 +41,8 @@ class TestActivateSkill:
         tier_paths = [os.path.join(wd, "skills")]
         skill_manager.scan(tier_paths)
 
-        result = execute_tool("activate_skill", {"skill_name": "cody_docs"})
-        assert "Cody Documentation" in result
+        result = execute_tool("activate_skill", {"skill_name": "workspace_docs"})
+        assert "Workspace Documentation" in result
         assert "Internal documentation" in result
 
     def test_missing_skill_returns_error(self):
@@ -56,7 +56,7 @@ class TestActivateSkill:
 
         result = execute_tool("activate_skill", {"skill_name": "nonexistent_skill"})
         assert "not found" in result.lower()
-        assert "cody_docs" in result
+        assert "workspace_docs" in result
 
 
 class TestRunSkill:
@@ -81,5 +81,5 @@ class TestRunSkill:
         tier_paths = [os.path.join(wd, "skills")]
         skill_manager.scan(tier_paths)
 
-        result = execute_tool("run_skill", {"skill_name": "cody_docs", "script": "nope.sh"})
+        result = execute_tool("run_skill", {"skill_name": "workspace_docs", "script": "nope.sh"})
         assert "Script not found" in result

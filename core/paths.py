@@ -1,9 +1,9 @@
-"""3-tier path resolution for Cody.
+"""3-tier path resolution for Workspace.
 
-Cody resolves resources (skills, tools, themes, commands) across
+Workspace resolves resources (skills, tools, themes, commands) across
 three tiers in order of increasing precedence:
 
-1. Cody installation directory (bundled defaults)
+1. Workspace installation directory (bundled defaults)
 2. ~/.agents (user-wide overrides)
 3. {working_directory}/.agents (project-specific overrides)
 
@@ -19,8 +19,8 @@ for agent activation.
 import os
 
 
-def cody_dir() -> str:
-    """Absolute path to the Cody installation directory."""
+def workspace_dir() -> str:
+    """Absolute path to the Workspace installation directory."""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -32,10 +32,10 @@ def agents_dir() -> str:
 def resolve(subpath: str, working_dir: str) -> list[str]:
     """Resolve *subpath* across all three tiers.
 
-    Returns three absolute paths in order: cody, user, project.
+    Returns three absolute paths in order: workspace, user, project.
     """
     return [
-        os.path.normpath(os.path.join(cody_dir(), subpath)),
+        os.path.normpath(os.path.join(workspace_dir(), subpath)),
         os.path.normpath(os.path.join(agents_dir(), subpath)),
         os.path.normpath(os.path.join(working_dir, ".agents", subpath)),
     ]
@@ -44,7 +44,7 @@ def resolve(subpath: str, working_dir: str) -> list[str]:
 def collect_tcss(working_dir: str) -> list[str]:
     """Collect all ``.tcss`` files across all three tiers.
 
-    Returns paths in order: cody (bundled), user (``~/.agents/``),
+    Returns paths in order: workspace (bundled), user (``~/.agents/``),
     project (``{wd}/.agents/``).  Later tiers override earlier tiers in
     Textual's CSS cascade, so project-level CSS can override user-level
     which can override bundled defaults.

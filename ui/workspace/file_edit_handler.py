@@ -1,6 +1,6 @@
 """File edit handler — opens files in workspace tabs for editing.
 
-Handles the ``files.edit`` CodyEvent by creating a
+Handles the ``files.edit`` WorkspaceEvent by creating a
 :class:`~ui.workspace.tabs.WorkspaceTabs` in the focused workspace pane
 and opening the file as a :class:`~ui.workspace.file_editor.FileEditor` tab
 with syntax highlighting and editing support.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 
 from context import AppContext
-from core.events import CodyEvent, register_handler
+from core.events import WorkspaceEvent, register_handler
 from ui.workspace.file_editor import FileEditor, FileEditorState
 from ui.workspace.workspace import PaneContainer
 from ui.workspace.tabs import WorkspaceTabs

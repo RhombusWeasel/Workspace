@@ -260,15 +260,33 @@ class ChatManager(Widget):
     def _wire_agent(self, ctx: Any) -> None:
         from core.agent import Agent
         from core.tools import get_tools
-        from core.skills import skill_manager
 
         provider = ctx.provider
+
+        # Resolve the system prompt from the prompt registry.
+        prompt_id = ctx.config.get("prompt.default_id", "default")
+        if ctx.prompts is not None:
+            try:
+                system_prompt = ctx.prompts.render(prompt_id, ctx)
+            except ValueError:
+                # Prompt not found — fall back to a bare-bones default.
+                system_prompt = "You are a helpful AI coding assistant."
+        else:
+            system_prompt = "You are a helpful AI coding assistant."
+
+        # Determine the model — prompt template may specify an override.
+        model = ""
+        if ctx.prompts is not None:
+            prompt_row = ctx.prompts.get_prompt(prompt_id)
+            if prompt_row and prompt_row.get("model"):
+                model = prompt_row["model"]
+        if not model and ctx.config is not None:
+            model = ctx.config.get("session.model", "")
+
         agent = Agent(
             provider=provider,
-            template="You are a helpful AI assistant. {{extra}}",
-            variables={"extra": "Use tools when appropriate."},
-            model=ctx.config.get("session.model", ""),
-            skills_xml=skill_manager.get_catalog_xml(),
+            template=system_prompt,
+            model=model,
             ctx=ctx,
         )
         self._agent = agent

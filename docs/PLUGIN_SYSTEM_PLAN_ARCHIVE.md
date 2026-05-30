@@ -1,4 +1,4 @@
-# Cody Plugin System — Implementation Plan
+# Workspace Plugin System — Implementation Plan
 
 ## Overview
 
@@ -16,7 +16,7 @@ Plugins are discovered across three tiers in order of increasing precedence:
 
 | Tier | Path | Scope |
 |---|---|---|
-| 1 — Bundled | `{cody_dir}/plugins/` | Ships with Cody |
+| 1 — Bundled | `{workspace_dir}/plugins/` | Ships with Workspace |
 | 2 — Global | `~/.agents/plugins/` | Per-user overrides |
 | 3 — Project | `{wd}/.agents/plugins/` | Per-project overrides |
 
@@ -26,7 +26,7 @@ Later tiers override earlier tiers for same-named plugins.
 
 ### 2. Plugin Loading (`bootstrap.py`)
 
-- `sys.path` is guaranteed to include the Cody project root before any
+- `sys.path` is guaranteed to include the Workspace project root before any
   plugins load, so `from core.config import Config` works from any tier.
 - Each plugin's `__init__.py` is loaded via `importlib.util.spec_from_file_location`
   with `__path__` and `__package__` set correctly, so sub-imports resolve
@@ -58,7 +58,7 @@ Later tiers override earlier tiers for same-named plugins.
 - Install metadata stored in `.plugin.json` inside each plugin directory.
 - Config mirrored to `plugins.installed` and `plugins.enabled` (visible in
   ConfigPanel).
-- `PluginManager` accepts `agents_dir` and `cody_dir` constructor params
+- `PluginManager` accepts `agents_dir` and `workspace_dir` constructor params
   for testability.
 
 **Status:** ✅ Complete and tested (25 tests pass).
@@ -82,7 +82,7 @@ Later tiers override earlier tiers for same-named plugins.
 
 ### 6. Documentation
 
-- `skills/cody_docs/docs/plugins.md` — Full plugin authoring guide including
+- `skills/workspace_docs/docs/plugins.md` — Full plugin authoring guide including
   the auto-discovery provider pattern and git installation flow.
 - `core/paths.py` — Expanded module and `discover_plugins` docstrings.
 - `design_document.md` — Updated §2.2.I, §6.5, §6.6, directory tree, and
@@ -110,12 +110,12 @@ installs a plugin to a temp directory, then runs bootstrap against it.
 
 ### 8. Hot-Reload After Install
 
-Currently, installing a plugin requires restarting Cody for it to take
+Currently, installing a plugin requires restarting Workspace for it to take
 effect.  This is acceptable for V1 but should be improved.
 
 **Action:** Add a mechanism to re-scan plugins without restarting:
 
-- `PluginManager.install()` could post a `CodyEvent("plugins.changed")`
+- `PluginManager.install()` could post a `WorkspaceEvent("plugins.changed")`
   after a successful install.
 - Bootstrap could expose a `rescan()` method that re-runs `_load_plugins()`
   without re-initialising the entire `AppContext`.
@@ -221,7 +221,7 @@ messages) and display them before confirming the update.
 | `cmd/plugin.py` | `/plugin` slash command |
 | `plugins/database/core/providers/__init__.py` | Auto-discovery of providers |
 | `plugins/database/core/providers/sqlite.py` | SQLiteProvider (extracted) |
-| `skills/cody_docs/docs/plugins.md` | Plugin authoring documentation |
+| `skills/workspace_docs/docs/plugins.md` | Plugin authoring documentation |
 | `tests/test_plugin_manager.py` | 25 tests for PluginManager |
 
 ### Modified Files
@@ -241,18 +241,18 @@ messages) and display them before confirming the update.
 ## Architecture Diagram
 
 ```
-/plugin install https://github.com/user/cody-postgres
+/plugin install https://github.com/user/workspace-postgres
     │
     ├── git ls-remote --tags <url>
     │   └── Pick latest semver tag (e.g. v0.3.1)
     │
-    ├── git clone --depth 1 --branch v0.3.1 <url> /tmp/cody_plugin_xxx
+    ├── git clone --depth 1 --branch v0.3.1 <url> /tmp/workspace_plugin_xxx
     │
     ├── Read SKILL.md → name: "postgres"
     │
-    ├── rm -rf /tmp/cody_plugin_xxx/.git/
+    ├── rm -rf /tmp/workspace_plugin_xxx/.git/
     │
-    ├── mv /tmp/cody_plugin_xxx ~/.agents/plugins/postgres/
+    ├── mv /tmp/workspace_plugin_xxx ~/.agents/plugins/postgres/
     │
     ├── Write ~/.agents/plugins/postgres/.plugin.json
     │   └── {"source": "...", "version": "v0.3.1", "installed_at": "..."}
@@ -264,7 +264,7 @@ messages) and display them before confirming the update.
 ```
 Bootstrap plugin loading:
     │
-    ├── _ensure_project_on_path()          ← adds cody_dir to sys.path
+    ├── _ensure_project_on_path()          ← adds workspace_dir to sys.path
     │
     ├── Register synthetic 'plugins'       ← sys.modules["plugins"] + __path__
     │   package in sys.modules
@@ -293,7 +293,7 @@ Bootstrap plugin loading:
         },
         "installed": {
             "postgres": {
-                "source": "https://github.com/user/cody-postgres",
+                "source": "https://github.com/user/workspace-postgres",
                 "version": "v0.3.1",
                 "installed_at": "2025-05-21T10:30:00+00:00"
             }
@@ -313,7 +313,7 @@ Bootstrap plugin loading:
 
 ```json
 {
-    "source": "https://github.com/user/cody-postgres",
+    "source": "https://github.com/user/workspace-postgres",
     "version": "v0.3.1",
     "installed_at": "2025-05-21T10:30:00+00:00"
 }

@@ -60,13 +60,13 @@ class TestBootstrap:
         reset_commands()
 
         # Set up tiers
-        cody_dir = tmp_path / "cody"
+        workspace_dir = tmp_path / "workspace"
         agents_dir = tmp_path / "agents"
         project_dir = tmp_path / "project"
         working_dir = tmp_path / "working"
 
-        # Config file in cody tier
-        cfg_dir = cody_dir / "config"
+        # Config file in bundled tier
+        cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
             "session": {"provider": "ollama", "model": "test-model"},
@@ -83,12 +83,12 @@ class TestBootstrap:
             "session": {"model": "project-model"},
         }))
 
-        # Skills in cody tier
-        skills_dir = cody_dir / "skills"
+        # Skills in bundled tier
+        skills_dir = workspace_dir / "skills"
         _write_skill(skills_dir, "coding", "A coding skill")
 
-        # Tools in cody tier
-        tools_dir = cody_dir / "tools"
+        # Tools in bundled tier
+        tools_dir = workspace_dir / "tools"
         os.makedirs(tools_dir)
         _write_tool_file(tools_dir, "echo_tool.py", "echo", ["system"])
 
@@ -109,19 +109,19 @@ class TestBootstrap:
             '    return "test_cmd result"\n',
         )
 
-        # Set up tcss files in mock cody tier
-        ui_dir = cody_dir / "ui" / "workspace"
+        # Set up tcss files in mock bundled tier
+        ui_dir = workspace_dir / "ui" / "workspace"
         os.makedirs(ui_dir)
         _write_file(ui_dir / "styles.tcss", "Button {}")
 
         # Monkeypatch paths so collect_tcss finds our mock tiers
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace_dir))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
 
         # Bootstrap
         b = Bootstrap(
             working_directory=str(working_dir),
-            cody_dir=str(cody_dir),
+            workspace_dir=str(workspace_dir),
             agents_dir=str(agents_dir),
         )
         ctx = b.run()
@@ -132,7 +132,7 @@ class TestBootstrap:
         # Verify config
         assert ctx.config is not None
         assert ctx.config.get("session.provider") == "ollama"
-        assert ctx.config.get("session.model") == "project-model"  # project overrides cody
+        assert ctx.config.get("session.model") == "project-model"  # project overrides bundled
 
         # Verify skills
         assert ctx.skills is not None
@@ -177,7 +177,7 @@ class TestBootstrap:
 
         # Verify CSS paths
         assert isinstance(ctx.css_paths, list)
-        # With monkeypatched paths, we should see cody tier tcss files
+        # With monkeypatched paths, we should see bundled tier tcss files
         assert len(ctx.css_paths) >= 1
         assert any("styles.tcss" in p for p in ctx.css_paths)
 
@@ -199,13 +199,13 @@ class TestBootstrap:
         reset_commands()
         reset_registered_defaults()
 
-        cody_dir = tmp_path / "cody"
+        workspace_dir = tmp_path / "workspace"
         agents_dir = tmp_path / "agents"
         working_dir = tmp_path / "working"
         os.makedirs(working_dir)  # needed for SQLite db creation
 
         # Create a minimal bundled config.json with base defaults
-        cfg_dir = cody_dir / "config"
+        cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
             "session": {"provider": "ollama", "model": "bundled-model"},
@@ -217,16 +217,16 @@ class TestBootstrap:
         register_defaults({"ui": {"sidebar_width": 40}})
 
         # Create a minimal tcss dir so collect_tcss doesn't fail
-        ui_dir = cody_dir / "ui" / "workspace"
+        ui_dir = workspace_dir / "ui" / "workspace"
         os.makedirs(ui_dir)
         _write_file(ui_dir / "styles.tcss", "Button {}")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace_dir))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
 
         b = Bootstrap(
             working_directory=str(working_dir),
-            cody_dir=str(cody_dir),
+            workspace_dir=str(workspace_dir),
             agents_dir=str(agents_dir),
         )
         ctx = b.run()
@@ -257,13 +257,13 @@ class TestBootstrap:
         reset_commands()
         reset_registered_defaults()
 
-        cody_dir = tmp_path / "cody"
+        workspace_dir = tmp_path / "workspace"
         agents_dir = tmp_path / "agents"
         working_dir = tmp_path / "working"
         os.makedirs(working_dir)  # needed for SQLite db creation
 
         # Bundled config
-        cfg_dir = cody_dir / "config"
+        cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
             "session": {"provider": "ollama", "model": "bundled-model"},
@@ -279,16 +279,16 @@ class TestBootstrap:
         # Module registers a default that project does NOT override
         register_defaults({"skills": {"enabled": {"coding": False}}})
 
-        ui_dir = cody_dir / "ui" / "workspace"
+        ui_dir = workspace_dir / "ui" / "workspace"
         os.makedirs(ui_dir)
         _write_file(ui_dir / "styles.tcss", "Button {}")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace_dir))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
 
         b = Bootstrap(
             working_directory=str(working_dir),
-            cody_dir=str(cody_dir),
+            workspace_dir=str(workspace_dir),
             agents_dir=str(agents_dir),
         )
         ctx = b.run()
@@ -338,20 +338,20 @@ class TestSkillLoadErrorIsolation:
         reset_commands()
         reset_registered_defaults()
 
-        cody_dir = tmp_path / "cody"
+        workspace_dir = tmp_path / "workspace"
         agents_dir = tmp_path / "agents"
         working_dir = tmp_path / "working"
         os.makedirs(working_dir)
 
         # Bundled config
-        cfg_dir = cody_dir / "config"
+        cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
             "session": {"provider": "ollama"},
         }))
 
-        # Create a broken skill with __init__.py in the cody tier
-        broken_skill_dir = cody_dir / "skills" / "broken_skill"
+        # Create a broken skill with __init__.py in the bundled tier
+        broken_skill_dir = workspace_dir / "skills" / "broken_skill"
         os.makedirs(broken_skill_dir)
         _write_file(
             broken_skill_dir / "SKILL.md",
@@ -363,16 +363,16 @@ class TestSkillLoadErrorIsolation:
         )
 
         # Need tcss
-        ui_dir = cody_dir / "ui" / "workspace"
+        ui_dir = workspace_dir / "ui" / "workspace"
         os.makedirs(ui_dir)
         _write_file(ui_dir / "styles.tcss", "Button {}")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace_dir))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
 
         b = Bootstrap(
             working_directory=str(working_dir),
-            cody_dir=str(cody_dir),
+            workspace_dir=str(workspace_dir),
             agents_dir=str(agents_dir),
         )
 
@@ -399,20 +399,20 @@ class TestSkillLoadErrorIsolation:
         reset_commands()
         reset_registered_defaults()
 
-        cody_dir = tmp_path / "cody"
+        workspace_dir = tmp_path / "workspace"
         agents_dir = tmp_path / "agents"
         working_dir = tmp_path / "working"
         os.makedirs(working_dir)
 
         # Bundled config
-        cfg_dir = cody_dir / "config"
+        cfg_dir = workspace_dir / "config"
         os.makedirs(cfg_dir)
         _write_file(cfg_dir / "config.json", json.dumps({
             "session": {"provider": "ollama"},
         }))
 
         # Create a skill with SKILL_SERVICES
-        svc_skill_dir = cody_dir / "skills" / "svc_skill"
+        svc_skill_dir = workspace_dir / "skills" / "svc_skill"
         os.makedirs(svc_skill_dir)
         _write_file(
             svc_skill_dir / "SKILL.md",
@@ -424,16 +424,16 @@ class TestSkillLoadErrorIsolation:
         )
 
         # Need tcss
-        ui_dir = cody_dir / "ui" / "workspace"
+        ui_dir = workspace_dir / "ui" / "workspace"
         os.makedirs(ui_dir)
         _write_file(ui_dir / "styles.tcss", "Button {}")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody_dir))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace_dir))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents_dir))
 
         b = Bootstrap(
             working_directory=str(working_dir),
-            cody_dir=str(cody_dir),
+            workspace_dir=str(workspace_dir),
             agents_dir=str(agents_dir),
         )
 

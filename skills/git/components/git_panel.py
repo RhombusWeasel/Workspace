@@ -24,7 +24,7 @@ from textual.widgets import Button, Static
 
 from context import AppContext
 from core.config import register_defaults
-from core.events import CodyEvent, register_handler
+from core.events import WorkspaceEvent, register_handler
 from core.leader import register_submenu, register_action
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeSelected
@@ -330,7 +330,7 @@ class GitPanel(Container):
             filepath = data.get("path", "")
             if filepath and os.path.isfile(os.path.join(self._wd, filepath)):
                 full_path = os.path.join(self._wd, filepath)
-                self.post_message(CodyEvent("files.edit", {"path": full_path}))
+                self.post_message(WorkspaceEvent("files.edit", {"path": full_path}))
 
 
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ class LeaderNode:
         ``register_submenu()`` and should not be converted to a
         leaf action.
     event_type:
-        If set, the leader overlay posts a :class:`CodyEvent`
+        If set, the leader overlay posts a :class:`WorkspaceEvent`
         of this type when the leaf is reached (bypassing
         ``handler``).
     """
@@ -95,7 +95,7 @@ class LeaderRegistry:
             created along the path.  Keys not in this dict get an
             empty label.
         event_type:
-            If set, the leader overlay posts a :class:`CodyEvent`
+            If set, the leader overlay posts a :class:`WorkspaceEvent`
             of this type when the leaf is reached (instead of
             calling ``handler``).
         """

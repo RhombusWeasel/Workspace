@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read a documentation file from the cody_docs skill.
+"""Read a documentation file from the workspace_docs skill.
 
 Usage:
     read_doc.py                    List available docs
@@ -7,9 +7,9 @@ Usage:
     read_doc.py --list             List available docs
     read_doc.py --all              Print every doc concatenated (warning: large)
 
-Called by the Cody agent via the `run_skill` tool:
+Called by the Workspace agent via the `run_skill` tool:
 
-    run_skill(skill_name="cody_docs", script="scripts/read_doc.py", args=["docs/events.md"])
+    run_skill(skill_name="workspace_docs", script="scripts/read_doc.py", args=["docs/events.md"])
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from __future__ import annotations
 import os
 import sys
 
-# The script lives at skills/cody_docs/scripts/read_doc.py.
-# The docs are at skills/cody_docs/docs/.
+# The script lives at skills/workspace_docs/scripts/read_doc.py.
+# The docs are at skills/workspace_docs/docs/.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _SKILL_DIR = os.path.dirname(_SCRIPT_DIR)
 _DOCS_DIR = os.path.join(_SKILL_DIR, "docs")

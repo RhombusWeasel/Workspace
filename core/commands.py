@@ -114,7 +114,7 @@ def load_commands_from_paths(paths: list[str]) -> None:
             mod_path = os.path.join(dir_path, entry)
             mod_name = entry[:-3]  # strip .py
             spec = importlib.util.spec_from_file_location(
-                f"cody.cmd.{mod_name}", mod_path
+                f"workspace.cmd.{mod_name}", mod_path
             )
             if spec is None or spec.loader is None:
                 continue

@@ -295,15 +295,15 @@ class TestInstall:
         repo = _create_skill_repo(tmp_path, name="my_skill")
 
         agents_dir = str(tmp_path / "home" / ".agents")
-        cody_dir = str(tmp_path / "cody")
+        workspace_dir = str(tmp_path / "workspace")
         os.makedirs(os.path.join(agents_dir, "skills"))
-        os.makedirs(cody_dir)
+        os.makedirs(workspace_dir)
 
         mgr = SkillPackageManager(
             config,
             working_dir=str(tmp_path),
             agents_dir=agents_dir,
-            cody_dir=cody_dir,
+            workspace_dir=workspace_dir,
         )
 
         name = mgr.install(repo)
@@ -364,9 +364,9 @@ class TestInstall:
         _make_git_repo(str(repo_dir), "v0.2.0")
 
         agents_dir = str(tmp_path / "home" / ".agents")
-        cody_dir = str(tmp_path / "cody")
+        workspace_dir = str(tmp_path / "workspace")
         os.makedirs(os.path.join(agents_dir, "skills"))
-        os.makedirs(cody_dir)
+        os.makedirs(workspace_dir)
 
         wd = str(tmp_path / "project")
         os.makedirs(wd)
@@ -375,7 +375,7 @@ class TestInstall:
             config,
             working_dir=wd,
             agents_dir=agents_dir,
-            cody_dir=cody_dir,
+            workspace_dir=workspace_dir,
         )
 
         name = mgr.install(
@@ -439,7 +439,7 @@ class TestRemove:
         config = _make_config(tmp_path)
 
         agents_dir = str(tmp_path / "home" / ".agents")
-        cody_dir = str(tmp_path / "cody")
+        workspace_dir = str(tmp_path / "workspace")
         skill_dir = os.path.join(agents_dir, "skills", "test_rm")
         os.makedirs(skill_dir)
         with open(os.path.join(skill_dir, "SKILL.md"), "w") as fh:
@@ -449,7 +449,7 @@ class TestRemove:
             config,
             working_dir=str(tmp_path),
             agents_dir=agents_dir,
-            cody_dir=cody_dir,
+            workspace_dir=workspace_dir,
         )
 
         result = mgr.remove("test_rm")
@@ -481,8 +481,8 @@ class TestListSkills:
         with open(os.path.join(skill_dir, "SKILL.md"), "w") as fh:
             fh.write("---\nname: test_list\ndescription: A listing test\n---\n")
 
-        cody_dir = str(tmp_path / "cody")
-        os.makedirs(os.path.join(cody_dir, "skills"), exist_ok=True)
+        workspace_dir = str(tmp_path / "workspace")
+        os.makedirs(os.path.join(workspace_dir, "skills"), exist_ok=True)
         wd = str(tmp_path / "project")
         os.makedirs(os.path.join(wd, ".agents", "skills"), exist_ok=True)
 
@@ -490,7 +490,7 @@ class TestListSkills:
             config,
             working_dir=wd,
             agents_dir=agents_dir,
-            cody_dir=cody_dir,
+            workspace_dir=workspace_dir,
         )
 
         mgr.list_skills()
@@ -523,8 +523,8 @@ class TestListSkills:
                 "installed_at": "2025-05-21T10:00:00+00:00",
             }, fh)
 
-        cody_dir = str(tmp_path / "cody")
-        os.makedirs(os.path.join(cody_dir, "skills"), exist_ok=True)
+        workspace_dir = str(tmp_path / "workspace")
+        os.makedirs(os.path.join(workspace_dir, "skills"), exist_ok=True)
         wd = str(tmp_path / "project")
         os.makedirs(os.path.join(wd, ".agents", "skills"), exist_ok=True)
 
@@ -532,7 +532,7 @@ class TestListSkills:
             config,
             working_dir=wd,
             agents_dir=agents_dir,
-            cody_dir=cody_dir,
+            workspace_dir=workspace_dir,
         )
 
         all_skills = mgr.list_skills()

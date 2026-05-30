@@ -331,7 +331,7 @@ wheels = [
 ]
 
 [[package]]
-name = "nu-cody"
+name = "nu-workspace"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

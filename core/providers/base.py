@@ -1,7 +1,7 @@
 """Provider base class and shared dataclasses.
 
 Defines the contract that every LLM provider must satisfy, plus the
-normalised response types that insulate the rest of Cody from
+normalised response types that insulate the rest of Workspace from
 provider-specific details.
 
 The :class:`BaseProvider` base class applies **automatic redaction** to

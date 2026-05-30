@@ -38,11 +38,11 @@ if TYPE_CHECKING:
 # Template rendering
 # ---------------------------------------------------------------------------
 
-_PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
+_PLACEHOLDER = re.compile(r"\{\{(\w+(?:\.\w+)*)\}\}")
 
 
 def render_template(template: str, variables: dict[str, str]) -> str:
-    """Replace ``{{key}}`` placeholders in *template* with values from *variables*.
+    """Replace ``{{key}}`` and ``{{key.sub}}`` placeholders in *template* with values from *variables*.
 
     Missing keys are left unchanged.
     """

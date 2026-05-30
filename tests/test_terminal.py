@@ -186,7 +186,7 @@ class TestTerminalPassthrough:
         assert len(get_terminal_passthrough_keys()) == 0
 
     def test_app_wiring(self):
-        """CodyApp.terminal_passthrough_keys includes all registered keys."""
+        """WorkspaceApp.terminal_passthrough_keys includes all registered keys."""
         # Re-register the keys that were cleared by setup_method
         from ui.workspace.workspace import register_workspace_leader_chords
 
@@ -198,13 +198,13 @@ class TestTerminalPassthrough:
         # workspace.py registers navigation keys on import
         register_terminal_passthrough({"ctrl+h", "ctrl+l", "ctrl+k", "ctrl+j", "ctrl+left", "ctrl+right", "ctrl+up", "ctrl+down"})
 
-        from main import CodyApp
+        from main import WorkspaceApp
         from bootstrap import Bootstrap
         import os
 
         bootstrap = Bootstrap(working_directory=os.getcwd())
         context = bootstrap.run()
-        app = CodyApp(context)
+        app = WorkspaceApp(context)
 
         passthrough = app.terminal_passthrough_keys
         # App-level keys

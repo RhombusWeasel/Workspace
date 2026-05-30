@@ -99,6 +99,19 @@ class SQLiteProvider(BaseDBProvider):
             CREATE INDEX IF NOT EXISTS idx_messages_chat
                 ON messages(chat_id, id);
 
+            CREATE TABLE IF NOT EXISTS prompts (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                template    TEXT NOT NULL,
+                model       TEXT NOT NULL DEFAULT '',
+                scope       TEXT NOT NULL DEFAULT 'global',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_prompts_scope ON prompts(scope);
+
             CREATE TABLE IF NOT EXISTS agents (
                 id            TEXT PRIMARY KEY,
                 name          TEXT NOT NULL,
@@ -328,7 +341,7 @@ class DatabaseManager:
         )
 
     # ------------------------------------------------------------------
-    # Agent CRUD
+    # Agent CRUD (deprecated — use prompts table via PromptManager)
     # ------------------------------------------------------------------
 
     def create_agent(

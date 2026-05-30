@@ -1,4 +1,4 @@
-"""Cody — AI coding assistant TUI.
+"""Workspace — AI coding assistant TUI.
 
 Entry point: parses arguments, bootstraps services, launches the app.
 """
@@ -16,7 +16,7 @@ from textual.widgets import Footer, Header
 from bootstrap import Bootstrap
 from context import AppContext
 from core.config import register_defaults
-from core.events import CodyEvent, dispatch
+from core.events import WorkspaceEvent, dispatch
 from ui.sidebar.sidebar import Sidebar, SidebarContainer
 from ui.workspace import Workspace
 from core.terminal_passthrough import register_terminal_passthrough
@@ -38,6 +38,8 @@ import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for h
 # Import inline suggestion module so its register_defaults() runs
 # before bootstrap's apply_defaults().
 import core.inline_suggest  # noqa: F401 — side-effect import for config defaults
+# Import prompt registry so its config defaults are registered.
+import core.prompt_registry  # noqa: F401 — side-effect import for config defaults
 # Import provider base so redaction config defaults register early.
 import core.providers.base  # noqa: F401 — side-effect import for redaction defaults
 # Terminal handler is now registered by the terminal plugin
@@ -49,7 +51,7 @@ import core.providers.base  # noqa: F401 — side-effect import for redaction de
 # ---------------------------------------------------------------------------
 
 
-class CodyApp(App):
+class WorkspaceApp(App):
     """Top-level Textual application.
 
     Receives a :class:`AppContext` produced by bootstrap and mounts the
@@ -57,7 +59,7 @@ class CodyApp(App):
     sidebars, leader modal) will be added in later steps.
 
     CSS paths are dynamically collected from three tiers at bootstrap time
-    (cody bundled → ~/.agents/ → project .agents/) and set on the instance
+    (workspace bundled → ~/.agents/ → project .agents/) and set on the instance
     via ``context.css_paths``.
     """
 
@@ -131,10 +133,10 @@ class CodyApp(App):
 
     def action_open_leader(self) -> None:
         """Post an event so the handler in leader_overlay.py pushes the screen."""
-        self.post_message(CodyEvent("app.open_leader", {}))
+        self.post_message(WorkspaceEvent("app.open_leader", {}))
 
-    def on_cody_event(self, event: CodyEvent) -> None:
-        """Route every :class:`CodyEvent` through the handler registry.
+    def on_workspace_event(self, event: WorkspaceEvent) -> None:
+        """Route every :class:`WorkspaceEvent` through the handler registry.
 
         This is the **only** handler the app needs.  Every feature or
         skill registers handlers via ``@register_handler(...)``; the
@@ -150,7 +152,7 @@ class CodyApp(App):
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Cody — AI coding assistant TUI",
+        description="Workspace — AI coding assistant TUI",
     )
     parser.add_argument(
         "working_directory",
@@ -174,7 +176,7 @@ def main(argv: list[str] | None = None) -> None:
     context = bootstrap.run()
 
     # Launch the TUI
-    app = CodyApp(context)
+    app = WorkspaceApp(context)
     app.run()
 
 

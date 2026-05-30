@@ -61,12 +61,12 @@ class LeaderOverlay(ModalScreen[None]):
                 self._current.handler()
                 self.dismiss(None)
             elif self._current.event_type is not None:
-                from core.events import CodyEvent
+                from core.events import WorkspaceEvent
                 from ui.workspace.workspace import Workspace
                 try:
                     ws = self._app_ref.query_one(Workspace)
                     ws.post_message(
-                        CodyEvent(self._current.event_type, {})
+                        WorkspaceEvent(self._current.event_type, {})
                     )
                 except Exception:
                     pass

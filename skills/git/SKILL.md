@@ -79,7 +79,7 @@ run_skill(skill_name="git", script="scripts/branch_info.py")
 
 **Always create a checkpoint before making file changes** when the user
 asks you to edit, refactor, or modify code.  This creates a WIP commit
-(tagged `cody-checkpoint/<message>`) that the user can roll back to if
+(tagged `workspace-checkpoint/<message>`) that the user can roll back to if
 your changes go wrong.
 
 **Before editing:**
@@ -94,7 +94,7 @@ run_skill(skill_name="git", script="scripts/checkpoint.py", args=["restore", "be
 
 **Cleanup old checkpoints:**
 ```
-run_command(command="git tag -d cody-checkpoint/old-name")
+run_command(command="git tag -d workspace-checkpoint/old-name")
 ```
 
 ## Commit Message Conventions
@@ -155,5 +155,5 @@ Follow these conventions when creating commits:
 - Don't run `git clean -fd` without explicit user confirmation
 - Don't run `git push --force` unless the user explicitly requests it
 - Don't modify `.gitignore` without asking
-- Don't create tags other than `cody-checkpoint/` prefixed ones
+- Don't create tags other than `workspace-checkpoint/` prefixed ones
 - Don't delete remote branches without asking

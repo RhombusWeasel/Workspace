@@ -44,7 +44,7 @@ class AppContext:
 | `vault` | `VaultManager \| None` | Bootstrap | Encrypted credential + secure note storage |
 | `working_directory` | `str` | Bootstrap | Current working directory (project root) |
 | `css_paths` | `list[str]` | Bootstrap | Collected `.tcss` file paths for Textual CSS |
-| `app` | `Any` | `CodyApp.__init__` | The running Textual app instance |
+| `app` | `Any` | `WorkspaceApp.__init__` | The running Textual app instance |
 
 ---
 
@@ -161,7 +161,7 @@ def run(self) -> AppContext:
     )
 ```
 
-The `CodyApp` constructor then receives this context and sets
+The `WorkspaceApp` constructor then receives this context and sets
 `context.app = self` so handlers can reach the UI.
 
 ---

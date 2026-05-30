@@ -6,7 +6,7 @@
 
 ## Purpose
 
-Skills are Cody's sole extension mechanism.  They provide agent knowledge,
+Skills are Workspace's sole extension mechanism.  They provide agent knowledge,
 sidebar panels, event handlers, tools, and application-level services — all
 without modifying the core codebase.  Skills are discovered via a 3-tier
 directory scan and loaded dynamically at startup.
@@ -20,7 +20,7 @@ order of increasing precedence:
 
 | Tier | Path | Scope |
 |---|---|---|
-| 1 — Bundled | `{cody_dir}/skills/` | Ships with Cody |
+| 1 — Bundled | `{workspace_dir}/skills/` | Ships with Workspace |
 | 2 — User | `~/.agents/skills/` | Global per-user skills |
 | 3 — Project | `{working_dir}/.agents/skills/` | Per-project skills |
 
@@ -33,7 +33,7 @@ bundled skill.
 ```python
 # Example: scan discovers skills across three tiers
 skill_manager.scan([
-    "/opt/cody/skills",
+    "/opt/workspace/skills",
     "/home/alice/.agents/skills",
     "/project/.agents/skills",
 ])
@@ -92,7 +92,7 @@ skill, it runs `uv pip install` (falling back to `pip install`) to
 install these dependencies into the project's virtual environment.
 
 Skills without `requirements` (or with an empty list) are assumed to
-only need packages already in the Cody environment.
+only need packages already in the Workspace environment.
 
 ### `__init__.py` (Optional Entry Point)
 
@@ -132,12 +132,12 @@ by `__init__.py` — or live in auto-discovered subdirectories
 
 The bootstrap sequence in `Bootstrap._load_skill_init_files()`:
 
-1. **`sys.path` guarantee** — The Cody project root is added to `sys.path`
+1. **`sys.path` guarantee** — The Workspace project root is added to `sys.path`
    so skills can import from `core/` regardless of where the skill
    directory lives on disk.
 
 2. **Package namespace setup** — A synthetic `skills` package is registered
-   in `sys.modules` with its `__path__` pointing to `{cody_dir}/skills/`.
+   in `sys.modules` with its `__path__` pointing to `{workspace_dir}/skills/`.
    This enables absolute imports like `from skills.my_skill.core import X`.
 
 3. **Flat component loading** — Skills with `components/`, `tools/`, and
@@ -176,7 +176,7 @@ The bootstrap sequence in `Bootstrap._load_skill_init_files()`:
 
 ## Import Resolution
 
-Skills can import from Cody's core modules because the project root is on
+Skills can import from Workspace's core modules because the project root is on
 `sys.path` before any skill is loaded:
 
 ```python
@@ -241,7 +241,7 @@ from core.commands import register_command
 
 @register_command(name="mycommand", description="My custom command")
 async def my_command(app, args: str) -> None:
-    # app is the running CodyApp instance
+    # app is the running WorkspaceApp instance
     # args is the raw text after the /command name
     app.notify("Done!")
 ```
@@ -377,7 +377,7 @@ extensible backends:
 When the same skill name exists in multiple tiers, the later tier wins:
 
 ```
-/opt/cody/skills/database/      ← bundled (tier 1)
+/opt/workspace/skills/database/      ← bundled (tier 1)
 ~/.agents/skills/database/      ← user override (tier 2) ✅ WINS
 ```
 
@@ -389,7 +389,7 @@ under `skills.enabled`.
 
 ## Skill Package Manager
 
-Cody includes a skill package manager (``core/skill_package_manager.py``)
+Workspace includes a skill package manager (``core/skill_package_manager.py``)
 that handles installing, updating, removing, and listing skills from git
 repositories.  Skills are always installed from a **tagged release** —
 never from a live branch.  After cloning, the ``.git/`` directory is
@@ -402,7 +402,7 @@ directory:
 
 ```json
 {
-    "source": "https://github.com/user/cody-postgres",
+    "source": "https://github.com/user/workspace-postgres",
     "version": "v0.3.1",
     "installed_at": "2025-05-21T10:30:00Z",
     "requirements": [
@@ -436,7 +436,7 @@ and enable/disable state is tracked under ``skills.enabled``:
         },
         "installed": {
             "postgres": {
-                "source": "https://github.com/user/cody-postgres",
+                "source": "https://github.com/user/workspace-postgres",
                 "version": "v0.3.1",
                 "installed_at": "2025-05-21T10:30:00Z"
             }
@@ -505,7 +505,7 @@ The ``list_skills()`` method returns a list of ``SkillInfo`` objects:
 ```
 Bootstrap._load_skill_init_files()
     │
-    ├── _ensure_project_on_path()        ← adds cody_dir to sys.path
+    ├── _ensure_project_on_path()        ← adds workspace_dir to sys.path
     │
     ├── Register synthetic 'skills'     ← sys.modules["skills"] + __path__
     │   package in sys.modules
@@ -536,13 +536,13 @@ Bootstrap._load_skill_init_files()
    self-register at import time.  Skill authors just write decorators;
    no manual wiring needed.
 
-3. **sys.path guarantee** — The Cody project root is explicitly added to
+3. **sys.path guarantee** — The Workspace project root is explicitly added to
    `sys.path` before skills load.  This means skills can import from
    `core/` regardless of where the skill directory lives on disk.
 
 4. **__path__ and __package__ for each skill** — Without setting these,
    `importlib.util.spec_from_file_location` creates modules whose
-   sub-imports break when the skill lives outside the Cody installation
+   sub-imports break when the skill lives outside the Workspace installation
    directory.  Explicitly setting them ensures `from skills.my_skill.core`
    resolves from the correct directory.
 
@@ -558,7 +558,7 @@ Bootstrap._load_skill_init_files()
 7. **Dependencies install into the project venv** — Since skills run
    in-process, their Python dependencies must be on `sys.path`.  The
    skill package manager installs `requirements:` from SKILL.md directly
-   into Cody's virtual environment using `uv pip install` (or `pip install`
+   into Workspace's virtual environment using `uv pip install` (or `pip install`
    as fallback).
 
 8. **Graceful degradation on import failure** — If a skill can't be

@@ -1,4 +1,4 @@
-# Cody Event System
+# Workspace Event System
 
 **File:** `core/events.py`
 **Depends on:** `context.py` (AppContext), `textual.message.Message`
@@ -8,13 +8,13 @@
 ## Purpose
 
 A single-envelope message bus that decouples components from the application.
-Any widget, skill, or service can post a `CodyEvent`, and any module can
+Any widget, skill, or service can post a `WorkspaceEvent`, and any module can
 handle it — without either side knowing about the other at import time.
 
 The app needs exactly **one** handler, forever:
 
 ```python
-def on_cody_event(self, event: CodyEvent) -> None:
+def on_workspace_event(self, event: WorkspaceEvent) -> None:
     dispatch(event, self.context)
 ```
 
@@ -26,8 +26,8 @@ the app file never grows.
 ## Architecture
 
 ```
-┌──────────────┐    post_message(CodyEvent)    ┌──────────┐
-│  Any Widget  │ ─────────────────────────────▶│ CodyApp  │
+┌──────────────┐    post_message(WorkspaceEvent)    ┌──────────┐
+│  Any Widget  │ ─────────────────────────────▶│ WorkspaceApp  │
 │  or Service  │                               │          │
 └──────────────┘                               │ dispatch │
                                                │  (event, │
@@ -42,7 +42,7 @@ the app file never grows.
               └──────────────┘             └──────────────┘           └──────────────┘
 ```
 
-- Events are Textual `Message` objects (namespace `"cody"`).  They bubble
+- Events are Textual `Message` objects (namespace `"workspace"`).  They bubble
   up the DOM naturally.
 - The module-level `_handler_registry` dict maps `event_type` strings to
   lists of callables.
@@ -53,11 +53,11 @@ the app file never grows.
 
 ## API
 
-### `CodyEvent`
+### `WorkspaceEvent`
 
 ```python
-class CodyEvent(Message):
-    namespace = "cody"
+class WorkspaceEvent(Message):
+    namespace = "workspace"
 
     def __init__(self, event_type: str, data: dict[str, Any] | None = None):
         self.event_type: str = event_type
@@ -71,12 +71,12 @@ payload.
 ### `dispatch(event, ctx)`
 
 ```python
-def dispatch(event: CodyEvent, ctx: AppContext) -> None:
+def dispatch(event: WorkspaceEvent, ctx: AppContext) -> None:
     for handler in _handler_registry.get(event.event_type, []):
         handler(event.data, ctx)
 ```
 
-Called once from `CodyApp.on_cody_event()`.  Iterates all handlers
+Called once from `WorkspaceApp.on_workspace_event()`.  Iterates all handlers
 registered for `event.event_type` and calls them with the event's data
 and the app context.
 
@@ -93,7 +93,7 @@ Decorator that appends the decorated function to the handler list for
 
 | Parameter | Type | Description |
 |---|---|---|
-| `data` | `dict[str, Any]` | Payload from the `CodyEvent` |
+| `data` | `dict[str, Any]` | Payload from the `WorkspaceEvent` |
 | `ctx` | `AppContext` | Service locator with config, vault, database, and `ctx.app` |
 
 Handlers are **synchronous** functions.  If you need to `await` an async
@@ -120,13 +120,13 @@ pollution.
 
 ## `AppContext.app` — Accessing the TUI from handlers
 
-Handlers often need the running `CodyApp` instance (to push screens, show
+Handlers often need the running `WorkspaceApp` instance (to push screens, show
 notifications, query the DOM).  The app sets `context.app = self` in its
 constructor:
 
 ```python
 # main.py
-class CodyApp(App):
+class WorkspaceApp(App):
     def __init__(self, context: AppContext):
         context.app = self
         ...
@@ -188,7 +188,7 @@ Two or more dots is fine for sub-actions: `leader.workspace.toggle_left`.
 Handlers are isolated via `reset_handlers()`.  Test pattern:
 
 ```python
-from core.events import CodyEvent, dispatch, register_handler, reset_handlers
+from core.events import WorkspaceEvent, dispatch, register_handler, reset_handlers
 
 def test_my_handler():
     reset_handlers()
@@ -198,7 +198,7 @@ def test_my_handler():
     def handler(data, ctx):
         calls.append(data)
 
-    dispatch(CodyEvent("test.event", {"x": 1}), AppContext())
+    dispatch(WorkspaceEvent("test.event", {"x": 1}), AppContext())
     assert calls == [{"x": 1}]
 ```
 
@@ -221,5 +221,5 @@ mock database.  The handler receives the full context.
    registries for three distinct invocation contexts (LLM tool calls,
    user-typed commands, keyboard chords).  See §6.3 of the design document.
 
-4. **One `on_cody_event` in the app** — the app is a hub, not a switchboard.
+4. **One `on_workspace_event` in the app** — the app is a hub, not a switchboard.
    No `if/elif` chains.

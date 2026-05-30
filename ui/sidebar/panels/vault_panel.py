@@ -19,7 +19,7 @@ from textual.containers import Container, Horizontal
 from textual.widgets import Button, Static
 
 from context import AppContext
-from core.events import CodyEvent, register_handler
+from core.events import WorkspaceEvent, register_handler
 from core.vault import VaultManager
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import NodeSelected, NodeToggled, Tree
@@ -131,12 +131,12 @@ class VaultPanel(Container):
 
         # Locked?
         if self._vault.is_locked():
-            self.post_message(CodyEvent("vault.needs_unlock", {}))
+            self.post_message(WorkspaceEvent("vault.needs_unlock", {}))
             return
 
         # Needs init?
         if not os.path.exists(self._vault.master._filepath):
-            self.post_message(CodyEvent("vault.needs_init", {}))
+            self.post_message(WorkspaceEvent("vault.needs_init", {}))
             return
 
         # Local vault visibility

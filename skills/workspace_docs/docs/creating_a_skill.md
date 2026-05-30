@@ -1,6 +1,6 @@
 # Creating a Skill — Complete Guide
 
-This guide walks through everything you need to create a new Cody skill,
+This guide walks through everything you need to create a new Workspace skill,
 from understanding the architecture to writing, testing, and installing
 your skill.
 
@@ -30,7 +30,7 @@ Skills can register any combination of:
 |---|---|---|
 | Agent knowledge | SKILL.md body | Instructions the LLM reads via `activate_skill` |
 | Sidebar panel | `@register_sidebar_tab()` | Adds a panel to the left or right sidebar |
-| Event handler | `@register_handler()` | Responds to `CodyEvent` messages |
+| Event handler | `@register_handler()` | Responds to `WorkspaceEvent` messages |
 | LLM tool | `@register_tool()` | Exposes a function the LLM can invoke |
 | Slash command | `@register_command()` | Adds a `/command` the user can type |
 | Leader chord | `register_action()` / `register_submenu()` | Adds keyboard shortcuts to `Ctrl+Space` menu |
@@ -93,7 +93,7 @@ flat files by the bootstrap loader.
 
 | Tier | Path | Scope | Override behavior |
 |---|---|---|---|
-| **Bundled** | `{cody_dir}/skills/my_skill/` | Ships with Cody | Overridden by user or project |
+| **Bundled** | `{workspace_dir}/skills/my_skill/` | Ships with Workspace | Overridden by user or project |
 | **User-global** | `~/.agents/skills/my_skill/` | Available in all projects | Overrides bundled, overridden by project |
 | **Project-local** | `{project}/.agents/skills/my_skill/` | Current project only | Highest precedence |
 
@@ -410,14 +410,14 @@ Textual CSS supports variables, nesting, and layout.  See the
 ### Manual testing
 
 1. Place the skill in `~/.agents/skills/my_skill/`
-2. Restart Cody
+2. Restart Workspace
 3. Check stderr for any import errors
 4. Test your registered components
 
 ### Installing from a git repo
 
 ```bash
-/skill install https://github.com/you/cody-my-skill
+/skill install https://github.com/you/workspace-my-skill
 ```
 
 This clones the repo, installs dependencies, writes `.skill.json`, and
@@ -739,7 +739,7 @@ Or set `"database": false` in config under `skills.enabled`.
 - Check stderr for the warning message.
 - List the dependency in `requirements:` in SKILL.md.
 - Or use lazy imports inside the functions that use it.
-- After installing the missing dependency, restart Cody.
+- After installing the missing dependency, restart Workspace.
 
 ### CSS not applied
 
@@ -781,7 +781,7 @@ Or set `"database": false` in config under `skills.enabled`.
 | `vault` | `VaultManager` | Encrypted credential + note storage |
 | `working_directory` | `str` | Current project directory |
 | `services` | `dict[str, Any]` | Dynamic service instances from skill `SKILL_SERVICES` |
-| `app` | `CodyApp` | Running Textual app instance (set after construction) |
+| `app` | `WorkspaceApp` | Running Textual app instance (set after construction) |
 
 ---
 

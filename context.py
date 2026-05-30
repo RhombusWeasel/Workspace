@@ -61,8 +61,14 @@ class AppContext:
     ``db_connections`` also get dedicated fields for convenience, but
     everything lives in ``services`` too for generic access.
     """
+    prompts: Any = None
+    """Prompt registry for system prompt templates.
+
+    Set to a :class:`~core.prompt_registry.PromptManager` instance by
+    bootstrap; ``None`` if not yet initialised.
+    """
     app: Any = None
-    """The running :class:`CodyApp` instance.
+    """The running :class:`WorkspaceApp` instance.
 
     Set by the app in its constructor.  Event handlers use this to
     call ``push_screen_wait()``, ``notify()``, and query the DOM.

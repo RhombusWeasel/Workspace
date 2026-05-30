@@ -1,12 +1,12 @@
-"""Cody event system — single-envelope message bus for skill-to-app communication.
+"""Workspace event system — single-envelope message bus for skill-to-app communication.
 
-Skills and components communicate with the app by posting :class:`CodyEvent`
+Skills and components communicate with the app by posting :class:`WorkspaceEvent`
 messages.  Handlers are registered via the ``@register_handler(...)``
 decorator — the same self-registration pattern used by ``@register_tool()``.
 
 TuiApp needs exactly **one** handler, forever::
 
-    def on_cody_event(self, msg: CodyEvent) -> None:
+    def on_workspace_event(self, msg: WorkspaceEvent) -> None:
         dispatch(msg, self.context)
 
 Every new skill or feature adds handlers via the decorator; the app file
@@ -35,15 +35,15 @@ _handler_registry: dict[str, list] = {}
 # ---------------------------------------------------------------------------
 
 
-class CodyEvent(Message):
+class WorkspaceEvent(Message):
     """Single-envelope message posted to communicate with the app.
 
     Example::
 
-        self.post_message(CodyEvent("analysis.complete", {"count": 5}))
+        self.post_message(WorkspaceEvent("analysis.complete", {"count": 5}))
     """
 
-    namespace = "cody"
+    namespace = "workspace"
 
     def __init__(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         super().__init__()
@@ -78,7 +78,7 @@ def register_handler(event_type: str):
 # ---------------------------------------------------------------------------
 
 
-def dispatch(event: CodyEvent, ctx: AppContext) -> None:
+def dispatch(event: WorkspaceEvent, ctx: AppContext) -> None:
     """Call every handler registered for *event.event_type*."""
     for handler in _handler_registry.get(event.event_type, []):
         handler(event.data, ctx)

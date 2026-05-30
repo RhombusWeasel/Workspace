@@ -10,7 +10,7 @@
 The sidebar registry lets skills and core modules register panels in
 the left or right sidebar.  Panels are registered at import time via the
 `@register_sidebar_tab()` decorator — the same self-registration pattern
-used throughout Cody.
+used throughout Workspace.
 
 ---
 

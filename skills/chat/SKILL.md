@@ -5,7 +5,7 @@ description: AI chat — streaming conversation with an LLM agent in a workspace
 
 # AI Chat
 
-Streaming conversation interface for Cody.  Composes a chat input, command
+Streaming conversation interface for Workspace.  Composes a chat input, command
 palette, and tree-backed display.  Supports slash commands, streaming
 abort, tool-call rendering, and conversation persistence.
 

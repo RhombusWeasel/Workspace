@@ -10,6 +10,14 @@ accept the current suggestion.  Multi-line suggestions also appear in a
 docked :class:`~ui.workspace.suggestion_overlay.SuggestionOverlay` at
 the bottom of the editor.  Press ``Escape`` to dismiss either.
 
+Because :class:`~textual.widgets.TextArea` with ``tab_behavior=\"indent\"``
+intercepts Escape to move focus (calling ``focus_next()`` and
+``event.stop()``), the priority binding alone is not guaranteed to
+reach :meth:`action_dismiss_ai_suggestion`.  A ``on_blur`` handler
+acts as a safety-net: when focus leaves the editor while a suggestion
+is active, the overlay is cleaned up regardless of how the focus
+change occurred.
+
 Opened inside workspace tabs when a file is selected from the file browser.
 Reads the file from disk on mount.  Supports saving changes back to disk
 via :meth:`save_file`.
@@ -27,7 +35,7 @@ from textual.app import ComposeResult
 from textual.widgets import TextArea
 from textual.widget import Widget
 from textual.binding import Binding
-from textual.keys import Keys
+from textual import events
 
 from ui.workspace.suggestion_overlay import SuggestionOverlay
 from ui.workspace.tabs import TabState
@@ -116,6 +124,13 @@ class FileEditor(Widget):
             "accept_ai_suggestion",
             "AI Fill",
             show=True,
+            priority=True,
+        ),
+        Binding(
+            "escape",
+            "dismiss_ai_suggestion",
+            "Dismiss suggestion",
+            show=False,
             priority=True,
         ),
     ]
@@ -343,16 +358,48 @@ class FileEditor(Widget):
         """
         self._clear_suggestion()
 
-    def on_key(self, event) -> None:
-        """Handle Escape to dismiss the suggestion overlay and ghost text."""
-        if event.key == Keys.Escape:
-            # Dismiss overlay and inline suggestion
-            if self._full_suggestion is not None or (
-                self.editor.suggestion if self.is_mounted else ""
-            ):
-                self._clear_suggestion()
-                event.stop()
-                event.prevent_default()
+    def on_blur(self, event: events.Blur) -> None:
+        """When a child loses focus and no descendant retains it, clear the overlay.
+
+        This is a safety-net for the case where TextArea's default
+        key handling absorbs the Escape keypress (when
+        ``tab_behavior=\"indent\"``, TextArea calls ``focus_next()``
+        and ``event.stop()``).  In that scenario the priority binding
+        for Escape never fires, but focus still leaves the editor —
+        so we use the blur event to clean up the docked overlay.
+
+        We only clear when *no* descendant of FileEditor retains focus,
+        so clicking into the SuggestionOverlay (if it were focusable)
+        would not prematurely dismiss it.
+        """
+        if self._has_active_suggestion() and not self.has_focus_within:
+            self._clear_suggestion()
+
+    def action_dismiss_ai_suggestion(self) -> None:
+        """Handle Escape: dismiss AI suggestion, or blur the editor.
+
+        Uses a ``priority=True`` binding so this fires *before* the
+        inner :class:`~textual.widgets.TextArea` consumes the key.  When
+        ``tab_behavior=\"indent\"``, TextArea intercepts Escape to call
+        ``focus_next()`` — we replicate that fallthrough here so the
+        user doesn't lose the normal Escape behaviour when no suggestion
+        is active.
+        """
+        if self._has_active_suggestion():
+            self._clear_suggestion()
+        else:
+            # No suggestion — replicate TextArea's default Escape
+            # behaviour (move focus to the next widget).
+            self.screen.focus_next()
+
+    def _has_active_suggestion(self) -> bool:
+        """Whether an AI suggestion is currently showing (inline or overlay)."""
+        if self._full_suggestion is not None:
+            return True
+        try:
+            return bool(self.editor.suggestion)
+        except Exception:
+            return False
 
     def _request_suggestion(self) -> None:
         """Start a background worker to fetch an inline suggestion.
@@ -401,6 +448,7 @@ class FileEditor(Widget):
                 context_lines_above=cfg["lines_above"],
                 context_lines_below=cfg["lines_below"],
                 max_suggestion_lines=cfg["max_lines"],
+                ctx=ctx,
             )
 
             if suggestion:

@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Skills are the sole extension mechanism in Cody.  A skill is a directory
+Skills are the sole extension mechanism in Workspace.  A skill is a directory
 containing a `SKILL.md` manifest — a format compatible with the Anthropic
 skill specification (ClaudeCode, Codex).  Skills are discovered via a
 3-tier directory scan (bundled → user → project) and can provide:
@@ -31,7 +31,7 @@ mechanism.
 ```
 3-tier directory scan
     │
-    ├── {cody_dir}/skills/          ← bundled (tier 1)
+    ├── {workspace_dir}/skills/          ← bundled (tier 1)
     ├── ~/.agents/skills/           ← user (tier 2)
     └── {wd}/.agents/skills/        ← project (tier 3) — wins
     │
@@ -149,7 +149,7 @@ bootstrap.
 ```python
 skill_manager.scan(
     tier_paths=[
-        "/opt/cody/skills",
+        "/opt/workspace/skills",
         "/home/alice/.agents/skills",
         "/project/.agents/skills",
     ],
@@ -274,7 +274,7 @@ components that need to import each other, add `__init__.py`:
 
 ```python
 # ~/.agents/skills/my_skill/__init__.py
-"""My Skill — UI extension for Cody."""
+"""My Skill — UI extension for Workspace."""
 
 from skills.my_skill.handlers import register_handlers  # noqa: F401
 from skills.my_skill.services import SKILL_SERVICES       # noqa: F401
@@ -314,7 +314,7 @@ Components directories are auto-imported by the bootstrap loader, enabling
 skills to register sidebar panels, event handlers, leader chords, and config
 defaults — no `__init__.py` needed for flat component files.
 
-### 7. Restart Cody
+### 7. Restart Workspace
 
 Skills are discovered at startup.  Restart to pick up new skills.
 

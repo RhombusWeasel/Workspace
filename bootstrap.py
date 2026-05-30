@@ -21,9 +21,9 @@ nested sub-imports work.  Skills without ``__init__.py`` (ecosystem skills
 following the Anthropic spec) are discovered and their body is available
 for agent activation, but no Python code runs.
 
-Skill directories can live outside the Cody installation (e.g.
+Skill directories can live outside the Workspace installation (e.g.
 ``~/.agents/skills/`` or ``{project}/.agents/skills/``).  To ensure
-these skills can import from ``core/``, the Cody project root is added
+these skills can import from ``core/``, the Workspace project root is added
 to ``sys.path`` before any skills are loaded.
 """
 
@@ -38,6 +38,7 @@ from core import paths
 from core.config import Config, get_registered_defaults
 from core.skills import skill_manager
 from core.database import DatabaseManager
+from core.prompt_registry import PromptManager
 from core.leader import leader as leader_registry
 from core.vault import VaultManager
 
@@ -49,11 +50,11 @@ class Bootstrap:
         self,
         working_directory: str | None = None,
         *,
-        cody_dir: str | None = None,
+        workspace_dir: str | None = None,
         agents_dir: str | None = None,
     ):
         self.wd = working_directory or os.getcwd()
-        self._cody_dir = cody_dir or paths.cody_dir()
+        self._workspace_dir = workspace_dir or paths.workspace_dir()
         self._agents_dir = agents_dir or paths.agents_dir()
 
     # ------------------------------------------------------------------
@@ -69,7 +70,9 @@ class Bootstrap:
         self._load_skill_components(skills)
         skill_service_factories = self._load_skill_init_files(skills)
         database = self._init_database(config)
+        prompts = self._init_prompt_registry(database)
         vault = self._init_vault()
+        self._register_prompt_providers(prompts, skills)
         provider = self._init_provider(config, vault)
         self._init_leader()
         css_paths = self._collect_css()
@@ -95,6 +98,7 @@ class Bootstrap:
             config=config,
             skills=skills,
             database=database,
+            prompts=prompts,
             vault=vault,
             provider=provider,
             leader=leader_registry,
@@ -108,7 +112,7 @@ class Bootstrap:
     # ------------------------------------------------------------------
 
     def _ensure_project_on_path(self) -> None:
-        """Ensure the Cody project root is on ``sys.path``.
+        """Ensure the Workspace project root is on ``sys.path``.
 
         Skill directories can live outside the installation directory
         (e.g. ``~/.agents/skills/`` or ``{project}/.agents/skills/``).
@@ -117,23 +121,23 @@ class Bootstrap:
         Adding the project root guarantees those imports work regardless of the
         skill's physical location.
         """
-        cody_root = self._cody_dir
-        if cody_root not in sys.path:
-            sys.path.insert(0, cody_root)
+        workspace_root = self._workspace_dir
+        if workspace_root not in sys.path:
+            sys.path.insert(0, workspace_root)
 
     # ------------------------------------------------------------------
     # Phase 1 — Config
     # ------------------------------------------------------------------
 
     def _init_config(self) -> Config:
-        """Load layered config: cody/ → ~/.agents/ → {wd}/.agents/.
+        """Load layered config: workspace/ → ~/.agents/ → {wd}/.agents/.
 
         After loading JSON files, applies module-level defaults registered
         via :func:`~core.config.register_defaults` for any keys still missing.
         """
         cfg_paths: list[str] = []
 
-        bundled = os.path.join(self._cody_dir, "config", "config.json")
+        bundled = os.path.join(self._workspace_dir, "config", "config.json")
         if os.path.isfile(bundled):
             cfg_paths.append(bundled)
 
@@ -157,7 +161,7 @@ class Bootstrap:
     def _discover_skills(self, config: Config):
         """Scan all tiers for SKILL.md files."""
         tier_paths = [
-            os.path.join(self._cody_dir, "skills"),
+            os.path.join(self._workspace_dir, "skills"),
             os.path.join(self._agents_dir, "skills"),
             os.path.join(self.wd, ".agents", "skills"),
         ]
@@ -172,7 +176,7 @@ class Bootstrap:
     def _load_tools(self, skills) -> None:
         """Import tool modules from core tools/ and skill tools/ directories."""
         # Core tools
-        core_tools = os.path.join(self._cody_dir, "tools")
+        core_tools = os.path.join(self._workspace_dir, "tools")
         self._import_modules_from(core_tools)
 
         # Skill tools
@@ -193,7 +197,7 @@ class Bootstrap:
             mod_path = os.path.join(dir_path, entry)
             mod_name = entry[:-3]
             spec = importlib.util.spec_from_file_location(
-                f"cody.tool.{mod_name}", mod_path
+                f"workspace.tool.{mod_name}", mod_path
             )
             if spec is None or spec.loader is None:
                 continue
@@ -212,7 +216,7 @@ class Bootstrap:
         ``@register_sidebar_tab()`` and ``@register_handler()`` decorators.
         """
         # Core panels
-        core_panels = os.path.join(self._cody_dir, "ui", "sidebar", "panels")
+        core_panels = os.path.join(self._workspace_dir, "ui", "sidebar", "panels")
         self._import_modules_from(core_panels)
 
         # Skill components — sidebar panels, event handlers, leader chords, etc.
@@ -232,7 +236,7 @@ class Bootstrap:
         from core.commands import load_commands_from_paths
 
         # Core commands
-        core_cmd_dir = os.path.join(self._cody_dir, "cmd")
+        core_cmd_dir = os.path.join(self._workspace_dir, "cmd")
 
         # Skill commands — each skill may have a cmd/ subdirectory
         skill_cmd_dirs = skills.get_skill_cmd_dirs()
@@ -269,21 +273,21 @@ class Bootstrap:
         # sys.modules so that subpackage imports (skills.database.core)
         # resolve correctly.
         if "skills" not in sys.modules:
-            skills_init = os.path.join(self._cody_dir, "skills", "__init__.py")
+            skills_init = os.path.join(self._workspace_dir, "skills", "__init__.py")
             if os.path.isfile(skills_init):
                 spec = importlib.util.spec_from_file_location(
                     "skills", skills_init
                 )
                 if spec is not None and spec.loader is not None:
                     pkg = importlib.util.module_from_spec(spec)
-                    pkg.__path__ = [os.path.join(self._cody_dir, "skills")]
+                    pkg.__path__ = [os.path.join(self._workspace_dir, "skills")]
                     pkg.__package__ = "skills"
                     sys.modules["skills"] = pkg
                     spec.loader.exec_module(pkg)
             else:
                 # Synthetic package — skills/__init__.py may not exist yet.
                 synthetic = types.ModuleType("skills")
-                synthetic.__path__ = [os.path.join(self._cody_dir, "skills")]
+                synthetic.__path__ = [os.path.join(self._workspace_dir, "skills")]
                 synthetic.__package__ = "skills"
                 sys.modules["skills"] = synthetic
 
@@ -339,11 +343,54 @@ class Bootstrap:
 
     def _init_database(self, config: Config) -> DatabaseManager:
         db_path = config.get("database.path") or os.path.join(
-            self.wd, ".agents", "cody_data.db"
+            self.wd, ".agents", "workspace_data.db"
         )
         # Ensure the .agents directory exists so sqlite3 can create the file.
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         return DatabaseManager(db_path)
+
+    # ------------------------------------------------------------------
+    # Phase 7a — Prompt Registry
+    # ------------------------------------------------------------------
+
+    def _init_prompt_registry(self, db: DatabaseManager) -> PromptManager:
+        """Create a PromptManager backed by the database.
+
+        Seeds the default prompts (chat assistant, inline suggest)
+        on first run.
+        """
+        return PromptManager(db, working_directory=self.wd)
+
+    def _register_prompt_providers(self, prompts: PromptManager, skills) -> None:
+        """Register dynamic variable providers for prompt templates."""
+        prompts.register_dynamic(
+            "skills",
+            lambda ctx: {
+                "__default__": skill_manager.get_catalog_xml(),
+                "catalog": skill_manager.get_catalog_xml(),
+                "names": ", ".join(skill_manager.list_skills()),
+            },
+        )
+        prompts.register_dynamic(
+            "working_directory",
+            lambda ctx: ctx.working_directory if ctx and ctx.working_directory else self.wd,
+        )
+        prompts.register_dynamic(
+            "project_name",
+            lambda ctx: os.path.basename(
+                ctx.working_directory if ctx and ctx.working_directory else self.wd
+            ),
+        )
+        from datetime import timezone
+        from datetime import datetime as _dt
+        prompts.register_dynamic(
+            "date",
+            lambda ctx: _dt.now(timezone.utc).strftime("%Y-%m-%d"),
+        )
+        prompts.register_dynamic(
+            "model",
+            lambda ctx: ctx.config.get("session.model", "") if ctx and ctx.config else "",
+        )
 
     # ------------------------------------------------------------------
     # Phase 7 — Vault

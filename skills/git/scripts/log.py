@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Git log script — formatted commit history.
 
-Called by the Cody agent via the ``run_skill`` tool:
+Called by the Workspace agent via the ``run_skill`` tool:
 
     run_skill(skill_name="git", script="scripts/log.py")
     run_skill(skill_name="git", script="scripts/log.py", args=["20"])

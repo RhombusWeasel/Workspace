@@ -201,7 +201,7 @@ Plugins should use their skill name as a tag:
 
 The bootstrap sequence loads tools from two sources:
 
-1. **Core tools** — every `.py` file in `{cody_dir}/tools/` is imported.
+1. **Core tools** — every `.py` file in `{workspace_dir}/tools/` is imported.
 2. **Skill tools** — every `.py` file in each enabled skill's `tools/`
    subdirectory is imported.
 

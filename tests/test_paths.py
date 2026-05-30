@@ -2,18 +2,18 @@
 
 import os
 
-from core.paths import agents_dir, cody_dir, collect_tcss, resolve
+from core.paths import agents_dir, workspace_dir, collect_tcss, resolve
 
 
-class TestCodyDir:
+class TestWorkspaceDir:
     def test_returns_string(self):
-        assert isinstance(cody_dir(), str)
+        assert isinstance(workspace_dir(), str)
 
     def test_is_absolute(self):
-        assert os.path.isabs(cody_dir())
+        assert os.path.isabs(workspace_dir())
 
     def test_is_not_empty(self):
-        assert len(cody_dir()) > 0
+        assert len(workspace_dir()) > 0
 
 
 class TestAgentsDir:
@@ -39,19 +39,19 @@ class TestResolve:
 
     def test_subpath_appended_to_each_tier(self):
         paths = resolve("skills", "/tmp/work")
-        assert paths[0] == os.path.join(cody_dir(), "skills")
+        assert paths[0] == os.path.join(workspace_dir(), "skills")
         assert paths[1] == os.path.join(agents_dir(), "skills")
         assert paths[2] == os.path.join("/tmp/work", ".agents", "skills")
 
     def test_subpath_with_nested_directories(self):
         paths = resolve("providers/keys", "/home/user/proj")
-        assert paths[0] == os.path.join(cody_dir(), "providers", "keys")
+        assert paths[0] == os.path.join(workspace_dir(), "providers", "keys")
         assert paths[1] == os.path.join(agents_dir(), "providers", "keys")
         assert paths[2] == os.path.join("/home/user/proj", ".agents", "providers", "keys")
 
     def test_empty_subpath(self):
         paths = resolve("", "/tmp")
-        assert paths[0] == cody_dir()
+        assert paths[0] == workspace_dir()
         assert paths[1] == agents_dir()
         assert paths[2] == os.path.join("/tmp", ".agents")
 
@@ -66,62 +66,62 @@ class TestCollectTcss:
         assert isinstance(result, list)
 
     def test_empty_when_no_tcss_files(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(tmp_path / "nonexistent"))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(tmp_path / "nonexistent"))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(tmp_path / "nonexistent"))
         result = collect_tcss(str(tmp_path))
         assert result == []
 
-    def test_collects_from_cody_tier(self, tmp_path, monkeypatch):
-        """Only cody tier has .tcss files."""
-        cody = tmp_path / "cody"
-        os.makedirs(cody / "ui" / "workspace")
-        (cody / "ui" / "workspace" / "styles.tcss").write_text("Button {}")
-        (cody / "ui" / "other.tcss").write_text("Label {}")
+    def test_collects_from_workspace_tier(self, tmp_path, monkeypatch):
+        """Only workspace tier has .tcss files."""
+        workspace = tmp_path / "workspace"
+        os.makedirs(workspace / "ui" / "workspace")
+        (workspace / "ui" / "workspace" / "styles.tcss").write_text("Button {}")
+        (workspace / "ui" / "other.tcss").write_text("Label {}")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace))
         # Use tmp_path as wd (it has no .agents/ subdir with tcss)
         result = collect_tcss(str(tmp_path))
 
-        # Should only find cody tier files
+        # Should only find workspace tier files
         assert len(result) == 2
-        assert result[0] == os.path.join(str(cody), "ui", "other.tcss")
-        assert result[1] == os.path.join(str(cody), "ui", "workspace", "styles.tcss")
+        assert result[0] == os.path.join(str(workspace), "ui", "other.tcss")
+        assert result[1] == os.path.join(str(workspace), "ui", "workspace", "styles.tcss")
 
     def test_collects_from_all_three_tiers_in_order(self, tmp_path, monkeypatch):
-        """Files from all three tiers, verify they're ordered cody → agents → wd."""
-        cody = tmp_path / "cody"
+        """Files from all three tiers, verify they're ordered workspace → agents → wd."""
+        workspace = tmp_path / "workspace"
         agents = tmp_path / "agents"
         wd = tmp_path / "working"
-        os.makedirs(cody / "ui")
+        os.makedirs(workspace / "ui")
         os.makedirs(agents / "ui")
         os.makedirs(wd / ".agents" / "ui")
 
-        (cody / "ui" / "base.tcss").write_text("/* cody */")
+        (workspace / "ui" / "base.tcss").write_text("/* workspace */")
         (agents / "ui" / "user.tcss").write_text("/* agents */")
         (wd / ".agents" / "ui" / "project.tcss").write_text("/* project */")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace))
         monkeypatch.setattr("core.paths.agents_dir", lambda: str(agents))
 
         result = collect_tcss(str(wd))
 
         assert len(result) == 3
-        assert "cody" in result[0]
+        assert "workspace" in result[0]
         assert "agents" in result[1]
         assert "project" in result[2]
-        # Verify order: cody < agents < wd
-        cody_idx = next(i for i, p in enumerate(result) if "cody" in p)
+        # Verify order: workspace < agents < wd
+        workspace_idx = next(i for i, p in enumerate(result) if "workspace" in p)
         agents_idx = next(i for i, p in enumerate(result) if "agents" in p)
         wd_idx = next(i for i, p in enumerate(result) if "working" in p)
-        assert cody_idx < agents_idx < wd_idx
+        assert workspace_idx < agents_idx < wd_idx
 
     def test_skips_missing_tier_directories(self, tmp_path, monkeypatch):
         """Missing tier directories are silently skipped."""
-        cody = tmp_path / "cody"
-        os.makedirs(cody / "ui")
-        (cody / "ui" / "exists.tcss").write_text("/* */")
+        workspace = tmp_path / "workspace"
+        os.makedirs(workspace / "ui")
+        (workspace / "ui" / "exists.tcss").write_text("/* */")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace))
         # agents_dir still points to real ~/.agents but that's ok — it may
         # or may not exist; collect_tcss handles missing dirs gracefully
 
@@ -131,14 +131,14 @@ class TestCollectTcss:
 
     def test_only_finds_tcss_extension(self, tmp_path, monkeypatch):
         """Only .tcss files are collected; .css and others are ignored."""
-        cody = tmp_path / "cody"
-        os.makedirs(cody / "ui")
-        (cody / "ui" / "styles.tcss").write_text("Button {}")
-        (cody / "ui" / "styles.css").write_text("Button {}")
-        (cody / "ui" / "readme.md").write_text("# README")
-        (cody / "ui" / "__init__.py").write_text("")
+        workspace = tmp_path / "workspace"
+        os.makedirs(workspace / "ui")
+        (workspace / "ui" / "styles.tcss").write_text("Button {}")
+        (workspace / "ui" / "styles.css").write_text("Button {}")
+        (workspace / "ui" / "readme.md").write_text("# README")
+        (workspace / "ui" / "__init__.py").write_text("")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace))
 
         result = collect_tcss(str(tmp_path))
         assert len(result) == 1
@@ -146,13 +146,13 @@ class TestCollectTcss:
 
     def test_collects_skill_tcss(self, tmp_path, monkeypatch):
         """CSS from skills/ directories is collected alongside core UI CSS."""
-        cody = tmp_path / "cody"
-        os.makedirs(cody / "ui")
-        os.makedirs(cody / "skills" / "chat")
-        (cody / "ui" / "core.tcss").write_text("/* core */")
-        (cody / "skills" / "chat" / "chat.tcss").write_text("/* chat skill */")
+        workspace = tmp_path / "workspace"
+        os.makedirs(workspace / "ui")
+        os.makedirs(workspace / "skills" / "chat")
+        (workspace / "ui" / "core.tcss").write_text("/* core */")
+        (workspace / "skills" / "chat" / "chat.tcss").write_text("/* chat skill */")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace))
 
         result = collect_tcss(str(tmp_path))
         assert any("core.tcss" in p for p in result)
@@ -160,12 +160,12 @@ class TestCollectTcss:
 
     def test_collects_skill_tcss_from_nested_subpackages(self, tmp_path, monkeypatch):
         """CSS from skills with nested sub-packages (e.g. database) is collected."""
-        cody = tmp_path / "cody"
-        os.makedirs(cody / "skills" / "database" / "core" / "providers")
-        (cody / "skills" / "database" / "db.tcss").write_text("/* db */")
-        (cody / "skills" / "database" / "core" / "providers" / "sqlite.tcss").write_text("/* sqlite */")
+        workspace = tmp_path / "workspace"
+        os.makedirs(workspace / "skills" / "database" / "core" / "providers")
+        (workspace / "skills" / "database" / "db.tcss").write_text("/* db */")
+        (workspace / "skills" / "database" / "core" / "providers" / "sqlite.tcss").write_text("/* sqlite */")
 
-        monkeypatch.setattr("core.paths.cody_dir", lambda: str(cody))
+        monkeypatch.setattr("core.paths.workspace_dir", lambda: str(workspace))
 
         result = collect_tcss(str(tmp_path))
         db_tcss = [p for p in result if "db.tcss" in p]

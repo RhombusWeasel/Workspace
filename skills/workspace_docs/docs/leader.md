@@ -38,7 +38,7 @@ LeaderOverlay reads leader.get_root()
 
 - Each node is a `LeaderNode` — either a submenu (has children) or a
   leaf action (has a handler or event_type).
-- The overlay posts a `CodyEvent` when an action is reached (via
+- The overlay posts a `WorkspaceEvent` when an action is reached (via
   `event_type`), or calls a `handler` callable directly.
 
 ---
@@ -71,7 +71,7 @@ register_action(
 | `label` | `str` | Display string for the leaf node. |
 | `handler` | `Callable \| None` | Called when the chord completes.  Mutually exclusive with `event_type`. |
 | `labels` | `dict[str, str] \| None` | Human-readable labels for intermediate auto-created nodes. |
-| `event_type` | `str \| None` | If set, posts a `CodyEvent` with this type instead of calling `handler`. |
+| `event_type` | `str \| None` | If set, posts a `WorkspaceEvent` with this type instead of calling `handler`. |
 
 #### `register_submenu(keys, label)`
 
@@ -115,7 +115,7 @@ class LeaderNode:
     children: dict[str, LeaderNode] = {}  # Single-char key → child node
     handler: Callable | None = None        # Called when leaf is reached
     is_submenu: bool = False               # True if explicitly registered as submenu
-    event_type: str | None = None          # If set, posts CodyEvent instead of calling handler
+    event_type: str | None = None          # If set, posts WorkspaceEvent instead of calling handler
 ```
 
 ---
@@ -126,7 +126,7 @@ There are two ways a leaf action can dispatch:
 
 1. **Event-driven** (preferred): Set `event_type` on the action.  When the
    user completes the chord, the leader overlay posts
-   `CodyEvent(event_type)`.  A `@register_handler` somewhere in the codebase
+   `WorkspaceEvent(event_type)`.  A `@register_handler` somewhere in the codebase
    handles it.
 
    ```python
@@ -255,7 +255,7 @@ def test_leader_registry():
 1. **Module-level singleton** — Same decorator self-registration pattern
    as tools, events, and commands.  Plugins register chords at import time.
 
-2. **Event-driven by default** — Leaf actions post `CodyEvent` rather than
+2. **Event-driven by default** — Leaf actions post `WorkspaceEvent` rather than
    calling handlers directly.  This decouples the chord definition from
    the handler, letting handlers live in skill modules.
 

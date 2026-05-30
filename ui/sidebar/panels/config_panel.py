@@ -12,7 +12,7 @@ values have Edit buttons — complex structures are navigable but
 edited through their own dedicated UI.
 
 Editing ``ui.theme`` also applies the theme live via ``app.theme``,
-which triggers ``CodyApp._watch_theme`` to persist the choice.
+which triggers ``WorkspaceApp._watch_theme`` to persist the choice.
 
 Tree structure::
 

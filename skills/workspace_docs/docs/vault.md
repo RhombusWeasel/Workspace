@@ -173,7 +173,7 @@ VaultManager.is_locked() → True   (no key in memory)
       ▼
 VaultPanel.on_mount() → self._vault = ctx.vault
   → _rebuild() → sees is_locked()
-  → posts CodyEvent("vault.needs_unlock")
+  → posts WorkspaceEvent("vault.needs_unlock")
       │
       ▼
 @register_handler("vault.needs_unlock")
@@ -193,7 +193,7 @@ If the vault file doesn't exist yet:
 
 ```
 VaultPanel._rebuild() → no file at master._filepath
-  → posts CodyEvent("vault.needs_init")
+  → posts WorkspaceEvent("vault.needs_init")
   → @register_handler("vault.needs_init")
   → pushes InputModal("Create master password:")
   → vault_manager.initialize_master(password)

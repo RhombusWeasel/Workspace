@@ -27,7 +27,7 @@ from skills.database.core.db_connections import (
     ConnectionManager,
     get_provider,
 )
-from core.events import CodyEvent, register_handler
+from core.events import WorkspaceEvent, register_handler
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import NodeNeedsChildren, Tree
 from ui.tree.tree_row import RowButton, TreeNode
@@ -521,7 +521,7 @@ class DBPanel(Container):
     def _open_query(self, conn_id: str, prefill: str = "") -> None:
         """Post an event to open a query editor for this connection."""
         self.post_message(
-            CodyEvent("db.open_query", {
+            WorkspaceEvent("db.open_query", {
                 "connection_id": conn_id,
                 "prefill": prefill,
             })

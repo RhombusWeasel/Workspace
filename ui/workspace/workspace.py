@@ -15,7 +15,7 @@ from and writes to the state.  No snapshot extraction or injection is
 needed.
 
 Navigation: vim-style ``Ctrl+hjkl`` or mouse click.
-Leader chords post :class:`~core.events.CodyEvent` messages.
+Leader chords post :class:`~core.events.WorkspaceEvent` messages.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from core.pane_tree import (
     set_content,
     get_leaves,
 )
-from core.events import CodyEvent
+from core.events import WorkspaceEvent
 from core.terminal_passthrough import register_terminal_passthrough
 from ui.workspace.tabs import TabState, WorkspaceTabs
 
@@ -146,7 +146,7 @@ class Workspace(Widget):
             self.focused_id = neighbor
             self._update_focus_styles()
             self.post_message(
-                CodyEvent("workspace.navigated", {"pane_id": neighbor})
+                WorkspaceEvent("workspace.navigated", {"pane_id": neighbor})
             )
 
     async def set_pane_content(self, pane_id: str, content: Widget) -> None:
@@ -341,8 +341,8 @@ class Workspace(Widget):
     # Leader event listeners
     # ------------------------------------------------------------------
 
-    def on_cody_event(self, event: CodyEvent) -> None:
-        """Route CodyEvents dispatched from leader chord handlers."""
+    def on_workspace_event(self, event: WorkspaceEvent) -> None:
+        """Route WorkspaceEvents dispatched from leader chord handlers."""
         et = event.event_type
         if et == "leader.workspace.split_h":
             self.run_worker(self.action_split_horizontal())
@@ -361,16 +361,16 @@ class Workspace(Widget):
     async def action_split_horizontal(self) -> None:
         # vim convention: "horizontal split" = horizontal divider = top/bottom
         await self.split_pane("v")
-        self.post_message(CodyEvent("workspace.split", {"direction": "h"}))
+        self.post_message(WorkspaceEvent("workspace.split", {"direction": "h"}))
 
     async def action_split_vertical(self) -> None:
         # vim convention: "vertical split" = vertical divider = left/right
         await self.split_pane("h")
-        self.post_message(CodyEvent("workspace.split", {"direction": "v"}))
+        self.post_message(WorkspaceEvent("workspace.split", {"direction": "v"}))
 
     async def action_close_pane(self) -> None:
         await self.close_pane()
-        self.post_message(CodyEvent("workspace.closed", {"pane_id": self.focused_id}))
+        self.post_message(WorkspaceEvent("workspace.closed", {"pane_id": self.focused_id}))
 
     def action_navigate_left(self) -> None:
         self.navigate("left")

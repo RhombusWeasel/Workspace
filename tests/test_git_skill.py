@@ -165,7 +165,7 @@ class TestGitCheckpoint:
         output, rc = _run_script("checkpoint.py", args=["create", "test-checkpoint"], cwd=cwd)
         assert rc == 0
         assert "Checkpoint created" in output
-        assert "cody-checkpoint/" in output
+        assert "workspace-checkpoint/" in output
 
     def test_checkpoint_create_clean_tree(self, tmp_path):
         cwd = _init_git_repo(tmp_path)

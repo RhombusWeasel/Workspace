@@ -52,7 +52,7 @@ class OllamaProvider(BaseProvider):
     Parameters
     ----------
     config:
-        Cody config for non-secret settings (base URL, model).
+        Workspace config for non-secret settings (base URL, model).
     vault:
         Vault manager for API key lookup and secret redaction.
     model:

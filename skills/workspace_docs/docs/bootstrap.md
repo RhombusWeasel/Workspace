@@ -35,7 +35,7 @@ class Bootstrap:
 
 ### Phase 0 — ``sys.path`` guarantee
 
-Adds the Cody project root to ``sys.path`` so that plugins (which may live
+Adds the Workspace project root to ``sys.path`` so that plugins (which may live
 outside the installation directory) can ``from core.config import Config``
 regardless of their physical location.
 
@@ -69,7 +69,7 @@ decorators.
 ### Database
 
 Creates a ``DatabaseManager`` backed by SQLite.  The database path comes
-from ``config.database.path`` or defaults to ``{working_dir}/cody_data.db``.
+from ``config.database.path`` or defaults to ``{working_dir}/workspace_data.db``.
 
 ### Vault
 
@@ -125,7 +125,7 @@ return AppContext(
 )
 ```
 
-The `CodyApp` constructor then:
+The `WorkspaceApp` constructor then:
 1. Receives this `AppContext`
 2. Sets `context.app = self` for handler access to the UI
 3. Uses `css_paths` as additional CSS loading paths
@@ -137,7 +137,7 @@ The `CodyApp` constructor then:
 ```python
 bootstrap = Bootstrap(
     working_directory="/path/to/project",
-    cody_dir="/opt/cody",         # defaults to paths.cody_dir()
+    workspace_dir="/opt/workspace",         # defaults to paths.workspace_dir()
     agents_dir="/home/alice/.agents",  # defaults to paths.agents_dir()
 )
 ctx = bootstrap.run()

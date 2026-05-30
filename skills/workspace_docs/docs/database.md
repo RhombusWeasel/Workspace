@@ -70,7 +70,7 @@ CREATE TABLE input_history (
 ### Constructor
 
 ```python
-db = DatabaseManager(db_path="/path/to/cody_data.db")
+db = DatabaseManager(db_path="/path/to/workspace_data.db")
 ```
 
 ### Chat CRUD

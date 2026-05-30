@@ -562,7 +562,7 @@ class TestFileBrowserPanelRendering:
                     self.panel = FileBrowserPanel(working_directory=tmpdir)
                     yield self.panel
 
-                def on_cody_event(self, event) -> None:
+                def on_workspace_event(self, event) -> None:
                     events_fired.append(event)
 
             async with FBApp().run_test() as pilot:
@@ -572,7 +572,7 @@ class TestFileBrowserPanelRendering:
                 assert len(file_nodes) > 0
 
                 # Select a file node — this posts NodeSelected, which the
-                # panel handles by posting CodyEvent("files.edit", ...)
+                # panel handles by posting WorkspaceEvent("files.edit", ...)
                 tree.select_node(file_nodes[0].id)
                 await pilot.pause()
 
@@ -596,7 +596,7 @@ class TestFileBrowserPanelRendering:
                     self.panel = FileBrowserPanel(working_directory=tmpdir)
                     yield self.panel
 
-                def on_cody_event(self, event) -> None:
+                def on_workspace_event(self, event) -> None:
                     events_fired.append(event)
 
             async with FBApp().run_test() as pilot:

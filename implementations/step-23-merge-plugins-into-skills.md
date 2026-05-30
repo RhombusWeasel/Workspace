@@ -86,6 +86,6 @@ Simplified. `collect_tcss()` now walks all three tiers uniformly — including `
 
 ## Known Issues / Future Work
 
-- Documentation under `skills/cody_docs/docs/` still references "plugins" in many places — this is a documentation-only task, not functional
+- Documentation under `skills/workspace_docs/docs/` still references "plugins" in many places — this is a documentation-only task, not functional
 - The `design_document.md` Step 23 is marked in-progress; remaining phases can be checked off
 - Some pre-existing test failures (Textual MountError, ollama import, icons KeyError, file editor syntax) are unrelated to this refactor

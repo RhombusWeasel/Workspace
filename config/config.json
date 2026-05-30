@@ -7,7 +7,7 @@
     "base_url": "http://localhost:11434"
   },
   "ui": {
-    "theme": "gruvbox"
+    "theme": "monokai"
   },
   "skills": {
     "enabled": {}
@@ -16,10 +16,10 @@
     "connections": [
       {
         "id": "d3c350776443",
-        "name": "Cody",
+        "name": "Workspace",
         "provider_type": "sqlite",
         "params": {
-          "path": "./cody_data.db"
+          "path": "./workspace_data.db"
         },
         "created_at": "2026-05-18T20:04:03.637949+00:00",
         "updated_at": "2026-05-18T20:04:03.637949+00:00"
@@ -36,5 +36,21 @@
       }
     ],
     "default_page_size": 200
+  },
+  "redaction": {
+    "enabled": true,
+    "patterns": []
+  },
+  "inline_suggest": {
+    "enabled": true,
+    "model": "",
+    "delay_ms": 400,
+    "context_lines_above": 40,
+    "context_lines_below": 20,
+    "max_suggestion_lines": 8
+  },
+  "prompt": {
+    "default_id": "default",
+    "inline_suggest_id": "inline-suggest"
   }
 }

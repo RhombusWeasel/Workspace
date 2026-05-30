@@ -4,7 +4,7 @@ Wraps :class:`textual_terminal.Terminal` with lifecycle management
 (start on mount, stop on unmount), working directory context, and
 integration with the :class:`~ui.workspace.tabs.WorkspaceTabs` system.
 
-Opened via the ``terminal.open`` CodyEvent (typically triggered by
+Opened via the ``terminal.open`` WorkspaceEvent (typically triggered by
 the leader chord ``Ctrl+Space t o``).
 
 Tab state is managed by :class:`TerminalState`, which owns the PTY

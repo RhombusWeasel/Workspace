@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Git checkpoint script — create, list, and restore WIP checkpoints.
 
-Checkpoints are WIP commits tagged with a ``cody-checkpoint/`` prefix.
+Checkpoints are WIP commits tagged with a ``workspace-checkpoint/`` prefix.
 They let the agent create a rollback point before making potentially
 destructive changes, and restore to that point if something goes wrong.
 
-Called by the Cody agent via the ``run_skill`` tool:
+Called by the Workspace agent via the ``run_skill`` tool:
 
     run_skill(skill_name="git", script="scripts/checkpoint.py", args=["create", "before refactor"])
     run_skill(skill_name="git", script="scripts/checkpoint.py", args=["list"])
@@ -60,7 +60,7 @@ def create_checkpoint(message: str) -> str:
     Strategy:
     1. Stage all changes (tracked + untracked)
     2. Create a WIP commit
-    3. Tag with cody-checkpoint/<sanitized-message>
+    3. Tag with workspace-checkpoint/<sanitized-message>
 
     If the working tree is clean, just tag the current HEAD.
     """
@@ -69,7 +69,7 @@ def create_checkpoint(message: str) -> str:
     if rc != 0:
         return "Not a git repository."
 
-    tag_name = f"cody-checkpoint/{_sanitize_tag_name(message)}"
+    tag_name = f"workspace-checkpoint/{_sanitize_tag_name(message)}"
 
     # Check if tag already exists
     _, rc, _ = _run_git("rev-parse", tag_name)
@@ -107,7 +107,7 @@ def create_checkpoint(message: str) -> str:
 
     # Create the tag with timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    tag_msg = f"Cody checkpoint ({timestamp}): {message}"
+    tag_msg = f"Workspace checkpoint ({timestamp}): {message}"
     _, rc, err = _run_git("tag", "-a", tag_name, "-m", tag_msg)
     if rc != 0:
         # Tag creation failed — undo the WIP commit if we made one
@@ -129,14 +129,14 @@ def create_checkpoint(message: str) -> str:
 
 
 def list_checkpoints() -> str:
-    """List all cody-checkpoint tags with dates and messages."""
+    """List all workspace-checkpoint tags with dates and messages."""
     # Check if we're in a git repo
     _, rc, _ = _run_git("rev-parse", "--is-inside-work-tree")
     if rc != 0:
         return "Not a git repository."
 
     output, rc, _ = _run_git(
-        "tag", "-l", "cody-checkpoint/*",
+        "tag", "-l", "workspace-checkpoint/*",
         "--format=%(refname:short)|%(creatordate:short)|%(subject)"
     )
 
@@ -156,8 +156,8 @@ def list_checkpoints() -> str:
         date = segments[1] if len(segments) > 1 else "?"
         subject = segments[2] if len(segments) > 2 else ""
 
-        # Short display name (strip cody-checkpoint/ prefix)
-        short_name = tag.replace("cody-checkpoint/", "")
+        # Short display name (strip workspace-checkpoint/ prefix)
+        short_name = tag.replace("workspace-checkpoint/", "")
         parts.append(f"  {short_name:<40} {date}  {subject}")
 
     parts.append("")
@@ -174,18 +174,18 @@ def restore_checkpoint(tag_fragment: str) -> str:
     3. Delete the checkpoint tag
     """
     # Try exact match first
-    full_tag = f"cody-checkpoint/{tag_fragment}"
+    full_tag = f"workspace-checkpoint/{tag_fragment}"
     _, rc, _ = _run_git("rev-parse", full_tag)
 
     if rc != 0:
         # Try partial match — find tags containing the fragment
-        output, _, _ = _run_git("tag", "-l", f"cody-checkpoint/*{tag_fragment}*")
+        output, _, _ = _run_git("tag", "-l", f"workspace-checkpoint/*{tag_fragment}*")
         if output:
             matches = [m.strip() for m in output.split("\n") if m.strip()]
             if len(matches) == 1:
                 full_tag = matches[0]
             elif len(matches) > 1:
-                short_names = [m.replace("cody-checkpoint/", "") for m in matches]
+                short_names = [m.replace("workspace-checkpoint/", "") for m in matches]
                 return (
                     f"Multiple checkpoints match '{tag_fragment}':\n"
                     + "\n".join(f"  {n}" for n in short_names)
