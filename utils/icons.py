@@ -34,6 +34,7 @@ EYE_OFF = "󰛡"          # 󰛡  eye-off / hide hidden
 
 SEND = ""          #   send / paper-plane
 ABORT = "󰜺"         # 󰜺  abort / stop-circle
+PLAY = "▶"          # ▶ play / launch
 
 # ---------------------------------------------------------------------------
 # Folder icons

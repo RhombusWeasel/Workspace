@@ -257,12 +257,24 @@ class ChatManager(Widget):
         if self._agent is None:
             self._wire_agent(ctx)
 
-    def _wire_agent(self, ctx: Any) -> None:
+    def wire_agent_from_id(self, ctx: Any, agent_id: str) -> None:
+        """Wire a specific agent definition by ID.
+
+        Like :meth:`wire_from_context`, but forces the use of the named
+        agent instead of the session default.
+        """
+        if ctx.database is not None:
+            self._db = ctx.database
+            self._chat_id = self._db.create_chat()
+        self._wire_agent(ctx, agent_id=agent_id)
+
+    def _wire_agent(self, ctx: Any, agent_id: str | None = None) -> None:
         from core.agent import Agent
         from core.tools import get_tools
 
         # Resolve the agent definition from the agent registry.
-        agent_id = ctx.config.get("agent.default_id", "default")
+        if agent_id is None:
+            agent_id = ctx.config.get("agent.default_id", "default")
         agent_def = None
         if ctx.agents is not None:
             agent_def = ctx.agents.get_agent(agent_id)

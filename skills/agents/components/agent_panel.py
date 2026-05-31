@@ -21,7 +21,7 @@ from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode, TreeRow, RowButton
 from ui.widgets.form_modal import FormControl, FormModal
 from core.agent_registry import AgentManager
-from utils.icons import EDIT, DELETE
+from utils.icons import EDIT, DELETE, PLAY
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +30,7 @@ from utils.icons import EDIT, DELETE
 
 _EDIT = "edit"
 _DELETE = "delete"
+_LAUNCH = "launch"
 
 _SCOPE_ICONS = {
     "global": "󰌘",
@@ -39,6 +40,7 @@ _SCOPE_ICONS = {
 
 def _agent_buttons() -> list[RowButton]:
     return [
+        RowButton(_LAUNCH, PLAY, "agent-launch"),
         RowButton(_EDIT, EDIT, "agent-edit"),
         RowButton(_DELETE, DELETE, "agent-delete"),
     ]
@@ -202,7 +204,9 @@ class AgentPanel(Container):
         if node_type != "agent":
             return
 
-        if event.action_id == _EDIT:
+        if event.action_id == _LAUNCH:
+            self._agent_launch(agent_id)
+        elif event.action_id == _EDIT:
             self._agent_edit(agent_id)
         elif event.action_id == _DELETE:
             self._agent_delete(agent_id)
@@ -211,6 +215,29 @@ class AgentPanel(Container):
         event.stop()
         if event.button.id == "agent-new-btn":
             self._agent_create()
+
+    # ------------------------------------------------------------------
+    # Launch — open a chat tab with this agent
+    # ------------------------------------------------------------------
+
+    def _agent_launch(self, agent_id: str) -> None:
+        """Open a chat tab using the named agent definition."""
+        if self._agents is None:
+            return
+
+        agent_def = self._agents.get_agent(agent_id)
+        if agent_def is None:
+            self.app.notify(f"Agent '{agent_id}' not found", severity="error")
+            return
+
+        from core.events import WorkspaceEvent
+        self.post_message(WorkspaceEvent("chat.open", {"agent_id": agent_id}))
+
+        # Notify the user which agent was launched.
+        name = agent_def.get("name", agent_id)
+        model_info = f" (model: {agent_def['model']})" if agent_def.get("model") else ""
+        provider_info = f" (provider: {agent_def['provider']})" if agent_def.get("provider") else ""
+        self.app.notify(f"Launched agent '{name}'{model_info}{provider_info}")
 
     # ------------------------------------------------------------------
     # CRUD dialogs
