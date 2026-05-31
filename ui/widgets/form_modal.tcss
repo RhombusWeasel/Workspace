@@ -3,11 +3,12 @@ FormModal {
 }
 
 FormModal #form-dialog {
-    width: 60;
-    max-height: 30;
+    width: 30%;
+    height: auto;
     background: $surface;
-    border: thick $accent;
-    padding: 1 2;
+    border: round $primary;
+    padding: 0;
+    margin: 0;
 }
 
 FormModal #form-title {
@@ -19,7 +20,7 @@ FormModal #form-title {
 
 FormModal #form-fields {
     height: auto;
-    max-height: 20;
+    max-height: 90%;
     margin-bottom: 1;
 }
 
@@ -56,11 +57,15 @@ FormModal #form-status {
 
 FormModal #form-buttons {
     align: center middle;
-    height: 3;
-    margin-top: 1;
+    height: 1;
+    margin: 0;
+    padding: 0;
+    border: none;
 }
 
 FormModal #form-buttons Button {
-    margin: 0 1;
+    margin: 0;
+    padding: 0;
+    border: none;
     min-width: 10;
 }
