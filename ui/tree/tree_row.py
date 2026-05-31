@@ -209,17 +209,29 @@ class TreeRow(Widget):
         self._label = _RowLabel(
             self._render_label(), self.node, self.is_branch, self
         )
-        with Horizontal(classes="tree-row-inner"):
-            yield self._label
-            if self.node.content is not None:
+        if self.node.content is not None:
+            # Content widgets (Markdown, Static, etc.) are block-level —
+            # render below the label at full width, not squeezed beside it.
+            with Horizontal(classes="tree-row-inner"):
+                yield self._label
+                for btn in self.node.buttons:
+                    yield Button(
+                        btn.label,
+                        id=f"act-{self.node.id}-{btn.action_id}",
+                        classes="tree-icon-btn " + (btn.style or ""),
+                    )
+            with Horizontal(classes="tree-row-content"):
                 yield self.node.content
-            # Buttons inline on the same row as the label
-            for btn in self.node.buttons:
-                yield Button(
-                    btn.label,
-                    id=f"act-{self.node.id}-{btn.action_id}",
-                    classes="tree-icon-btn " + (btn.style or ""),
-                )
+        else:
+            # No content widget — label and buttons in a single row.
+            with Horizontal(classes="tree-row-inner"):
+                yield self._label
+                for btn in self.node.buttons:
+                    yield Button(
+                        btn.label,
+                        id=f"act-{self.node.id}-{btn.action_id}",
+                        classes="tree-icon-btn " + (btn.style or ""),
+                    )
 
     @property
     def label_text(self) -> str:

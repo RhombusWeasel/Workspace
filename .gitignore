@@ -8,8 +8,12 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Config
 .agents/
 config/
+
+# Dev
 docs/
 implementations/
 tests/

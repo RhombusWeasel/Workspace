@@ -17,6 +17,12 @@ TreeRow.-hidden {
     height: auto;
 }
 
+.tree-row-content {
+    width: 1fr;
+    height: auto;
+    padding-left: 1;
+}
+
 .tree-icon-btn {
     width: 3;
     min-width: 3;

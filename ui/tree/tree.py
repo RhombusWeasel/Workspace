@@ -277,6 +277,15 @@ class Tree(VerticalScroll, can_focus=True):
     def is_expanded(self, node_id: str) -> bool:
         return node_id in self._expanded
 
+    def is_user_collapsed(self, node_id: str) -> bool:
+        """Return True if the node has been manually collapsed by the user.
+
+        User collapses persist across :meth:`rebuild` calls via
+        ``_user_collapsed``.  Use this to check whether a force-expand
+        would override the user's explicit choice.
+        """
+        return node_id in self._user_collapsed
+
     # ------------------------------------------------------------------
     # Mount / rebuild internals
     # ------------------------------------------------------------------

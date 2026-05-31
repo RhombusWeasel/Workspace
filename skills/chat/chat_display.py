@@ -158,12 +158,19 @@ class ChatDisplay(Widget):
         Sections are added on demand via :meth:`add_section` as their
         content arrives during streaming.  Returns the assistant branch
         node ID.
+
+        The assistant branch is collapsible — the collapsed label shows
+        a short identifier, and the expanded label shows just
+        "Assistant".  This lets users collapse a whole response to
+        save vertical space while reviewing earlier messages.
         """
         self._turn_count += 1
         asst_id = f"msg-{self._turn_count}"
 
         asst_node = TreeNode(
-            asst_id, "\uf4ad  [green]Assistant[/green]",
+            asst_id,
+            "\uf4ad  [green]Assistant[/green]",
+            label_expanded="\uf4ad  [green]Assistant[/green]",
             data={"role": "assistant", "type": "branch"},
         )
         self._root.children.append(asst_node)
@@ -236,10 +243,13 @@ class ChatDisplay(Widget):
 
         self._rebuild()
 
-        # Expand the new section and its parent.
+        # Expand the new section.  Expand the assistant branch too,
+        # unless the user has manually collapsed it (in which case we
+        # respect their choice and leave it collapsed).
         tree = self.query_one(Tree)
         tree.expand_node(section_id)
-        tree.expand_node(self._active_asst_id)
+        if not tree.is_user_collapsed(self._active_asst_id):
+            tree.expand_node(self._active_asst_id)
 
         self._schedule_scroll()
 
@@ -276,7 +286,12 @@ class ChatDisplay(Widget):
         self._schedule_scroll()
 
     def finalize_turn(self) -> None:
-        """Remove empty section children, rebuild tree, clear internal state."""
+        """Remove empty section children, rebuild tree, clear internal state.
+
+        After finalizing, updates the assistant branch's collapsed label
+        to show a short preview of the response content, making it easy
+        to identify when collapsed.
+        """
         asst_id = self._active_asst_id
         if asst_id is None:
             return
@@ -290,6 +305,15 @@ class ChatDisplay(Widget):
             if len(keep) != len(node.children):
                 node.children = keep
                 self._rebuild()
+
+            # Update collapsed label to show a preview of the response.
+            # Compute preview BEFORE clearing _section_texts.
+            preview = self._turn_preview(node)
+            if preview:
+                node.label = f"\uf4ad  [green]Assistant:[/green] {preview}"
+                # Refresh the label in the tree.
+                tree = self.query_one(Tree)
+                tree.update_node_label(asst_id, node.label)
 
         self._active_asst_id = None
         self._section_widgets = {}
@@ -354,6 +378,26 @@ class ChatDisplay(Widget):
     def _is_empty_section(self, branch: TreeNode) -> bool:
         """Return True if the section branch's content widget has no text."""
         return not self._section_texts.get(branch.id)
+
+    def _turn_preview(self, asst_node: TreeNode) -> str:
+        """Build a short preview string from the assistant turn's content.
+
+        Looks for a response section first, then thinking, then any
+        non-empty section.  Returns up to 60 characters of the content.
+        """
+        # Try response sections first, then thinking, then any.
+        for section_type in ("response", "thinking"):
+            for child in asst_node.children:
+                if child.data and child.data.get("section") == section_type:
+                    text = self._section_texts.get(child.id, "")
+                    if text:
+                        return _truncate(text, 60)
+        # Fall back to any non-empty section.
+        for child in asst_node.children:
+            text = self._section_texts.get(child.id, "")
+            if text:
+                return _truncate(text, 60)
+        return ""
 
     def _find_node(self, node_id: str) -> TreeNode | None:
         for child in self._root.children:
