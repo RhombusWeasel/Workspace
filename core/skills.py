@@ -267,8 +267,18 @@ class SkillManager:
 
     def get_catalog_xml(self) -> str:
         """Return an XML string listing enabled skills for agent system prompts."""
+        return self.render_selected(list(self._enabled))
+
+    def render_selected(self, skill_names: list[str]) -> str:
+        """Return an XML string listing only the named skills.
+
+        Skills that are not enabled or not found are silently skipped.
+        Used by agents that specify a restricted ``skills`` list.
+        """
         parts = ["<available_skills>"]
-        for name in sorted(self._enabled):
+        for name in sorted(skill_names):
+            if name not in self._enabled:
+                continue
             skill = self._skills[name]
             parts.append("  <skill>")
             parts.append(

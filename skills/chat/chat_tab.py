@@ -38,11 +38,15 @@ class ChatTabState(TabState):
     split or closed, ``ChatManager.flush_state()`` writes widget state
     back here.  The content factory then creates a fresh ChatManager
     that reads from this state, restoring the conversation.
+
+    If ``agent_id`` is set, the chat tab uses that specific agent
+    definition instead of the session default.
     """
 
-    def __init__(self, ctx: AppContext | None = None) -> None:
+    def __init__(self, ctx: AppContext | None = None, agent_id: str | None = None) -> None:
         super().__init__()
         self._ctx: AppContext | None = ctx
+        self._agent_id: str | None = agent_id
         # Conversation state — populated by flush_state(), read by the
         # content factory when recreating the widget after recomposition.
         self._history: list[dict[str, Any]] = []
@@ -79,7 +83,10 @@ def _create_chat_content(state: TabState) -> ChatManager:
         manager.set_state(state)
         if not state._history and state._ctx is not None:
             # No prior conversation — just wire the agent.
-            manager.wire_from_context(state._ctx)
+            if state._agent_id:
+                manager.wire_agent_from_id(state._ctx, state._agent_id)
+            else:
+                manager.wire_from_context(state._ctx)
     return manager
 
 
@@ -88,11 +95,14 @@ def _create_chat_content(state: TabState) -> ChatManager:
 # ---------------------------------------------------------------------------
 
 
-def open_chat_tab(ctx: AppContext) -> None:
+def open_chat_tab(ctx: AppContext, agent_id: str | None = None) -> None:
     """Open a chat tab in the focused workspace pane.
 
     If a chat tab already exists in the focused pane, switch to it.
     The tab is identified by the ID ``"chat"``.
+
+    If *agent_id* is provided, the chat tab will use that specific
+    agent definition instead of the session default.
     """
     app = ctx.app
     if app is None:
@@ -115,16 +125,25 @@ def open_chat_tab(ctx: AppContext) -> None:
     except Exception:
         return
 
-    # If a chat tab already exists, switch to it
-    if "chat" in tabs._tabs:
-        tabs.switch_tab("chat")
+    # Determine tab ID — use a unique ID per agent if specified,
+    # otherwise reuse the default "chat" tab.
+    if agent_id:
+        tab_id = f"chat-{agent_id}"
+        label_prefix = f"󰭟 {agent_id}"
+    else:
+        tab_id = "chat"
+        label_prefix = "󰭟 AI Chat"
+
+    # If a tab with this agent already exists, switch to it
+    if tab_id in tabs._tabs:
+        tabs.switch_tab(tab_id)
         return
 
     # Create state and open the tab
-    chat_state = ChatTabState(ctx=ctx)
+    chat_state = ChatTabState(ctx=ctx, agent_id=agent_id)
     tabs.open_tab(
-        "chat",
-        "󰭟 AI Chat",
+        tab_id,
+        label_prefix,
         state=chat_state,
         content_factory=_create_chat_content,
     )
@@ -137,8 +156,13 @@ def open_chat_tab(ctx: AppContext) -> None:
 
 @register_handler("chat.open")
 def _on_chat_open(data: dict, ctx: AppContext) -> None:
-    """Handle ``chat.open`` events — open a chat workspace tab."""
-    open_chat_tab(ctx)
+    """Handle ``chat.open`` events — open a chat workspace tab.
+
+    If ``data`` contains an ``agent_id`` key, the chat tab uses that
+    specific agent definition.
+    """
+    agent_id = data.get("agent_id") if data else None
+    open_chat_tab(ctx, agent_id=agent_id)
 
 
 # ---------------------------------------------------------------------------

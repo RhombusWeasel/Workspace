@@ -1,4 +1,4 @@
-"""Database — SQLite-backed persistence for chats, messages, agents, todos, and
+"""Database — SQLite-backed persistence for chats, messages, agent definitions, todos, and
 input history.
 
 Includes a ``BaseDBProvider`` abstract class so alternative backends can
@@ -76,8 +76,45 @@ class SQLiteProvider(BaseDBProvider):
     # Internal
     # ------------------------------------------------------------------
 
+    def _migrate_agents_table(self) -> None:
+        """Rename the old agents table if it has the legacy schema.
+
+        The old agents table (id, name, description, system_prompt, model, created_at)
+        is detected by checking if the ``system_prompt`` column exists.  If so,
+        the table is renamed to ``agents_legacy`` so that the new ``agents`` table
+        DDL (with the new schema) can succeed.
+
+        Data migration from ``agents_legacy`` and ``prompts`` into the new
+        ``agents`` table is handled by :class:`~core.agent_registry.AgentManager`
+        after database initialization.
+        """
+        assert self._conn is not None
+        # Check if agents table exists with old schema.
+        try:
+            # Get column names for the agents table.
+            cursor = self._conn.execute("PRAGMA table_info(agents)")
+            columns = {row[1] for row in cursor.fetchall()}  # row[1] = column name
+        except Exception:
+            return
+
+        if "system_prompt" in columns:
+            # Old schema detected — rename to agents_legacy.
+            try:
+                self._conn.execute("DROP TABLE IF EXISTS agents_legacy")
+                self._conn.execute("ALTER TABLE agents RENAME TO agents_legacy")
+                self._conn.commit()
+            except Exception:
+                pass
+
     def _create_tables(self) -> None:
         assert self._conn is not None
+
+        # --- Schema migration for the agents table ---
+        # The old agents table had columns: id, name, description, system_prompt, model, created_at.
+        # The new agents table has additional columns.  If the old schema is detected,
+        # rename it so the new table can be created.
+        self._migrate_agents_table()
+
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS chats (
@@ -99,27 +136,23 @@ class SQLiteProvider(BaseDBProvider):
             CREATE INDEX IF NOT EXISTS idx_messages_chat
                 ON messages(chat_id, id);
 
-            CREATE TABLE IF NOT EXISTS prompts (
-                id          TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                template    TEXT NOT NULL,
-                model       TEXT NOT NULL DEFAULT '',
-                scope       TEXT NOT NULL DEFAULT 'global',
-                created_at  TEXT NOT NULL,
-                updated_at  TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_prompts_scope ON prompts(scope);
-
             CREATE TABLE IF NOT EXISTS agents (
-                id            TEXT PRIMARY KEY,
-                name          TEXT NOT NULL,
-                description   TEXT NOT NULL DEFAULT '',
-                system_prompt TEXT NOT NULL DEFAULT '',
-                model         TEXT NOT NULL DEFAULT '',
-                created_at    TEXT NOT NULL
+                id                  TEXT PRIMARY KEY,
+                name                TEXT NOT NULL,
+                description         TEXT NOT NULL DEFAULT '',
+                template            TEXT NOT NULL,
+                model               TEXT NOT NULL DEFAULT '',
+                provider            TEXT NOT NULL DEFAULT '',
+                scope               TEXT NOT NULL DEFAULT 'global',
+                tools               TEXT NOT NULL DEFAULT '',
+                skills              TEXT NOT NULL DEFAULT '',
+                temperature         TEXT NOT NULL DEFAULT '',
+                max_tool_iterations TEXT NOT NULL DEFAULT '',
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_agents_scope ON agents(scope);
 
             CREATE TABLE IF NOT EXISTS todos (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -341,8 +374,13 @@ class DatabaseManager:
         )
 
     # ------------------------------------------------------------------
-    # Agent CRUD (deprecated — use prompts table via PromptManager)
+    # Agent CRUD (deprecated — use AgentManager from core.agent_registry)
     # ------------------------------------------------------------------
+
+    # The old agents table had columns: id, name, description, system_prompt, model, created_at.
+    # The new agents table has: id, name, description, template, model, provider, scope,
+    # tools, skills, temperature, max_tool_iterations, created_at, updated_at.
+    # These deprecated methods map the old API to the new table for backward compat.
 
     def create_agent(
         self,
@@ -352,49 +390,92 @@ class DatabaseManager:
         model: str = "",
         agent_id: str | None = None,
     ) -> str:
+        import warnings
+        warnings.warn(
+            "DatabaseManager.create_agent() is deprecated — use AgentManager.create_agent()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         agent_id = agent_id or uuid.uuid4().hex
+        now = _now()
         self._provider.execute(
-            "INSERT INTO agents (id, name, description, system_prompt, model, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (agent_id, name, description, system_prompt, model, _now()),
+            "INSERT INTO agents "
+            "(id, name, description, template, model, provider, scope, "
+            "tools, skills, temperature, max_tool_iterations, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (agent_id, name, description, system_prompt, model, "", "global",
+             "", "", "", "", now, now),
         )
         return agent_id
 
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        import warnings
+        warnings.warn(
+            "DatabaseManager.get_agent() is deprecated — use AgentManager.get_agent()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         rows = self._provider.execute(
-            "SELECT id, name, description, system_prompt, model, created_at "
+            "SELECT id, name, description, template, model, provider, scope, "
+            "tools, skills, temperature, max_tool_iterations, created_at, updated_at "
             "FROM agents WHERE id = ?",
             (agent_id,),
         )
         return dict(rows[0]) if rows else None
 
     def list_agents(self) -> list[dict[str, Any]]:
+        import warnings
+        warnings.warn(
+            "DatabaseManager.list_agents() is deprecated — use AgentManager.list_agents()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         rows = self._provider.execute(
-            "SELECT id, name, description, system_prompt, model, created_at "
+            "SELECT id, name, description, template, model, provider, scope, "
+            "tools, skills, temperature, max_tool_iterations, created_at, updated_at "
             "FROM agents ORDER BY name ASC"
         )
         return [dict(r) for r in rows]
 
     def delete_agent(self, agent_id: str) -> None:
+        import warnings
+        warnings.warn(
+            "DatabaseManager.delete_agent() is deprecated — use AgentManager.delete_agent()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._provider.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
 
-    def seed_agents(self, agents: list[dict[str, Any]]) -> None:
-        """Insert *agents* if they don't already exist (matched by ``id``)."""
-        for a in agents:
+    def seed_agents(self, agents_data: list[dict[str, Any]]) -> None:
+        """Insert agents if they don't already exist (matched by ``id``).
+
+        Deprecated — AgentManager handles seeding internally.
+        """
+        import warnings
+        warnings.warn(
+            "DatabaseManager.seed_agents() is deprecated — seeding is handled by AgentManager",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        for a in agents_data:
             existing = self._provider.execute(
                 "SELECT 1 FROM agents WHERE id = ?", (a["id"],)
             )
             if not existing:
+                now = _now()
                 self._provider.execute(
-                    "INSERT INTO agents (id, name, description, system_prompt, model, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO agents "
+                    "(id, name, description, template, model, provider, scope, "
+                    "tools, skills, temperature, max_tool_iterations, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         a["id"],
                         a["name"],
                         a.get("description", ""),
                         a.get("system_prompt", ""),
                         a.get("model", ""),
-                        _now(),
+                        "", "global", "", "", "", "",
+                        now, now,
                     ),
                 )
 

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from core.database import DatabaseManager
     from core.leader import LeaderRegistry
     from core.providers.base import BaseProvider
+    from core.providers.registry import ProviderRegistry
+    from core.agent_registry import AgentManager
     from core.skills import SkillManager
     from core.vault import VaultManager
 
@@ -42,13 +44,19 @@ class AppContext:
     database skill is loaded; ``None`` otherwise.
     """
     leader: LeaderRegistry | None = None
-    provider: BaseProvider | None = None
-    """LLM provider (e.g. :class:`~core.providers.ollama.OllamaProvider`).
+    providers: ProviderRegistry | None = None
+    """Provider registry — manages named LLM provider instances.
 
-    Created once during bootstrap and shared by all consumers
-    (agent, inline suggestions, etc.).  Consumers should use the
-    :class:`~core.providers.base.BaseProvider` interface, not the
-    concrete class.
+    Set to a :class:`~core.providers.registry.ProviderRegistry` instance
+    by bootstrap.  Replaces the former single ``provider`` field.
+    Consumers use ``ctx.providers.get(name)`` or ``ctx.providers.get_default()``
+    to obtain a :class:`~core.providers.base.BaseProvider` instance.
+    """
+    agents: AgentManager | None = None
+    """Agent registry — manages agent definitions with system prompt templates.
+
+    Set to a :class:`~core.agent_registry.AgentManager` instance by
+    bootstrap; ``None`` if not yet initialised.
     """
     vault: VaultManager | None = None
     working_directory: str = ""
@@ -61,15 +69,38 @@ class AppContext:
     ``db_connections`` also get dedicated fields for convenience, but
     everything lives in ``services`` too for generic access.
     """
-    prompts: Any = None
-    """Prompt registry for system prompt templates.
-
-    Set to a :class:`~core.prompt_registry.PromptManager` instance by
-    bootstrap; ``None`` if not yet initialised.
-    """
     app: Any = None
     """The running :class:`WorkspaceApp` instance.
 
     Set by the app in its constructor.  Event handlers use this to
     call ``push_screen_wait()``, ``notify()``, and query the DOM.
+    """
+
+    # ------------------------------------------------------------------
+    # Backward-compatible convenience property
+    # ------------------------------------------------------------------
+
+    @property
+    def provider(self) -> BaseProvider | None:
+        """The default LLM provider (convenience shortcut).
+
+        Returns the default provider from the registry.  This property
+        preserves backward compatibility with code that accessed
+        ``ctx.provider`` directly.  New code should prefer
+        ``ctx.providers.get_default()`` to be explicit about which
+        named instance is being used.
+        """
+        if self.providers is not None:
+            try:
+                return self.providers.get_default()
+            except (ValueError, KeyError):
+                return None
+        return None
+
+    # Deprecated field aliases for migration
+    prompts: Any = None
+    """Deprecated — use ``ctx.agents`` instead.
+
+    This field exists only to ease migration.  It is set to the same
+    :class:`AgentManager` instance as ``ctx.agents`` during bootstrap.
     """

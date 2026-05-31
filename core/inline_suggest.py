@@ -104,12 +104,12 @@ async def get_inline_suggestion(
         lines_below=context_lines_below,
     )
 
-    # Resolve system prompt from the prompt registry.
+    # Resolve system prompt from the agent registry.
     system_prompt = _SYSTEM_PROMPT  # fallback
-    if ctx is not None and ctx.prompts is not None:
+    if ctx is not None and ctx.agents is not None:
         try:
-            prompt_id = ctx.config.get("prompt.inline_suggest_id", "inline-suggest")
-            system_prompt = ctx.prompts.render(prompt_id, ctx)
+            agent_id = ctx.config.get("agent.inline_suggest_id", "inline-suggest")
+            system_prompt = ctx.agents.render(agent_id, ctx)
         except (ValueError, AttributeError):
             pass  # Fall back to hardcoded prompt
 

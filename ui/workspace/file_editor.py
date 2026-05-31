@@ -285,6 +285,7 @@ class FileEditor(Widget):
     def _make_provider_and_model(self):
         """Return the shared provider and model from the app context.
 
+        Uses the provider registry to get the default provider instance.
         Falls back to ``session.model`` if ``inline_suggest.model`` is
         not set.
 
@@ -292,7 +293,11 @@ class FileEditor(Widget):
         """
         try:
             ctx = self.app.context
-            provider = ctx.provider
+            # Use provider registry (preferred) or backward-compat property
+            if ctx.providers is not None:
+                provider = ctx.providers.get_default()
+            else:
+                provider = ctx.provider
             model = ctx.config.get("inline_suggest.model", "")
             if not model:
                 model = ctx.config.get("session.model", "")
