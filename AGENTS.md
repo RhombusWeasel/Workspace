@@ -13,8 +13,6 @@ Workflow for a change:
 4. Write the tests for the change.
 5. Apply the change.
 6. Ask the user to check and test the change.  Do not try and check the change yourself as this is a team we're in and the user wants to help out and may notice something you had not considered.
-7. Once the user approves the changes then you should create a file with implementation details of your change, this is essentially instructions for use for any future agents that may need to interact with the file and should contain detailed notes for the system you just built in ./implementations/.
-
 
 Additional Details:
 
