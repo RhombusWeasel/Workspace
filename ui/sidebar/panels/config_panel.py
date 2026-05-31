@@ -1,38 +1,38 @@
 """Config panel — sidebar tab displaying and editing configuration values.
 
 Uses the generic :class:`~ui.tree.tree.Tree` to show config keys
-hierarchically.  Leaf nodes display ``key: value`` and have an
-**Edit** button that opens an :class:`~ui.widgets.input_modal.InputModal`
-for inline editing.  Changes are applied immediately via
-:meth:`Config.set()`.
+hierarchically.  Scalar leaf nodes display an **inline editor** whose
+type matches the value:
+
+* ``bool``   → :class:`~textual.widgets.Switch` (toggle)
+* ``str``    → :class:`~textual.widgets.Input` (text field)
+* ``int``    → :class:`~textual.widgets.Input` (integer field)
+* ``float``  → :class:`~textual.widgets.Input` (decimal field)
+* ``None``   → :class:`~textual.widgets.Input` (type ``null`` / ``none``)
+
+Changes are applied immediately via :meth:`Config.set()`.  Editing
+``ui.theme`` also applies the theme live via ``app.theme``, which
+triggers ``WorkspaceApp._watch_theme`` to persist the choice.
 
 Dicts and lists are expanded as branch nodes, giving a full tree
 view of structured data like database connections.  Only scalar leaf
-values have Edit buttons — complex structures are navigable but
-edited through their own dedicated UI.
-
-Editing ``ui.theme`` also applies the theme live via ``app.theme``,
-which triggers ``WorkspaceApp._watch_theme`` to persist the choice.
+values have inline editors.
 
 Tree structure::
 
     Configuration
     ├── session
-    │   ├── provider: "ollama"
-│   └── model: "llama3"
+    │   ├── provider  [ollama]
+    │   └── model     [llama3]
     ├── db
-    │   ├── default_page_size: 200
+    │   ├── default_page_size  [200]
     │   └── connections
     │       ├── 0: My DB
-    │       │   ├── id: "abc123"
-    │       │   ├── name: "My DB"
-    │       │   ├── provider_type: "sqlite"
-    │       │   └── params
-    │       │       └── path: "/data/db.sqlite"
-    │       └── 1: Other DB
-    │           └── ...
+    │       │   ├── id  [abc123]
+    │       │   ├── name  [My DB]
+    │       │   └── ...
     └── ui
-        └── theme: "haxor"
+        └── theme  ⬤ haxor
 """
 
 from __future__ import annotations
@@ -41,43 +41,31 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Container
+from textual.widgets import Input, Switch
 
 from core.config import Config
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree
-from ui.tree.tree_row import TreeRow, RowButton, TreeNode
-from utils.icons import EDIT
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-_EDIT = "edit"
-
-
-def _edit_button() -> list[RowButton]:
-    return [RowButton(_EDIT, EDIT, "config-edit")]
-
+from ui.tree.tree_row import TreeNode
 
 # ---------------------------------------------------------------------------
 # Value formatting / coercion
 # ---------------------------------------------------------------------------
 
 
-def _format_value(value: Any) -> str:
-    """Return a string representation suitable for display in the tree."""
+def _display_value(value: Any) -> str:
+    """Return a short string for the inline editor's initial value."""
     if value is None:
-        return "None"
+        return "null"
     if isinstance(value, bool):
-        return "True" if value else "False"
+        return ""  # Switch shows state visually; no text needed
     if isinstance(value, str):
-        # Keep strings in quotes so user can tell them apart from raw values
-        return repr(value)
+        return value
     return repr(value)
 
 
 def _coerce_value(raw: str, original: Any) -> Any:
-    """Parse *raw* (from the modal input) into a Python value.
+    """Parse *raw* (from inline input) into a Python value.
 
     Attempts to match the type of *original*:
     * ``bool`` → ``"true"`` / ``"false"`` (case-insensitive) → :class:`bool`
@@ -85,10 +73,6 @@ def _coerce_value(raw: str, original: Any) -> Any:
     * ``float`` → :func:`float` parse
     * ``None`` → ``"null"`` / ``"none"`` (case-insensitive) → ``None``
     * Otherwise → raw string
-
-    Also handles the special cases where the original was a string
-    but the user enters something that looks like another type — in
-    that case we trust the *raw* string.
     """
     stripped = raw.strip()
     lowered = stripped.lower()
@@ -97,7 +81,7 @@ def _coerce_value(raw: str, original: Any) -> Any:
     if lowered in ("null", "none"):
         return None
 
-    # bool
+    # bool — handled by Switch, not input; included for completeness
     if lowered == "true":
         return True
     if lowered == "false":
@@ -118,17 +102,61 @@ def _coerce_value(raw: str, original: Any) -> Any:
         except ValueError:
             pass
 
-    # Try int/float as a convenience even when original was a string —
-    # but only if the string looks numeric and doesn't have quotes.
-    try:
-        # Only auto-coerce if the original wasn't explicitly a string
-        # (avoid silently converting "123" from string to int if user
-        # wanted it to stay a string).
-        pass
-    except Exception:
-        pass
-
     return stripped
+
+
+# ---------------------------------------------------------------------------
+# Inline editor helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_inline_edit(
+    dot_key: str,
+    value: Any,
+    config: Config,
+    panel: "ConfigPanel",
+) -> Switch | Input:
+    """Create the right inline editor widget for a config value.
+
+    Booleans get a :class:`Switch`; everything else gets an :class:`Input`.
+    The returned widget is pre-wired with metadata (``_cfg_key``,
+    ``_cfg_original``, ``_cfg_panel``) so the panel's event handlers
+    can persist changes via :meth:`Config.set()`.
+    """
+    node_id = ConfigPanel._sanitize_id(dot_key)
+
+    if isinstance(value, bool):
+        widget = Switch(value=value, id=f"cfg-sw-{node_id}")
+        widget._cfg_key = dot_key  # type: ignore[attr-defined]
+        widget._cfg_panel = panel  # type: ignore[attr-defined]
+        return widget
+
+    # String / int / float / None → Input
+    input_type: str = "text"
+    placeholder = ""
+
+    if isinstance(value, int) and not isinstance(value, bool):
+        input_type = "integer"
+        placeholder = "0"
+    elif isinstance(value, float):
+        input_type = "number"
+        placeholder = "0.0"
+    elif value is None:
+        placeholder = "null"
+
+    initial = _display_value(value)
+    widget = Input(
+        value=initial,
+        placeholder=placeholder,
+        type=input_type,
+        id=f"cfg-in-{node_id}",
+        compact=True,
+    )
+    # Store metadata on the widget so the handler can look it up
+    widget._cfg_key = dot_key  # type: ignore[attr-defined]
+    widget._cfg_original = value  # type: ignore[attr-defined]
+    widget._cfg_panel = panel  # type: ignore[attr-defined]
+    return widget
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +164,14 @@ def _coerce_value(raw: str, original: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@register_sidebar_tab(name="config", icon="", side="right",
+@register_sidebar_tab(name="config", icon="", side="right",
                        tooltip="Config")
 class ConfigPanel(Container):
     """Sidebar panel showing configuration as an editable tree.
 
     Provides:
     * :meth:`set_config` — bind a :class:`Config` instance and rebuild.
-    * Inline **Edit** buttons on every leaf node — changes auto-persist.
+    * Inline editors on every leaf node — changes auto-persist.
     """
 
     def __init__(self):
@@ -210,7 +238,7 @@ class ConfigPanel(Container):
 
         * Dict values → branch node with nested children.
         * List values → branch node with indexed children.
-        * Scalar values → leaf node with an **Edit** button.
+        * Scalar values → leaf node with an inline editor.
         """
         nodes: list[TreeNode] = []
 
@@ -223,7 +251,7 @@ class ConfigPanel(Container):
                 nodes.append(
                     TreeNode(
                         node_id,
-                        f"{key}",  # folder icon
+                        f"{key}",
                         children=child_nodes,
                         data={"key": dot_key, "type": "dict"},
                     )
@@ -239,14 +267,15 @@ class ConfigPanel(Container):
                     )
                 )
             else:
-                # Scalar leaf node with Edit button
+                # Scalar leaf node — show key label, value in inline editor
+                inline = _make_inline_edit(dot_key, value, self._config, self)
                 nodes.append(
                     TreeNode(
                         node_id,
-                        f"{key}: {_format_value(value)}",
+                        f"{key}",
                         data={"key": dot_key, "type": "value",
                               "value": value},
-                        buttons=_edit_button(),
+                        inline_edit=inline,
                     )
                 )
 
@@ -292,75 +321,58 @@ class ConfigPanel(Container):
                 )
             else:
                 # Scalar list item — editable
+                inline = _make_inline_edit(dot_key, item, self._config, self)
                 nodes.append(
                     TreeNode(
                         node_id,
-                        f"[{i}]: {_format_value(item)}",
+                        f"[{i}]",
                         data={"key": dot_key, "type": "value",
                               "value": item},
-                        buttons=_edit_button(),
+                        inline_edit=inline,
                     )
                 )
 
         return nodes
 
     # ------------------------------------------------------------------
-    # Edit handlers
+    # Inline edit handlers
     # ------------------------------------------------------------------
 
-    def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
-        """Handle the Edit button on a leaf node.
-
-        Opens an :class:`~ui.widgets.input_modal.InputModal` pre-filled
-        with the current value.  On submit, updates ``Config.set()`` and
-        rebuilds the tree.
-        """
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Handle boolean toggle — persist immediately."""
         event.stop()
-        if event.action_id != _EDIT:
+        sw = event.switch
+        dot_key: str | None = getattr(sw, "_cfg_key", None)
+        if dot_key is None or self._config is None:
             return
 
-        node = event.node
-        dot_key: str = node.data.get("key", "")
-        current: Any = node.data.get("value", "")
+        new_value = sw.value
+        self._config.set(dot_key, new_value)
+        # No rebuild needed — the switch already shows the new state
 
-        self._prompt_edit(dot_key, current)
+        # Live-apply config keys that have immediate UI effects.
+        if dot_key == "ui.theme" and isinstance(new_value, str):
+            if new_value in self.app.available_themes:
+                self.app.theme = new_value
 
-    def _prompt_edit(self, dot_key: str, current: Any) -> None:
-        """Push an InputModal and apply the result."""
-        from ui.widgets.input_modal import InputModal
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle text/number input — persist on Enter."""
+        event.stop()
+        inp = event.input
+        dot_key: str | None = getattr(inp, "_cfg_key", None)
+        original: Any = getattr(inp, "_cfg_original", "")
+        if dot_key is None or self._config is None:
+            return
 
-        # Show the value without repr wrapping for strings (cleaner)
-        if isinstance(current, str):
-            default_display = current
-        elif current is None:
-            default_display = "null"
-        elif isinstance(current, bool):
-            default_display = "true" if current else "false"
-        else:
-            default_display = repr(current)
+        new_value = _coerce_value(event.value, original)
+        self._config.set(dot_key, new_value)
+        # Update the stored original so subsequent edits coerce relative
+        # to the new type (e.g. if user changed "123" from string to int).
+        inp._cfg_original = new_value  # type: ignore[attr-defined]
+        # Update the input display to the canonical form of the value
+        inp.value = _display_value(new_value)
 
-        async def do_edit() -> None:
-            modal = InputModal(
-                f"Edit '{dot_key}':",
-                label=dot_key,
-                default=default_display,
-            )
-            result = await self.app.push_screen_wait(modal)
-            if result is None:
-                return  # cancelled
-
-            # Coerce the new value
-            new_value = _coerce_value(result, current)
-
-            # Apply & auto-persist
-            if self._config is not None:
-                self._config.set(dot_key, new_value)
-                self._config.save()
-                self._rebuild()
-
-                # Live-apply config keys that have immediate UI effects.
-                if dot_key == "ui.theme" and isinstance(new_value, str):
-                    if new_value in self.app.available_themes:
-                        self.app.theme = new_value
-
-        self.app.run_worker(do_edit())
+        # Live-apply config keys that have immediate UI effects.
+        if dot_key == "ui.theme" and isinstance(new_value, str):
+            if new_value in self.app.available_themes:
+                self.app.theme = new_value

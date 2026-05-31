@@ -139,19 +139,17 @@ class Bootstrap:
         After loading JSON files, applies module-level defaults registered
         via :func:`~core.config.register_defaults` for any keys still missing.
         """
-        cfg_paths: list[str] = []
-
+        # Always include all three tier paths so that Config.save() has a
+        # write target (the last path).  Config._load() already skips
+        # non-existent files, and Config.save() creates missing directories.
+        # If we only include paths that currently exist, a fresh install has
+        # an empty list and save() becomes a silent no-op — all config
+        # changes are lost.
         bundled = os.path.join(self._workspace_dir, "config", "config.json")
-        if os.path.isfile(bundled):
-            cfg_paths.append(bundled)
-
         user = os.path.join(self._agents_dir, "config", "config.json")
-        if os.path.isfile(user):
-            cfg_paths.append(user)
-
         project = os.path.join(self.wd, ".agents", "config", "config.json")
-        if os.path.isfile(project):
-            cfg_paths.append(project)
+
+        cfg_paths = [bundled, user, project]
 
         cfg = Config(cfg_paths)
         cfg.defaults(get_registered_defaults())

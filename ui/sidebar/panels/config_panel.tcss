@@ -6,3 +6,24 @@ ConfigPanel {
 ConfigPanel Tree {
     height: 1fr;
 }
+
+/* ------------------------------------------------------------------
+   Inline editor styling within config tree rows
+   ------------------------------------------------------------------ */
+
+/* Leaf rows with inline editors: label takes its natural width
+   so the editor can fill the remaining space. */
+TreeRow.with-inline-editor _RowLabel {
+    width: auto;
+}
+
+/* Input fields fill remaining horizontal space */
+TreeRow.with-inline-editor Input {
+    width: 1fr;
+    padding-left: 1;
+}
+
+/* Switches keep their natural size */
+TreeRow.with-inline-editor Switch {
+    width: auto;
+}

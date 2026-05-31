@@ -204,6 +204,7 @@ class Config:
             target[last_index] = value
         else:
             node[last_key] = value
+        self.save()
 
     # ------------------------------------------------------------------
     # Registered defaults
@@ -217,8 +218,14 @@ class Config:
         _deep_merge(self._defaults, d)
 
     def apply_defaults(self) -> None:
-        """Fill missing keys from accumulated defaults."""
+        """Fill missing keys from accumulated defaults.
+
+        Defaults are applied to both ``_data`` (so values are available
+        at runtime) and ``_baseline`` (so :meth:`save` does not treat
+        default values as user overrides that need to be persisted).
+        """
         _deep_merge_missing(self._data, self._defaults)
+        _deep_merge_missing(self._baseline, self._defaults)
 
     # ------------------------------------------------------------------
     # Persistence

@@ -380,9 +380,10 @@ class Tree(VerticalScroll, can_focus=True):
             row.remove()
 
     def _orphan_content_widgets(self) -> None:
-        """Detach content widgets from rows so they aren't destroyed on remove."""
+        """Detach content and inline-edit widgets from rows so they aren't destroyed on remove."""
         for row in self.query(TreeRow):
             row.node.content = None
+            row.node.inline_edit = None
 
     def _refresh_visibility(self) -> None:
         """Toggle the ``-hidden`` CSS class on every row based on

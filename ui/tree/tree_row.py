@@ -73,6 +73,11 @@ class TreeNode:
         row instead of a plain text label.  Useful for
         :class:`~textual.widgets.Markdown` (streaming) or any
         custom rendering.
+    inline_edit:
+        Optional Textual :class:`Widget` rendered **inline** alongside
+        the label — replacing action buttons.  Used for inline editors
+        like :class:`~textual.widgets.Input` or :class:`~textual.widgets.Switch`.
+        When set, ``buttons`` is ignored.
     buttons:
         Action buttons to show on this row.
     loaded:
@@ -88,6 +93,7 @@ class TreeNode:
     children: list[TreeNode] = field(default_factory=list)
     data: Any = None
     content: Widget | None = None
+    inline_edit: Widget | None = None
     buttons: list[RowButton] = field(default_factory=list)
     loaded: bool = True
 
@@ -209,29 +215,37 @@ class TreeRow(Widget):
         self._label = _RowLabel(
             self._render_label(), self.node, self.is_branch, self
         )
+        if self.node.inline_edit is not None:
+            self.add_class("with-inline-editor")
         if self.node.content is not None:
             # Content widgets (Markdown, Static, etc.) are block-level —
             # render below the label at full width, not squeezed beside it.
             with Horizontal(classes="tree-row-inner"):
                 yield self._label
-                for btn in self.node.buttons:
-                    yield Button(
-                        btn.label,
-                        id=f"act-{self.node.id}-{btn.action_id}",
-                        classes="tree-icon-btn " + (btn.style or ""),
-                    )
+                if self.node.inline_edit is not None:
+                    yield self.node.inline_edit
+                else:
+                    for btn in self.node.buttons:
+                        yield Button(
+                            btn.label,
+                            id=f"act-{self.node.id}-{btn.action_id}",
+                            classes="tree-icon-btn " + (btn.style or ""),
+                        )
             with Horizontal(classes="tree-row-content"):
                 yield self.node.content
         else:
-            # No content widget — label and buttons in a single row.
+            # No content widget — label and inline-edit/buttons in a single row.
             with Horizontal(classes="tree-row-inner"):
                 yield self._label
-                for btn in self.node.buttons:
-                    yield Button(
-                        btn.label,
-                        id=f"act-{self.node.id}-{btn.action_id}",
-                        classes="tree-icon-btn " + (btn.style or ""),
-                    )
+                if self.node.inline_edit is not None:
+                    yield self.node.inline_edit
+                else:
+                    for btn in self.node.buttons:
+                        yield Button(
+                            btn.label,
+                            id=f"act-{self.node.id}-{btn.action_id}",
+                            classes="tree-icon-btn " + (btn.style or ""),
+                        )
 
     @property
     def label_text(self) -> str:
