@@ -96,6 +96,10 @@ class Tree(VerticalScroll, can_focus=True):
         super().__init__()
         self._root = root
         self._expanded: set[str] = {root.id}
+        # IDs of branches the user has manually collapsed.
+        # These persist across rebuild() calls so that user collapse
+        # decisions survive data-model changes.
+        self._user_collapsed: set[str] = set()
         self._node_map: dict[str, TreeNode] = {}
         self._build_node_map(root)
 
@@ -111,12 +115,14 @@ class Tree(VerticalScroll, can_focus=True):
         """Replace the entire tree with a new root node.
 
         Resets the expand state — only the new root is expanded.
-        All rows are removed and re-created.
+        Clears user collapse decisions.  All rows are removed
+        and re-created.
         """
         self._root = new_root
         self._node_map.clear()
         self._build_node_map(new_root)
         self._expanded = {new_root.id}
+        self._user_collapsed.clear()
         # Detach content widgets so they don't get destroyed with rows
         self._orphan_content_widgets()
         self._remove_all_rows()
@@ -192,6 +198,9 @@ class Tree(VerticalScroll, can_focus=True):
 
         If the node is lazy (``loaded=False``), posts
         :class:`NodeNeedsChildren` instead of expanding.
+
+        Removes the node from ``_user_collapsed`` so that
+        :meth:`restore_expand_state` will keep it expanded.
         """
         if node_id not in self._node_map:
             return
@@ -205,14 +214,21 @@ class Tree(VerticalScroll, can_focus=True):
         if node_id in self._expanded:
             return
         self._expanded.add(node_id)
+        self._user_collapsed.discard(node_id)
         self._refresh_visibility()
         self.post_message(NodeToggled(node_id, node, True))
 
     def collapse_node(self, node_id: str) -> None:
-        """Collapse a branch node, hiding its descendants."""
+        """Collapse a branch node, hiding its descendants.
+
+        Records the collapse in ``_user_collapsed`` so that
+        :meth:`restore_expand_state` can preserve the user's choice
+        across rebuilds.
+        """
         if node_id not in self._expanded:
             return
         self._expanded.discard(node_id)
+        self._user_collapsed.add(node_id)
         self._refresh_visibility()
         node = self._node_map[node_id]
         self.post_message(NodeToggled(node_id, node, False))
@@ -225,10 +241,37 @@ class Tree(VerticalScroll, can_focus=True):
             self.expand_node(node_id)
 
     def expand_all(self) -> None:
-        """Expand every branch node in the tree."""
+        """Expand every branch node in the tree.
+
+        Clears ``_user_collapsed`` since the user's intent is to
+        see everything.
+        """
         for node_id, node in self._node_map.items():
             if node.children and node.loaded:
                 self._expanded.add(node_id)
+        self._user_collapsed.clear()
+        self._refresh_visibility()
+
+    def restore_expand_state(self) -> None:
+        """Expand all branch nodes except those the user has manually collapsed.
+
+        Called after a :meth:`rebuild` to restore the visual state.
+        New nodes (not previously in the tree) are expanded by default;
+        nodes the user manually collapsed stay collapsed.
+
+        This is the preferred alternative to :meth:`expand_all` when you
+        want to respect user collapse decisions across rebuilds.
+        """
+        # Remove stale IDs (nodes that no longer exist in the tree).
+        self._user_collapsed &= set(self._node_map.keys())
+
+        # Start fresh: expand every branch node.
+        for node_id, node in self._node_map.items():
+            if node.children or not node.loaded:
+                self._expanded.add(node_id)
+
+        # Then collapse any that the user manually collapsed.
+        self._expanded -= self._user_collapsed
         self._refresh_visibility()
 
     def is_expanded(self, node_id: str) -> bool:

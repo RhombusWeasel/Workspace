@@ -136,7 +136,7 @@ def _coerce_value(raw: str, original: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@register_sidebar_tab(name="config", icon="", side="left",
+@register_sidebar_tab(name="config", icon="", side="right",
                        tooltip="Config")
 class ConfigPanel(Container):
     """Sidebar panel showing configuration as an editable tree.

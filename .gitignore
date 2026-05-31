@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 .agents/
+config/
+docs/
+implementations/
+tests/
 *.db
 *.db-shm
 *.db-wal

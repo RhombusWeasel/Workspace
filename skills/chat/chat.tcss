@@ -15,6 +15,17 @@ ChatDisplay Tree {
 }
 
 /* --------------------------------------------------------------- */
+/* Thinking sections — plain Static text, no markdown rendering     */
+/* --------------------------------------------------------------- */
+
+ChatDisplay .thinking-content {
+    color: $text-muted;
+    text-style: italic;
+    padding: 0;
+    width: 1fr;
+}
+
+/* --------------------------------------------------------------- */
 /* Command Palette — popup between display and input                 */
 /* --------------------------------------------------------------- */
 

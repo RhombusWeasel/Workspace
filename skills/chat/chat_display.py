@@ -4,13 +4,21 @@ Each assistant turn is a **branch** node with dynamically-created section
 branches.  Sections are added on demand via :meth:`add_section` as their
 content arrives during streaming, producing a natural sequential layout
 (e.g. Thinking → Tools → Thinking → Response).
+
+Thinking sections use plain :class:`~textual.widgets.Static` text instead
+of :class:`~textual.widgets.Markdown` to reduce re-rendering overhead during
+streaming.  This eliminates expensive markdown parsing on every chunk when
+a reasoning model emits rapid thinking tokens.
+
+The display auto-scrolls to the bottom when new content is added or
+updated, so the view follows along with streaming output.
 """
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import Markdown
+from textual.widgets import Markdown, Static
 
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode
@@ -28,6 +36,11 @@ _SECTION_ICONS: dict[str, str] = {
     "system": "  \U000f0e38 System",
 }
 
+# Section types rendered as plain Static text instead of Markdown.
+# Thinking output can be very long and is updated rapidly during streaming;
+# using Static (no markdown parsing) reduces rendering overhead significantly.
+_PLAIN_TEXT_SECTIONS = frozenset({"thinking"})
+
 
 class ChatDisplay(Widget):
     """Streaming conversation display backed by a collapsible Tree.
@@ -39,6 +52,10 @@ class ChatDisplay(Widget):
     * ``add_section(section_type)`` → new section branch, returns ID.
     * ``update_section(section_id, text)`` → streaming update.
     * ``finalize_turn()`` → removes any empty sections, clears state.
+
+    Thinking sections are rendered as plain ``Static`` text (no markdown)
+    to reduce re-rendering cost during fast streaming.  All other sections
+    use ``Markdown`` for rich formatting.
     """
 
     def __init__(self):
@@ -49,8 +66,10 @@ class ChatDisplay(Widget):
         self._active_asst_id: str | None = None
 
         # Populated by add_section, cleared by finalize_turn.
-        # Maps section_id → Markdown widget.
-        self._section_md: dict[str, Markdown] = {}
+        # Maps section_id → content widget (Markdown or Static).
+        self._section_widgets: dict[str, Widget] = {}
+        # Maps section_id → accumulated text (for emptiness checks).
+        self._section_texts: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Composition
@@ -58,6 +77,33 @@ class ChatDisplay(Widget):
 
     def compose(self) -> ComposeResult:
         yield Tree(self._root)
+
+    # ------------------------------------------------------------------
+    # Scrolling
+    # ------------------------------------------------------------------
+
+    def _scroll_to_bottom(self) -> None:
+        """Scroll the chat tree to show the latest content.
+
+        Best-effort — does not raise if the tree is not yet mounted.
+        Called after adding content or updating sections so that the
+        view follows the streaming output.
+        """
+        try:
+            tree = self.query_one(Tree)
+            tree.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def _schedule_scroll(self) -> None:
+        """Schedule a deferred scroll-to-bottom after layout recalculates.
+
+        Content updates (adding nodes, updating sections) change the
+        tree's virtual size, but the layout pass happens asynchronously.
+        Calling ``scroll_end()`` immediately would use the old virtual
+        size, so we defer by ~1 frame to let the layout catch up.
+        """
+        self.set_timer(1 / 60, self._scroll_to_bottom)
 
     # ------------------------------------------------------------------
     # User messages
@@ -98,6 +144,8 @@ class ChatDisplay(Widget):
         tree = self.query_one(Tree)
         tree.expand_node(node_id)
 
+        self._schedule_scroll()
+
         return node_id
 
     # ------------------------------------------------------------------
@@ -121,13 +169,16 @@ class ChatDisplay(Widget):
         self._root.children.append(asst_node)
 
         self._active_asst_id = asst_id
-        self._section_md = {}
+        self._section_widgets = {}
+        self._section_texts = {}
 
         self._rebuild()
 
         # Expand the assistant branch.
         tree = self.query_one(Tree)
         tree.expand_node(asst_id)
+
+        self._schedule_scroll()
 
         return asst_id
 
@@ -137,6 +188,10 @@ class ChatDisplay(Widget):
         *section_type* must be one of ``'thinking'``, ``'tools'``, or
         ``'response'``.  Returns the section ID for use with
         :meth:`update_section`.
+
+        Thinking sections use a plain :class:`~textual.widgets.Static`
+        widget instead of :class:`~textual.widgets.Markdown` to reduce
+        re-rendering overhead during streaming.
         """
         if section_type not in _VALID_SECTIONS:
             raise ValueError(
@@ -151,12 +206,21 @@ class ChatDisplay(Widget):
         self._section_count += 1
         section_id = f"{section_type}-sec{self._section_count}"
 
-        md = Markdown("", id=f"md-{section_id}")
-        self._section_md[section_id] = md
+        # Use Static (plain text) for thinking, Markdown for everything else.
+        if section_type in _PLAIN_TEXT_SECTIONS:
+            widget: Widget = Static(
+                "", markup=False,
+                id=f"md-{section_id}", classes="thinking-content",
+            )
+        else:
+            widget = Markdown("", id=f"md-{section_id}")
+
+        self._section_widgets[section_id] = widget
+        self._section_texts[section_id] = ""
 
         leaf = TreeNode(
             f"{section_id}-leaf", "",
-            content=md,
+            content=widget,
         )
         branch = TreeNode(
             section_id,
@@ -177,22 +241,39 @@ class ChatDisplay(Widget):
         tree.expand_node(section_id)
         tree.expand_node(self._active_asst_id)
 
+        self._schedule_scroll()
+
         return section_id
 
     async def update_section(self, section_id: str, text: str) -> None:
-        """Update the Markdown for the section identified by *section_id*.
+        """Update the content widget for the section identified by *section_id*.
+
+        For thinking sections (Static), this is a lightweight synchronous
+        update — no markdown parsing.  For other sections (Markdown),
+        this is an async re-render.  In both cases, the display scrolls
+        to show the latest content.
 
         The section must have been created by a prior :meth:`add_section`
         call during the current assistant turn.
         """
-        md = self._section_md.get(section_id)
-        if md is None:
+        widget = self._section_widgets.get(section_id)
+        if widget is None:
             return  # Unknown section — no-op.
-        await md.update(text)
-        # Guard: if Markdown._markdown wasn't set (race with mount),
-        # store the text directly so it can be recovered.
-        if not md._markdown:
-            md._markdown = text
+
+        self._section_texts[section_id] = text
+
+        if isinstance(widget, Static):
+            # Plain text update — fast, no markdown parsing.
+            widget.update(text)
+        elif isinstance(widget, Markdown):
+            # Markdown update — async re-render.
+            await widget.update(text)
+            # Guard: if Markdown._markdown wasn't set (race with mount),
+            # store the text directly so it can be recovered.
+            if not widget._markdown:
+                widget._markdown = text
+
+        self._schedule_scroll()
 
     def finalize_turn(self) -> None:
         """Remove empty section children, rebuild tree, clear internal state."""
@@ -211,7 +292,8 @@ class ChatDisplay(Widget):
                 self._rebuild()
 
         self._active_asst_id = None
-        self._section_md = {}
+        self._section_widgets = {}
+        self._section_texts = {}
 
     # ------------------------------------------------------------------
     # System messages (command feedback)
@@ -244,6 +326,8 @@ class ChatDisplay(Widget):
         tree = self.query_one(Tree)
         tree.expand_node(node_id)
 
+        self._schedule_scroll()
+
         return node_id
 
     # ------------------------------------------------------------------
@@ -259,7 +343,8 @@ class ChatDisplay(Widget):
         self._turn_count = 0
         self._section_count = 0
         self._active_asst_id = None
-        self._section_md = {}
+        self._section_widgets = {}
+        self._section_texts = {}
         self._rebuild()
 
     # ------------------------------------------------------------------
@@ -267,11 +352,8 @@ class ChatDisplay(Widget):
     # ------------------------------------------------------------------
 
     def _is_empty_section(self, branch: TreeNode) -> bool:
-        """Return True if the section branch's Markdown widget has no content."""
-        md = self._section_md.get(branch.id)
-        if md is None:
-            return True
-        return not md._markdown
+        """Return True if the section branch's content widget has no text."""
+        return not self._section_texts.get(branch.id)
 
     def _find_node(self, node_id: str) -> TreeNode | None:
         for child in self._root.children:
@@ -280,10 +362,15 @@ class ChatDisplay(Widget):
         return None
 
     def _rebuild(self) -> None:
-        """Rebuild and expand the tree."""
+        """Rebuild the tree and restore expand/collapse state.
+
+        Uses :meth:`Tree.restore_expand_state` so that branches the
+        user has manually collapsed stay collapsed across rebuilds.
+        New nodes are expanded by default.
+        """
         tree = self.query_one(Tree)
         tree.rebuild()
-        tree.expand_all()
+        tree.restore_expand_state()
 
 
 def _truncate(text: str, max_len: int) -> str:

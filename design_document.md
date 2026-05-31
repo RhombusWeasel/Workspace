@@ -512,8 +512,20 @@ at-import extensibility. The vault stays module-level (global session state).
 
 One `ChatManager` class. Always streams via `Agent.stream_chat()`. The
 `ChatDisplay` widget provides a streaming API: `add_user_message()`,
-`begin_assistant_turn()`, `update_section()`, `finalize_turn()`. No more
-`MsgBox`/`StreamingMsgBox` duplication.
+`begin_assistant_turn()`, `add_section()`, `update_section()`, `finalize_turn()`.
+No more `MsgBox`/`StreamingMsgBox` duplication.
+
+**Thinking sections use plain `Static` text** (no markdown parsing) to
+reduce re-rendering overhead during streaming.  Reasoning models emit
+rapid thinking tokens that previously caused lag when each chunk triggered
+a full markdown re-render of the entire accumulated thinking text.  Response
+and tools sections continue to use `Markdown` for rich formatting.
+
+**Auto-scroll** — the `ChatDisplay` schedules a scroll-to-bottom after
+every content addition or update (`add_user_message`, `begin_assistant_turn`,
+`add_section`, `update_section`, `add_system_message`).  The scroll is
+deferred by ~1 frame using `set_timer(1/60, ...)` to allow Textual's
+layout pass to recalculate the virtual size before the scroll fires.
 
 ### 6.3 Bootstrap Module
 
@@ -645,13 +657,26 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
 
  - ``skills/chat/`` — ChatInput, ChatDisplay (Tree-based streaming), ChatManager, ChatPanel
  - ChatDisplay uses Tree widget with content nodes; streaming via section updates
- - 44 tests across chat components
+ - Thinking sections use Static (plain text) for performance; other sections use Markdown
+ - Auto-scroll to bottom: deferred ~1 frame after content changes for layout recalc
+ - 46 tests across chat components
  - **COMPLETE**
 
 ### Step 15c: Tree CSS Hide/Show ✅
 
  - Tree mounts all rows once; expand/collapse toggles `-hidden` CSS class
  - No DOM remounts for expand/collapse; `PersistentMarkdown` removed
+
+### Step 15d: Tree User Collapse Persistence ✅
+
+ - Tree tracks `_user_collapsed: set[str]` — IDs of branches the user has manually collapsed
+ - `collapse_node()` adds to `_user_collapsed`; `expand_node()` removes from it
+ - `restore_expand_state()` expands all branch nodes except user-collapsed ones
+ - `expand_all()` clears `_user_collapsed` (user intent: show everything)
+ - `set_root()` clears `_user_collapsed` (fresh tree)
+ - `rebuild()` preserves user collapse state — ChatDisplay uses `restore_expand_state()` instead of `expand_all()`
+ - Stale IDs (nodes removed from the tree) are cleaned up during `restore_expand_state()`
+ - 9 new tests for user collapse persistence and `restore_expand_state()`
  - **COMPLETE**
 
 ### Step 16: Workspace + Terminal ✅
@@ -1003,8 +1028,8 @@ and their body is available for agent activation.
 |---|---|---|
 | `test_agent.py` | Agent, streaming, tool calling | — |
 | `test_bootstrap.py` | Full bootstrap flow | — |
-| `test_chat_display.py` | ChatDisplay streaming, section updates | — |
-| `test_chat_display_system.py` | System-level chat tests | — |
+| `test_chat_display.py` | ChatDisplay streaming, section updates, Static thinking, auto-scroll | 36 |
+| `test_chat_display_system.py` | System-level chat tests | 10 |
 | `test_chat_input.py` | ChatInput widget | — |
 | `test_chat_manager.py` | ChatManager orchestration | — |
 | `test_chat_panel.py` | ChatPanel sidebar tab | — |
