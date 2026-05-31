@@ -14,16 +14,33 @@ ConfigPanel Tree {
 /* Leaf rows with inline editors: label takes its natural width
    so the editor can fill the remaining space. */
 TreeRow.with-inline-editor _RowLabel {
-    width: auto;
+    width: 1fr;
+    padding: 0 1 0 0;
 }
 
 /* Input fields fill remaining horizontal space */
 TreeRow.with-inline-editor Input {
     width: 1fr;
-    padding-left: 1;
+    padding: 0;
 }
 
 /* Switches keep their natural size */
 TreeRow.with-inline-editor Switch {
     width: auto;
+    height: 1;
+    border: none;
+    margin: 0;
+    padding: 0 1;
+}
+
+/* List add button — compact icon button alongside the label */
+TreeRow .tree-icon-btn.config-add {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: $success;
+    text-style: bold;
 }

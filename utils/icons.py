@@ -19,6 +19,7 @@ DELETE = ""        #   trash / delete
 RENAME = ""        #   rename / edit-alt
 ADD_FILE = ""     #   file-plus (using generic file + text)
 ADD_DIR = ""       #   folder-plus
+PLUS = "\uff0b"           # ＋ full-width plus
 REFRESH = "󰑐"        # 󰑐  refresh / sync
 CLOSE = "󰅖"          # 󰅖  times / close
 COPY = "󰆏"           # 󰆏  copy
