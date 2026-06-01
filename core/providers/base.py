@@ -99,9 +99,11 @@ register_defaults({
 def _build_redactor(vault: Any, config: Any) -> _Redactor:
     """Build a redactor from the current vault and config state.
 
-    Reads secrets from the vault (if unlocked) and compiles regex
-    patterns from config.  Returns a disabled redactor if the vault
-    is locked or unavailable.
+    Reads secrets from the vault (if unlocked) and compiles word-boundary
+    regex patterns from them.  Secrets shorter than
+    ``_Redactor._MIN_SECRET_LENGTH`` are skipped to avoid false-positive
+    redaction of common short strings.  Returns a disabled redactor if
+    the vault is locked or unavailable.
     """
     enabled = config.get("redaction.enabled", True)
     pattern_strings: list[str] = config.get("redaction.patterns", []) or []
@@ -144,10 +146,26 @@ def _build_redactor(vault: Any, config: Any) -> _Redactor:
 class _Redactor:
     """Internal redactor used by :class:`BaseProvider`.
 
-    Replaces vault secrets (exact match, longest-first) and config
-    regex patterns with ``REDACTED`` in message content and tool call
-    arguments before they are sent to the LLM.
+    Replaces vault secrets (word-boundary match, longest-first) and
+    config regex patterns with ``REDACTED`` in message content and tool
+    call arguments before they are sent to the LLM.
+
+    Secrets shorter than ``_MIN_SECRET_LENGTH`` (4 characters) are
+    skipped because short strings cause widespread false-positive
+    redaction (e.g. ``"and"``, ``"the"``, ``"cat"`` matching
+    inside ordinary words).
+
+    Secrets are matched with **adaptive word boundaries**: ``\b`` is
+    used at the start of a secret only when it begins with a word
+    character (``\\w``), and at the end only when it ends with a word
+    character.  This handles secrets with leading/trailing special
+    characters (like ``P@ssw0rd!``) correctly — ``\b`` would fail to
+    match ``P@ssw0rd!`` when followed by ``@``, so the trailing ``!``
+    disables the end boundary.
     """
+
+    _MIN_SECRET_LENGTH: int = 4
+    """Secrets shorter than this are skipped to avoid false positives."""
 
     def __init__(
         self,
@@ -155,18 +173,51 @@ class _Redactor:
         patterns: list[re.Pattern[str]],
         enabled: bool = True,
     ) -> None:
-        # Sort secrets by length, longest first, so overlapping strings
-        # are replaced correctly.
-        self._secrets = sorted(secrets, key=len, reverse=True)
+        # Sort secrets by length, longest first, so overlapping patterns
+        # are replaced correctly (e.g. "password123" before "password").
+        all_secrets = sorted(secrets, key=len, reverse=True)
+
+        # Pre-compile adaptive-boundary regex for each eligible secret.
+        # Short secrets (< _MIN_SECRET_LENGTH) are skipped entirely
+        # because they match too many false positives in ordinary text.
+        #
+        # Adaptive boundaries: use \b at start/end only when the
+        # secret begins/ends with a word character (\w).  Secrets
+        # that start or end with punctuation (e.g. "P@ssw0rd!")
+        # don't get a \b at that edge — the punctuation already
+        # acts as a natural boundary in most contexts.
+        skipped: list[str] = []
+        self._secret_patterns: list[re.Pattern[str]] = []
+        for secret in all_secrets:
+            if not secret or len(secret) < self._MIN_SECRET_LENGTH:
+                skipped.append(secret)
+                continue
+            # Build pattern with adaptive word boundaries.
+            prefix = r'\b' if secret[0].isalnum() or secret[0] == '_' else ''
+            suffix = r'\b' if secret[-1].isalnum() or secret[-1] == '_' else ''
+            self._secret_patterns.append(
+                re.compile(rf'{prefix}{re.escape(secret)}{suffix}')
+            )
+
+        if skipped:
+            # Only log if there were non-empty strings skipped.
+            short = [s for s in skipped if s]
+            if short:
+                print(
+                    f"Redaction: skipping {len(short)} secret(s) shorter "
+                    f"than {self._MIN_SECRET_LENGTH} chars to avoid "
+                    f"false-positive redaction",
+                    file=sys.stderr,
+                )
+
         self._patterns = patterns
         self._enabled = enabled
 
     def redact_text(self, text: str) -> str:
         if not self._enabled:
             return text
-        for secret in self._secrets:
-            if secret and secret in text:
-                text = text.replace(secret, REDACTED)
+        for pattern in self._secret_patterns:
+            text = pattern.sub(REDACTED, text)
         for pattern in self._patterns:
             text = pattern.sub(REDACTED, text)
         return text
