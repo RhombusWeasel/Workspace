@@ -99,11 +99,9 @@ register_defaults({
 def _build_redactor(vault: Any, config: Any) -> _Redactor:
     """Build a redactor from the current vault and config state.
 
-    Reads secrets from the vault (if unlocked) and compiles word-boundary
-    regex patterns from them.  Secrets shorter than
-    ``_Redactor._MIN_SECRET_LENGTH`` are skipped to avoid false-positive
-    redaction of common short strings.  Returns a disabled redactor if
-    the vault is locked or unavailable.
+    Reads secrets from the vault (if unlocked) and compiles quoted-string
+    regex patterns for each one.  Returns a disabled redactor if the
+    vault is locked or unavailable.
     """
     enabled = config.get("redaction.enabled", True)
     pattern_strings: list[str] = config.get("redaction.patterns", []) or []
@@ -146,26 +144,30 @@ def _build_redactor(vault: Any, config: Any) -> _Redactor:
 class _Redactor:
     """Internal redactor used by :class:`BaseProvider`.
 
-    Replaces vault secrets (word-boundary match, longest-first) and
-    config regex patterns with ``REDACTED`` in message content and tool
-    call arguments before they are sent to the LLM.
+    Replaces vault secrets and config regex patterns with ``REDACTED``
+    in message content and tool call arguments before they are sent to
+    the LLM.
 
-    Secrets shorter than ``_MIN_SECRET_LENGTH`` (4 characters) are
-    skipped because short strings cause widespread false-positive
-    redaction (e.g. ``"and"``, ``"the"``, ``"cat"`` matching
-    inside ordinary words).
+    **Secret matching** uses quoted-string matching: a secret is only
+    redacted when it appears as the *complete content* between matching
+    quote delimiters.  Supported quote styles are single quotes
+    (``'secret'``), double quotes (``"secret"``), and backticks
+    (```secret```).  This avoids false positives where a secret string
+    like ``"admin"`` would incorrectly match a variable name like
+    ``get_admin_user`` or a word in prose.
 
-    Secrets are matched with **adaptive word boundaries**: ``\b`` is
-    used at the start of a secret only when it begins with a word
-    character (``\\w``), and at the end only when it ends with a word
-    character.  This handles secrets with leading/trailing special
-    characters (like ``P@ssw0rd!``) correctly — ``\b`` would fail to
-    match ``P@ssw0rd!`` when followed by ``@``, so the trailing ``!``
-    disables the end boundary.
+    Example matches::
+
+        password = "my-secret"      # → password = "REDACTED"
+        api_key = 'sk-abc123'       # → api_key = 'REDACTED'
+        token: `ghp_xyz789`         # → token: `REDACTED`
+
+    Example non-matches::
+
+        get_admin_user()            # not in quotes
+        "use my-secret to auth"     # not the entire quoted string
+        the admin panel              # prose, not in quotes
     """
-
-    _MIN_SECRET_LENGTH: int = 4
-    """Secrets shorter than this are skipped to avoid false positives."""
 
     def __init__(
         self,
@@ -173,42 +175,21 @@ class _Redactor:
         patterns: list[re.Pattern[str]],
         enabled: bool = True,
     ) -> None:
-        # Sort secrets by length, longest first, so overlapping patterns
-        # are replaced correctly (e.g. "password123" before "password").
-        all_secrets = sorted(secrets, key=len, reverse=True)
-
-        # Pre-compile adaptive-boundary regex for each eligible secret.
-        # Short secrets (< _MIN_SECRET_LENGTH) are skipped entirely
-        # because they match too many false positives in ordinary text.
-        #
-        # Adaptive boundaries: use \b at start/end only when the
-        # secret begins/ends with a word character (\w).  Secrets
-        # that start or end with punctuation (e.g. "P@ssw0rd!")
-        # don't get a \b at that edge — the punctuation already
-        # acts as a natural boundary in most contexts.
-        skipped: list[str] = []
+        # Pre-compile a quoted-string regex for each secret.
+        # A secret matches only when it is the entire content between
+        # matching quote delimiters: 'secret', "secret", or `secret`.
+        # The regex uses a backreference (\1) to ensure the opening
+        # and closing quotes match.
         self._secret_patterns: list[re.Pattern[str]] = []
-        for secret in all_secrets:
-            if not secret or len(secret) < self._MIN_SECRET_LENGTH:
-                skipped.append(secret)
+        for secret in secrets:
+            if not secret:
                 continue
-            # Build pattern with adaptive word boundaries.
-            prefix = r'\b' if secret[0].isalnum() or secret[0] == '_' else ''
-            suffix = r'\b' if secret[-1].isalnum() or secret[-1] == '_' else ''
-            self._secret_patterns.append(
-                re.compile(rf'{prefix}{re.escape(secret)}{suffix}')
-            )
-
-        if skipped:
-            # Only log if there were non-empty strings skipped.
-            short = [s for s in skipped if s]
-            if short:
-                print(
-                    f"Redaction: skipping {len(short)} secret(s) shorter "
-                    f"than {self._MIN_SECRET_LENGTH} chars to avoid "
-                    f"false-positive redaction",
-                    file=sys.stderr,
-                )
+            escaped = re.escape(secret)
+            # Group 1: opening quote (' | " | `)
+            # Group 2: the secret content
+            # \1: closing quote must match the opening quote
+            pattern = re.compile(rf"(['\"`])({escaped})\1")
+            self._secret_patterns.append(pattern)
 
         self._patterns = patterns
         self._enabled = enabled
@@ -216,8 +197,12 @@ class _Redactor:
     def redact_text(self, text: str) -> str:
         if not self._enabled:
             return text
+        # Replace quoted secrets: 'secret' → 'REDACTED', "secret" → "REDACTED"
+        # Each pattern captures (quote)(secret_content)(matching_quote).
+        # We replace only group 2 (the secret content) with REDACTED,
+        # preserving the original quote characters.
         for pattern in self._secret_patterns:
-            text = pattern.sub(REDACTED, text)
+            text = pattern.sub(rf'\1{REDACTED}\1', text)
         for pattern in self._patterns:
             text = pattern.sub(REDACTED, text)
         return text
