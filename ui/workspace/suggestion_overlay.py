@@ -59,7 +59,8 @@ class SuggestionOverlay(Widget):
         self._suggestion: str | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(id="suggestion-content")
+        yield Static(id="suggestion-header", markup=True)
+        yield Static(id="suggestion-code", markup=False)
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,17 +75,14 @@ class SuggestionOverlay(Widget):
             The full suggestion text (may contain newlines).
         """
         self._suggestion = suggestion
-        content = self.query_one("#suggestion-content", Static)
+        header = self.query_one("#suggestion-header", Static)
+        code = self.query_one("#suggestion-code", Static)
 
-        lines = suggestion.split("\n")
-        parts = [
+        header.update(
             "[italic]✦ AI  ·  [bold]Ctrl+F[/] accept  ·  "
             "[bold]Esc[/] dismiss[/]"
-        ]
-        for line in lines:
-            parts.append(line)
-
-        content.update("\n".join(parts))
+        )
+        code.update(suggestion)
         self.add_class("-visible")
 
     def hide_suggestion(self) -> None:
@@ -92,8 +90,8 @@ class SuggestionOverlay(Widget):
         self._suggestion = None
         self.remove_class("-visible")
         try:
-            content = self.query_one("#suggestion-content", Static)
-            content.update("")
+            self.query_one("#suggestion-header", Static).update("")
+            self.query_one("#suggestion-code", Static).update("")
         except Exception:
             pass
 

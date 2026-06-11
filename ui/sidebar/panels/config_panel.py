@@ -241,7 +241,7 @@ def _infer_dict_fields(template: dict[str, Any]) -> list[FormControl]:
 # ---------------------------------------------------------------------------
 
 
-@register_sidebar_tab(name="config", icon="", side="right",
+@register_sidebar_tab(name="config", icon="", side="right",
                        tooltip="Config")
 class ConfigPanel(Container):
     """Sidebar panel showing configuration as an editable tree.

@@ -39,8 +39,8 @@ class ConfirmModal(ModalScreen[bool | None]):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="confirm-dialog"):
-            yield Static(self._title, id="confirm-title")
-            yield Static(self._body, id="confirm-body")
+            yield Static(self._title, id="confirm-title", markup=False)
+            yield Static(self._body, id="confirm-body", markup=False)
             with VerticalScroll(id="confirm-buttons"):
                 yield Button(self._confirm_label, variant="primary", id="btn-confirm")
                 yield Button("Cancel", variant="default", id="btn-cancel")

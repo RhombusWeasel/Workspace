@@ -91,6 +91,8 @@ def create_redactor_from_cache(
 
     patterns: list[re.Pattern[str]] = []
     for pattern_str in pattern_strings:
+        if not pattern_str or not pattern_str.strip():
+            continue  # Skip empty/blank patterns — would catastrophically expand text.
         try:
             patterns.append(re.compile(pattern_str))
         except re.error as exc:

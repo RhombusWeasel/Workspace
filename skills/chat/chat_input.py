@@ -212,7 +212,7 @@ class ChatInput(Widget):
                 try:
                     inp = self.query_one(Input)
                     inp.value = f"/{name} "
-                    inp.cursor_end = True
+                    inp.cursor_position = len(inp.value)
                     inp.focus()
                 finally:
                     self._suppress_palette_update = False
@@ -241,7 +241,7 @@ class ChatInput(Widget):
                     self._suppress_palette_update = True
                     try:
                         inp.value = new_text
-                        inp.cursor_end = True
+                        inp.cursor_position = len(inp.value)
                         inp.focus()
                     finally:
                         self._suppress_palette_update = False
@@ -328,7 +328,7 @@ class ChatInput(Widget):
                     self._suppress_palette_update = True
                     try:
                         inp.value = new_text
-                        inp.cursor_end = True
+                        inp.cursor_position = len(inp.value)
                         inp.focus()
                     finally:
                         self._suppress_palette_update = False

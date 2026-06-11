@@ -392,6 +392,89 @@ class TestBuildRedactor:
         assert r.redact_text(text) == '"secret-password"'
 
 
+class TestEmptyPatternBug:
+    """Regression: empty-string config patterns must be skipped.
+
+    An empty-string regex (re.compile('')) matches at every position,
+    inserting REDACTED between every character and catastrophically
+    expanding the text.  This was triggered by `"redaction": {"patterns": [""]}``
+    in user config.
+    """
+
+    def test_empty_pattern_skipped_in_redactor(self):
+        """_Redactor must skip empty compiled patterns."""
+        empty = re.compile('')
+        r = _Redactor(secrets=[], patterns=[empty], enabled=True)
+        text = "/mnt/storage/repos/python/Workspace"
+        result = r.redact_text(text)
+        assert result == text  # No expansion, no REDACTED
+
+    def test_empty_pattern_string_skipped_in_build(self):
+        """_build_redactor must skip empty/blank pattern strings."""
+        vault = MagicMock()
+        vault.is_locked.return_value = True
+
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "redaction.enabled": True,
+            "redaction.patterns": [""],  # empty string pattern
+        }.get(key, default)
+
+        r = _build_redactor(vault, config)
+        text = "/mnt/storage/repos/python/Workspace"
+        result = r.redact_text(text)
+        assert result == text
+
+    def test_blank_pattern_string_skipped(self):
+        """Whitespace-only pattern strings must also be skipped."""
+        vault = MagicMock()
+        vault.is_locked.return_value = True
+
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "redaction.enabled": True,
+            "redaction.patterns": ["   "],  # whitespace-only
+        }.get(key, default)
+
+        r = _build_redactor(vault, config)
+        text = "hello world"
+        result = r.redact_text(text)
+        assert result == text
+
+    def test_empty_pattern_in_base_provider(self):
+        """BaseProvider._redact must skip empty/blank pattern strings."""
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "redaction.enabled": True,
+            "redaction.patterns": [""],
+        }.get(key, default)
+
+        provider = BaseProvider(vault=None, config=config)
+        messages = [
+            Message(role="user", content="/mnt/storage/repos/python/Workspace"),
+        ]
+        result = provider._redact(messages)
+        assert result[0].content == "/mnt/storage/repos/python/Workspace"
+
+    def test_valid_pattern_still_works_after_empty_skipped(self):
+        """Valid patterns still work when empty patterns are present."""
+        vault = MagicMock()
+        vault.is_locked.return_value = True
+
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "redaction.enabled": True,
+            "redaction.patterns": ["", r"\b\d{3}-\d{2}-\d{4}\b", "   "],
+        }.get(key, default)
+
+        r = _build_redactor(vault, config)
+        text = "SSN: 123-45-6789, path: /home/user"
+        result = r.redact_text(text)
+        assert "123-45-6789" not in result
+        assert REDACTED in result
+        assert "/home/user" in result
+
+
 class TestCodeRedaction:
     """Realistic scenarios: redacting secrets in source code and config."""
 

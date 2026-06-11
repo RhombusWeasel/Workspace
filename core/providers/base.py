@@ -108,6 +108,10 @@ def _build_redactor(vault: Any, config: Any) -> _Redactor:
 
     patterns: list[re.Pattern[str]] = []
     for pattern_str in pattern_strings:
+        if not pattern_str or not pattern_str.strip():
+            # Skip empty/blank patterns — an empty-string regex matches
+            # at every position, which would catastrophically expand text.
+            continue
         try:
             patterns.append(re.compile(pattern_str))
         except re.error as exc:
@@ -191,7 +195,13 @@ class _Redactor:
             pattern = re.compile(rf"(['\"`])({escaped})\1")
             self._secret_patterns.append(pattern)
 
-        self._patterns = patterns
+        # Filter out empty/blank patterns — an empty-string regex matches
+        # at every position, which would insert REDACTED between every
+        # character and catastrophically expand the text.
+        self._patterns = [
+            p for p in patterns
+            if p.pattern  # skip compile("") / compile(blank)
+        ]
         self._enabled = enabled
 
     def redact_text(self, text: str) -> str:
@@ -319,6 +329,8 @@ class BaseProvider:
 
         patterns: list[re.Pattern[str]] = []
         for pattern_str in pattern_strings:
+            if not pattern_str or not pattern_str.strip():
+                continue  # Skip empty/blank patterns — would catastrophically expand text.
             try:
                 patterns.append(re.compile(pattern_str))
             except re.error:

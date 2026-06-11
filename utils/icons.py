@@ -26,8 +26,8 @@ COPY = "󰆏"           # 󰆏  copy
 COLLAPSE = "󰅀"       # 󰅀  chevron-down
 EXPAND = "󰅁"         # 󰅁  chevron-right
 SEARCH = "󰍉"         # 󰍉  search / magnifying glass
-EYE = "󰛠"             # 󰛠  eye / show hidden
-EYE_OFF = "󰛡"          # 󰛡  eye-off / hide hidden
+EYE = ""            #   eye / show hidden
+EYE_OFF = ""        #   eye-off / hide hidden
 
 # ---------------------------------------------------------------------------
 # Chat action icons

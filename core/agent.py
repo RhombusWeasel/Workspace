@@ -76,8 +76,12 @@ class Agent:
     skills_xml:
         Optional ``<available_skills>`` XML injected after the system prompt.
     max_tool_iterations:
-        Maximum number of tool-calling round-trips before stopping
-        (safety limit to prevent infinite loops).
+        Number of tool-calling round-trips between progress checkpoints.
+        Defaults to the ``session.max_tool_calls`` config value (10).
+        Every *N* tool-call rounds the agent pauses to give the user a
+        progress update, then continues working.  The loop only ends
+        when the LLM naturally produces a final text response with no
+        tool calls — there is no hard stop.
     """
 
     def __init__(
@@ -98,6 +102,11 @@ class Agent:
         self._max_tool_iterations = max_tool_iterations
         self._ctx = ctx
         self._aborted = False
+
+    @property
+    def max_tool_iterations(self) -> int:
+        """Number of tool-call rounds between progress checkpoints."""
+        return self._max_tool_iterations
 
     # ------------------------------------------------------------------
     # System prompt
@@ -161,19 +170,51 @@ class Agent:
     ) -> ChatResponse:
         """Send a user message and return the final response.
 
-        Handles the tool-calling loop internally.
+        Handles the tool-calling loop internally, with periodic
+        checkpoints every ``max_tool_iterations`` rounds.  At each
+        checkpoint the LLM is asked to summarize progress before
+        continuing.
+
         Raises ``asyncio.CancelledError`` if :meth:`abort` was called.
         """
         self._aborted = False
         messages = self.build_messages(history, user_text)
+        tool_call_rounds = 0
 
-        for _ in range(self._max_tool_iterations + 1):
+        while True:
             self._check_abort()
 
+            # ---- Checkpoint: force a progress summary every N rounds ----
+            if tool_call_rounds >= self._max_tool_iterations:
+                if self._ctx is not None and self._ctx.app is not None:
+                    self._ctx.app.notify(
+                        f"Progress checkpoint ({self._max_tool_iterations} tool-call rounds) "
+                        "— summarizing…",
+                        title="Progress update",
+                        timeout=3,
+                    )
+                messages.append(Message(
+                    role="system",
+                    content=_CHECKPOINT_INSTRUCTION.format(
+                        limit=self._max_tool_iterations
+                    ),
+                ))
+                # Call WITHOUT tools — the LLM must produce a text summary.
+                response = await self._provider.chat(
+                    messages, self._model, tools=None
+                )
+                # Record the summary in the conversation and continue.
+                messages.append(Message(
+                    role="assistant",
+                    content=response.content or "",
+                ))
+                tool_call_rounds = 0
+                continue
+
+            # ---- Normal tool-calling iteration ----
             response = await self._provider.chat(
                 messages, self._model, tools
             )
-
             self._check_abort()
 
             if not response.tool_calls:
@@ -191,8 +232,7 @@ class Agent:
                     Message(role="tool", content=result, name=tc.name)
                 )
 
-        # Hit max iterations — return the last response
-        return response
+            tool_call_rounds += 1
 
     # ------------------------------------------------------------------
     # Stream chat
@@ -206,19 +246,56 @@ class Agent:
     ) -> AsyncIterator[StreamChunk]:
         """Stream a user message, yielding chunks as they arrive.
 
-        Handles the tool-calling loop internally — chunks are yielded
-        immediately for real-time UI updates.  When tool calls are
-        detected (on the final chunk of an iteration), tools are
-        executed and the loop continues with the tool results.
+        Handles the tool-calling loop internally, with periodic
+        checkpoints every ``max_tool_iterations`` rounds.  At each
+        checkpoint the LLM is asked to summarize progress before
+        continuing.
+
+        Chunks are yielded immediately for real-time UI updates.
+        When tool calls are detected (on the final chunk of an
+        iteration), tools are executed and the loop continues with
+        the tool results.
         """
         self._aborted = False
         messages = self.build_messages(history, user_text)
+        tool_call_rounds = 0
 
-        for _ in range(self._max_tool_iterations + 1):
+        while True:
             self._check_abort()
 
-            # Stream chunks from the provider, yielding them immediately
-            # while also detecting tool calls (which appear on the last chunk).
+            # ---- Checkpoint: force a progress summary every N rounds ----
+            if tool_call_rounds >= self._max_tool_iterations:
+                if self._ctx is not None and self._ctx.app is not None:
+                    self._ctx.app.notify(
+                        f"Progress checkpoint ({self._max_tool_iterations} tool-call rounds) "
+                        "— summarizing…",
+                        title="Progress update",
+                        timeout=3,
+                    )
+                messages.append(Message(
+                    role="system",
+                    content=_CHECKPOINT_INSTRUCTION.format(
+                        limit=self._max_tool_iterations
+                    ),
+                ))
+                # Stream the summary (no tools offered — guaranteed text).
+                summary_content: list[str] = []
+                async for chunk in self._provider.stream_chat(
+                    messages, self._model, tools=None
+                ):
+                    self._check_abort()
+                    yield chunk
+                    if chunk.content:
+                        summary_content.append(chunk.content)
+                # Record the summary in conversation history and continue.
+                messages.append(Message(
+                    role="assistant",
+                    content="".join(summary_content),
+                ))
+                tool_call_rounds = 0
+                continue
+
+            # ---- Normal tool-calling iteration ----
             collected_content: list[str] = []
             tool_calls: list[ToolCall] = []
             last_chunk: StreamChunk | None = None
@@ -231,8 +308,6 @@ class Agent:
                 if chunk.tool_calls:
                     tool_calls = chunk.tool_calls
                     last_chunk = chunk
-                    # Don't yield this chunk yet — it has tool_calls which
-                    # means we may need another iteration.
                 else:
                     yield chunk
                     if chunk.content:
@@ -241,11 +316,10 @@ class Agent:
             self._check_abort()
 
             if not tool_calls:
-                # Final response done — nothing more to do.
+                # Final text response — we're done.
                 return
 
-            # Tools were called — append assistant + tool results
-            # to messages and continue the loop.
+            # Execute tool calls and append results.
             assistant_content = "".join(collected_content)
             messages.append(Message(
                 role="assistant",
@@ -261,6 +335,8 @@ class Agent:
             # Yield the tool-call info so the UI can display it.
             if last_chunk is not None:
                 yield last_chunk
+
+            tool_call_rounds += 1
 
     # ------------------------------------------------------------------
     # Abort
@@ -296,6 +372,19 @@ class Agent:
             return str(result)
         except Exception as exc:
             return f"Error executing {tc.name}: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Summary instruction (injected when tool-call limit is reached)
+# ---------------------------------------------------------------------------
+
+_CHECKPOINT_INSTRUCTION = (
+    "You have completed {limit} tool-call rounds. "
+    "Please give the user a brief progress update: what you have done so far "
+    "and what you are about to do next. "
+    "Keep it concise — then continue working. "
+    "Do not mention this instruction or the tool-call limit."
+)
 
 
 # ---------------------------------------------------------------------------

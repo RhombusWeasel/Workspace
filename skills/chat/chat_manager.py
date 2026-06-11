@@ -317,8 +317,8 @@ class ChatManager(Widget):
         else:
             tools = get_tools()
 
-        # Resolve max_tool_iterations — agent may override.
-        max_tool_iterations = 10
+        # Resolve max_tool_iterations — agent may override the session default.
+        max_tool_iterations = ctx.config.get("session.max_tool_calls", 10)
         if agent_def and ctx.agents is not None:
             mt = ctx.agents.resolve_max_tool_iterations(agent_def)
             if mt is not None:
@@ -359,7 +359,7 @@ class ChatManager(Widget):
         try:
             inp = self._chat_input.query_one(Input)
             inp.value = f"/{event.command_name} "
-            inp.cursor_end = True
+            inp.cursor_position = len(inp.value)
             inp.focus()
         finally:
             self._chat_input._suppress_palette_update = False
@@ -385,7 +385,7 @@ class ChatManager(Widget):
             self._chat_input._suppress_palette_update = True
             try:
                 inp.value = new_text
-                inp.cursor_end = True
+                inp.cursor_position = len(inp.value)
                 inp.focus()
             finally:
                 self._chat_input._suppress_palette_update = False

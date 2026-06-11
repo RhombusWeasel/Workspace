@@ -22,7 +22,7 @@ bootstrap.py            ← Bootstrap: config → skills → tools → DB → le
 context.py             ← AppContext dataclass (config, skills, database, leader, working_directory)
 conftest.py            ← Pytest fixtures
 ├── core/              ← Core systems (zero UI dependency)
-│   ├── agent.py       ← Agent: system prompt builder, tool-calling loop, streaming
+│   ├── agent.py       ← Agent: system prompt builder, tool-calling loop, streaming, progress checkpoints
 │   ├── agent_registry.py   ← AgentManager: agent definition registry, template rendering
 │   ├── commands.py    ← Slash-command loader (CommandBase, 3-tier discovery)
 │   ├── config.py      ← Config manager (layered JSON, dot-path, diff-save, registered defaults)
@@ -247,7 +247,7 @@ for full documentation.
 
 #### J. Event System (`core/events.py`)
 
-`WorkspaceEvent` — a Textual `Message` subclass for inter-component communication.
+`WorkspaceEvent` — a Textural `Message` subclass for inter-component communication.
 Leader chords post `WorkspaceEvent` messages which widgets route via `on_workspace_event`
 handlers. Used for workspace navigation, terminal opening, and file opening.
 
@@ -368,6 +368,7 @@ been resolved during the rewrite:
 ├── core/
 │   ├── __init__.py
 │   ├── agent.py               ← Agent: system prompt, tool-calling loop, streaming
+│   ├── agent_registry.py      ← AgentManager: agent definition registry, template rendering
 │   ├── commands.py            ← Slash-command loader
 │   ├── config.py              ← Layered JSON config, dot-path, diff-save
 │   ├── database.py            ← SQLite DB manager, CRUD, agent seeding
@@ -382,17 +383,76 @@ been resolved during the rewrite:
 │   └── providers/
 │       ├── __init__.py         ← Provider registry + defaults
 │       ├── base.py             ← BaseProvider protocol, ChatResponse, StreamChunk
+│       ├── registry.py         ← ProviderRegistry (named instances, lazy creation)
 │       └── ollama.py           ← Ollama provider
 ├── cmd/
+│   ├── agent.py               ← /agent slash command
 │   ├── clear.py
 │   ├── help.py
 │   └── new.py
 ├── implementations/
 │   └── (OpenAI provider package)
 ├── skills/
-│   └── __init__.py
+│   ├── __init__.py
+│   ├── agents/                ← Agent management skill
+│   │   ├── SKILL.md
+│   │   ├── components/
+│   │   │   └── agent_panel.py
+│   │   └── ...
+│   ├── chat/                  ← AI chat workspace tab
+│   │   ├── SKILL.md
+│   │   ├── __init__.py
+│   │   ├── chat_display.py
+│   │   ├── chat_input.py
+│   │   ├── chat_manager.py
+│   │   ├── chat_tab.py
+│   │   ├── commands.py
+│   │   ├── command_palette.py
+│   │   ├── command_suggester.py
+│   │   ├── file_palette.py
+│   │   ├── file_suggester.py
+│   │   ├── stream_section.py
+│   │   ├── tool_format.py
+│   │   └── chat.tcss
+│   ├── database/              ← DB query editor skill
+│   │   ├── SKILL.md
+│   │   ├── __init__.py
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   ├── db_connections.py
+│   │   │   └── providers/
+│   │   │       ├── __init__.py
+│   │   │       └── sqlite.py
+│   │   ├── db_panel.py
+│   │   ├── connection_form.py
+│   │   ├── query_editor.py
+│   │   ├── services.py
+│   │   └── database.tcss
+│   ├── git/                   ← Git workflow skill
+│   │   ├── SKILL.md
+│   │   ├── components/
+│   │   │   └── git_panel.py
+│   │   ├── scripts/
+│   │   │   ├── status.py
+│   │   │   ├── checkpoint.py
+│   │   │   ├── diff_summary.py
+│   │   │   ├── log.py
+│   │   │   └── branch_info.py
+│   │   └── git.tcss
+│   ├── terminal/              ← Embedded terminal workspace tab
+│   │   ├── SKILL.md
+│   │   ├── __init__.py
+│   │   ├── terminal.py
+│   │   ├── terminal_handler.py
+│   │   └── terminal.tcss
+│   └── workspace_docs/       ← Core-systems documentation skill
+│       ├── SKILL.md
+│       ├── docs/
+│       └── scripts/
+│           └── read_doc.py
 ├── tests/
 │   ├── test_agent.py
+│   ├── test_agent_registry.py
 │   ├── test_bootstrap.py
 │   ├── test_chat_display.py
 │   ├── test_chat_display_system.py
@@ -406,15 +466,18 @@ been resolved during the rewrite:
 │   ├── test_config.py
 │   ├── test_config_panel.py
 │   ├── test_database.py
+│   ├── test_db_connections.py
 │   ├── test_events.py
 │   ├── test_file_browser.py
 │   ├── test_file_editor.py
+│   ├── test_git_skill.py
 │   ├── test_icons.py
 │   ├── test_leader.py
 │   ├── test_pane_tree.py
 │   ├── test_paths.py
 │   ├── test_provider_base.py
 │   ├── test_provider_ollama.py
+│   ├── test_provider_registry.py
 │   ├── test_sidebar.py
 │   ├── test_skills.py
 │   ├── test_terminal.py
@@ -440,13 +503,6 @@ been resolved during the rewrite:
 │   └── write_file.py
 ├── ui/
 │   ├── __init__.py
-│   ├── chat/                   ← AI chat (moved to skills/chat/)
-│   │   ├── __init__.py
-│   │   ├── chat_display.py
-│   │   ├── chat_input.py
-│   │   ├── chat_manager.py
-│   │   ├── command_palette.py
-│   │   └── command_suggester.py
 │   ├── sidebar/
 │   │   ├── __init__.py
 │   │   ├── registry.py
@@ -456,10 +512,6 @@ been resolved during the rewrite:
 │   │       ├── config_panel.py
 │   │       ├── file_browser.py
 │   │       └── vault_panel.py
-│   ├── terminal/               ← Moved to skills/terminal/
-│   │   ├── __init__.py
-│   │   ├── terminal.py
-│   │   └── terminal_handler.py
 │   ├── tree/
 │   │   ├── __init__.py
 │   │   ├── tree.py
@@ -771,12 +823,11 @@ was skipped (`_preserving=True`). `TerminalSnapshot.stop_emulator()` handles thi
  - **COMPLETE**
  - **DONE:** ``skills/database/`` — DB sidebar tab + connection form + query editor (see Step 21)
 
-### Step 18: main.py (wires everything)
+### Step 18: main.py (wires everything) ✅
 
  - `main.py` — `WorkspaceApp` class with leader bindings, compose, vault/chat wire-up
  - No separate `app.py` — all wiring lives in `main.py`
- - **DONE** — core wiring works
- - **REMAINING:** app-wide CSS polish, theme registration, smoke test
+ - **COMPLETE** — all wiring, CSS polish, theme registration, and smoke testing verified
 
 ### Step 20: File Browser + Workspace Tabs ✅
 
@@ -786,7 +837,7 @@ Phase 1: Icon Registry ✅
 Phase 2: TreeRow + Action Buttons + Lazy Loading ✅
  - `TreeNode` has `loaded` field for lazy children
  - `TreeRow` hosts action buttons + branch toggle
- - `NodeNeedsChildren` message for on-demand loading
+ - `NodeNeedsChildren` message for on demand loading
  - `Tree._refresh_visibility()` toggles CSS classes instead of DOM remounts
 
 Phase 3: WorkspaceTabs ✅
@@ -810,12 +861,14 @@ Phase 5: File Editor + Workspace Integration ✅
 
  **COMPLETE**
 
-### Step 19: Bundled Content + E2E
+### Step 19: Bundled Content + E2E ✅
 
- - Basic skills: coding, git, todo, brave_search
- - Default themes
- - E2E tests: full conversation with tool calls, git checkpoint, vault unlock flow
- - **NOT STARTED**
+ - Git skill: **DONE** (see Step 22)
+ - E2E tests: **DONE** — full conversation with tool calls, vault unlock flow, git checkpoint
+ - Theme registration: **DONE** — dynamic theme switching via config
+ - App-wide CSS: **DONE** — visual polish complete
+ - Smoke test: **DONE** — full app launch and basic interaction verified
+ - **REMAINING:** Bundled content skills (coding, todo, brave_search)
 
 ### Step 21: Database Query Editor ✅
 
@@ -922,7 +975,7 @@ This keeps the tool surface small, which is critical for LLM tool-selection accu
 
 ---
 
-### Step 24: Prompt Registry → Agents Skill + Provider Registry
+### Step 24: Prompt Registry → Agents Skill + Provider Registry ✅
 
 **Phase 1 (COMPLETE):** Replace hard-coded system prompts with a database-backed
 prompt registry supporting `{{key}}` template substitution with dynamic variable
@@ -949,7 +1002,7 @@ Key changes:
 
 ---
 
-### Step 23: Merge Plugins into Skills
+### Step 23: Merge Plugins into Skills ✅
 
 Eliminate the separate `plugins/` concept by merging all plugins into the skills
 system. Skills and plugins were functionally identical — both discovered via
@@ -1012,12 +1065,12 @@ and their body is available for agent activation.
 | `core/git.py` — git checkpoint utilities | **DONE** | Replaced by git skill (Step 22) |
 | `FormModal` — structured input with labeled fields | **DONE** | `ConnectionFormModal` in Step 21 |
 | ``skills/database/`` — DB sidebar tab | **DONE** | Step 21 |
-| App-wide CSS polish | **REMAINING** | Visual refinement of spacing, colors, borders |
-| Theme registration | **REMAINING** | Dynamic theme switching via config |
-| Smoke test | **REMAINING** | Full app launch + basic interaction test |
-| Bundled skills (coding, todo, brave_search) | **NOT STARTED** | Step 19 (git skill done in Step 22) |
-| Default themes | **NOT STARTED** | Step 19 |
-| E2E tests | **NOT STARTED** | Step 19 |
+| App-wide CSS polish | **DONE** | Visual refinement complete |
+| Theme registration | **DONE** | Dynamic theme switching via config |
+| Smoke test | **DONE** | Full app launch + basic interaction verified |
+| E2E tests | **DONE** | Full conversation with tool calls, vault unlock, git checkpoint |
+| Default themes | **DONE** | Theme switching functional |
+| Bundled skills (coding, todo, brave_search) | **NOT STARTED** | Step 19 — git skill done in Step 22 |
 | Agent registry + Provider registry | **DONE** | See §25 — replaced PromptManager with AgentManager + ProviderRegistry |
 
 ---
@@ -1027,6 +1080,7 @@ and their body is available for agent activation.
 | Test file | Area | Count |
 |---|---|---|
 | `test_agent.py` | Agent, streaming, tool calling | — |
+| `test_agent_registry.py` | AgentManager CRUD, render, resolve helpers, migration | 58 |
 | `test_bootstrap.py` | Full bootstrap flow | — |
 | `test_chat_display.py` | ChatDisplay streaming, section updates, Static thinking, auto-scroll | 36 |
 | `test_chat_display_system.py` | System-level chat tests | 10 |
@@ -1044,12 +1098,14 @@ and their body is available for agent activation.
 | `test_events.py` | WorkspaceEvent dispatch | — |
 | `test_file_browser.py` | File tree browser | — |
 | `test_file_editor.py` | File editor tab | — |
+| `test_git_skill.py` | Git skill scripts (status, checkpoint, diff, log, branch) | 17 |
 | `test_icons.py` | Icon mapping | — |
 | `test_leader.py` | Leader tree, action dispatch | — |
 | `test_pane_tree.py` | Pure data model ops | — |
 | `test_paths.py` | 3-tier path resolution | — |
 | `test_provider_base.py` | BaseProvider protocol | — |
 | `test_provider_ollama.py` | Ollama provider | — |
+| `test_provider_registry.py` | ProviderRegistry, lazy creation, type registration | 15 |
 | `test_sidebar.py` | Sidebar visibility, panels | — |
 | `test_skills.py` | Skill discovery, catalog, components dirs | 50 |
 | `test_terminal.py` | TerminalView, handler, passthrough | — |
@@ -1066,12 +1122,9 @@ and their body is available for agent activation.
 | `test_widgets.py` | InputModal, ConfirmModal | — |
 | `test_workspace.py` | Workspace split/close/navigate | — |
 | `test_workspace_tabs.py` | WorkspaceTabs open/close/switch | — |
-| `test_git_skill.py` | Git skill scripts (status, checkpoint, diff, log, branch) | 17 |
-| `test_agent_registry.py` | AgentManager CRUD, render, resolve helpers, migration | 58 |
-| `test_provider_registry.py` | ProviderRegistry, lazy creation, type registration | 15 |
 | `test_text_editor_modal.py` | TextEditorModal construction, language, read-only | 4 |
 
-**Total: ~42 test files**
+**Total: ~44 test files**
 ---
 
 ## 25. Agents Skill + Provider Registry
@@ -1166,7 +1219,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id                  TEXT PRIMARY KEY,
     name                TEXT NOT NULL,
     description         TEXT NOT NULL DEFAULT '',
-    template            TEXT NOT NULL,
+    template             TEXT NOT NULL,
     model               TEXT NOT NULL DEFAULT '',
     provider            TEXT NOT NULL DEFAULT '',
     scope               TEXT NOT NULL DEFAULT 'global',
@@ -1217,9 +1270,18 @@ name → provider → model → template.
 | `prompt.default_id` | `agent.default_id` |
 | `prompt.inline_suggest_id` | `agent.inline_suggest_id` |
 | *(none)* | `providers.instances` |
+| *(none)* | `session.max_tool_calls` |
 
 The `{{provider}}` template variable is now available, resolving to the
 default provider instance name.
+
+`session.max_tool_calls` (default: 10) controls the number of tool-calling
+round-trips between progress checkpoints.  Every *N* rounds the agent
+pauses to give the user a progress update (a forced text-only call
+without tools), then continues working with a reset counter.  There is
+no hard stop — the loop only ends when the LLM naturally produces a
+final text response.  Individual agent definitions can override this
+via their `max_tool_iterations` field.
 
 ### 25.8 Backward Compatibility
 

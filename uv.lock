@@ -633,7 +633,7 @@ syntax = [
 [[package]]
 name = "textual-terminal"
 version = "0.3.0"
-source = { git = "https://github.com/RhombusWeasel/textual-terminal#7093e7257fb7f583634688f2efa6800c342ac26f" }
+source = { git = "https://github.com/RhombusWeasel/textual-terminal#06b01f738d854726a9d0035f5193606d2681eb19" }
 dependencies = [
     { name = "pyte" },
     { name = "textual" },
