@@ -186,7 +186,7 @@ Tags group tools for filtering and bulk enable/disable.  Convention:
 | Tag | Purpose | Example tools |
 |---|---|---|
 | `system` | System-level operations | `run_command` |
-| `files` | File read/write | `read_file`, `write_file` |
+| `files` | File read/write/edit | `read_file`, `write_file`, `edit_file` |
 | `skills` | Skill activation | `activate_skill`, `run_skill` |
 
 Plugins should use their skill name as a tag:

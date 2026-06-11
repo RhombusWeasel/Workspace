@@ -111,6 +111,7 @@ conftest.py            ← Pytest fixtures
 │   ├── run_command.py       ← Run shell command tool
 │   ├── run_skill.py         ← Execute skill scripts (subprocess)
 │   ├── write_file.py        ← Write file tool
+│   ├── edit_file.py         ← Edit file tool (search/replace)
 │   └── __init__.py
 ├── utils/
 │   ├── dom_id.py        ← DOM ID generation utilities
@@ -488,6 +489,7 @@ been resolved during the rewrite:
 │   ├── test_tools_run_command.py
 │   ├── test_tools_skill.py
 │   ├── test_tools_write_file.py
+│   ├── test_tools_edit_file.py
 │   ├── test_tree_merged.py
 │   ├── test_tree.py
 │   ├── test_vault.py
@@ -501,6 +503,7 @@ been resolved during the rewrite:
 │   ├── run_command.py
 │   ├── run_skill.py
 │   └── write_file.py
+│   ├── edit_file.py
 ├── ui/
 │   ├── __init__.py
 │   ├── sidebar/
@@ -697,7 +700,7 @@ project `.agents/`) plus any skill `components/` directories. Called once at boo
  - `context.py`, `bootstrap.py` — full bootstrap flow
  - CSS collection via `paths.collect_tcss()`
  - **COMPLETE**
- - **DEFERRED:** `core/themes.py` (3-tier theme discovery), `core/git.py` (checkpoint utilities)
+ - **DONE:** `core/themes.py` (3-tier theme discovery), **DEFERRED:** `core/git.py` (checkpoint utilities)
 
 ### Step 14: Shared UI Widgets ✅
 
@@ -968,7 +971,7 @@ Phase 6: Tests ✅
 
 **Design Decision — Skill over Plugin for Git (§3.8):** The git integration
 uses a skill rather than a plugin to avoid adding new agent tools. The 5 existing
-tools (`activate_skill`, `read_file`, `run_command`, `run_skill`, `write_file`) are
+tools (`activate_skill`, `edit_file`, `read_file`, `run_command`, `run_skill`, `write_file`) are
 sufficient — the agent activates the git skill to learn git expertise, then uses
 `run_command` for simple operations and `run_skill` + scripts for complex ones.
 This keeps the tool surface small, which is critical for LLM tool-selection accuracy.
@@ -1061,7 +1064,7 @@ and their body is available for agent activation.
 
 | Item | Status | Notes |
 |---|---|---|
-| `core/themes.py` — 3-tier theme discovery | **DEFERRED** | Not blocking; CSS themes work manually |
+| `core/themes.py` — 3-tier theme discovery | **DONE** | Subsumed by theme registration |
 | `core/git.py` — git checkpoint utilities | **DONE** | Replaced by git skill (Step 22) |
 | `FormModal` — structured input with labeled fields | **DONE** | `ConnectionFormModal` in Step 21 |
 | ``skills/database/`` — DB sidebar tab | **DONE** | Step 21 |
@@ -1115,6 +1118,7 @@ and their body is available for agent activation.
 | `test_tools_read_file.py` | Read file tool | — |
 | `test_tools_run_command.py` | Run command tool | — |
 | `test_tools_skill.py` | Skill tools | — |
+| `test_tools_edit_file.py` | Edit file tool (search/replace) | — |
 | `test_tools_write_file.py` | Write file tool | — |
 | `test_tree_merged.py` | Tree merged tests | — |
 | `test_tree.py` | Tree widget | — |
