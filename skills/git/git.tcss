@@ -11,8 +11,8 @@ GitPanel .section-header {
 }
 
 GitPanel .git-panel-actions {
-    height: 3;
-    padding: 0 1;
+    height: 1;
+    padding: 0;
     dock: bottom;
     background: $surface;
 }
@@ -31,4 +31,16 @@ GitPanel .git-stage-all-btn {
 
 GitPanel #git-commit {
     min-width: 10;
+    height: 1;
+    border: none;
+    padding: 0 1 0 0;
+    margin: 0;
+}
+
+GitPanel #git-refresh {
+    min-width: 10;
+    height: 1;
+    border: none;
+    padding: 0 0 0 1;
+    margin: 0;
 }

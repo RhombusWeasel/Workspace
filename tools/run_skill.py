@@ -2,11 +2,19 @@
 
 Looks up a skill by name and runs a script from its directory.
 Registered at import time via ``@register_tool()``.
+
+Python scripts (``.py``) are executed **in-process** via :func:`exec`,
+with a ``context`` namespace that provides direct access to the
+:class:`~context.AppContext` (vault, config, etc.).  Non-Python scripts
+fall back to :func:`subprocess.run`.
 """
 
 from __future__ import annotations
 
+import io
+import os
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 from core.tools import register_tool
@@ -74,6 +82,69 @@ def run_skill(
 
     wd = ctx.working_directory if ctx else os.getcwd()
 
+    if script_path.endswith(".py"):
+        return _run_python_script(script_path, args, ctx, wd)
+    else:
+        return _run_subprocess_script(script_path, args, wd)
+
+
+def _run_python_script(
+    script_path: str,
+    args: list[str] | None,
+    ctx: AppContext | None,
+    wd: str,
+) -> str:
+    """Execute a Python script in-process with access to the app context.
+
+    The script receives a ``context`` global variable holding the
+    :class:`~context.AppContext` (or ``None`` if unavailable) and an
+    ``args`` global holding the argument list.  ``sys.argv`` is also set
+    for backward compatibility with scripts that read it directly.
+
+    Standard output is captured and returned as a string.
+    """
+    # Save state we'll temporarily replace
+    old_cwd = os.getcwd()
+    old_argv = sys.argv
+    old_stdout = sys.stdout
+
+    captured = io.StringIO()
+    sys.stdout = captured
+    os.chdir(wd)
+    sys.argv = [script_path] + (args or [])
+
+    try:
+        namespace: dict = {
+            "__name__": "__main__",
+            "__file__": script_path,
+            "context": ctx,
+            "args": args or [],
+        }
+
+        with open(script_path, encoding="utf-8") as fh:
+            code = compile(fh.read(), script_path, "exec")
+            exec(code, namespace)
+
+        output = captured.getvalue().strip()
+    except Exception as exc:
+        output = f"Script error: {exc}"
+    finally:
+        sys.stdout = old_stdout
+        sys.argv = old_argv
+        os.chdir(old_cwd)
+
+    if not output:
+        output = "(no output)"
+
+    return output
+
+
+def _run_subprocess_script(
+    script_path: str,
+    args: list[str] | None,
+    wd: str,
+) -> str:
+    """Execute a non-Python script as a subprocess (fallback)."""
     cmd = [script_path] + (args or [])
 
     try:

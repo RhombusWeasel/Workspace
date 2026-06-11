@@ -871,7 +871,7 @@ Phase 5: File Editor + Workspace Integration ✅
  - Theme registration: **DONE** — dynamic theme switching via config
  - App-wide CSS: **DONE** — visual polish complete
  - Smoke test: **DONE** — full app launch and basic interaction verified
- - **REMAINING:** Bundled content skills (coding, todo, brave_search)
+ - **REMAINING:** Bundled content skills (coding, todo)
 
 ### Step 21: Database Query Editor ✅
 
@@ -1073,7 +1073,7 @@ and their body is available for agent activation.
 | Smoke test | **DONE** | Full app launch + basic interaction verified |
 | E2E tests | **DONE** | Full conversation with tool calls, vault unlock, git checkpoint |
 | Default themes | **DONE** | Theme switching functional |
-| Bundled skills (coding, todo, brave_search) | **NOT STARTED** | Step 19 — git skill done in Step 22 |
+| Bundled skills (coding, todo, brave_search) | brave_search **DONE**; coding/todo **NOT STARTED** | brave_search skill + in-process script execution (§26) |
 | Agent registry + Provider registry | **DONE** | See §25 — replaced PromptManager with AgentManager + ProviderRegistry |
 
 ---
@@ -1297,3 +1297,103 @@ via their `max_tool_iterations` field.
 - Old `DatabaseManager` agent CRUD methods (`create_agent`, `get_agent`,
   `list_agents`, `delete_agent`, `seed_agents`) emit `DeprecationWarning`
   but still function, writing to the new `agents` table.
+
+---
+
+## 26. Brave Search Skill + In-Process Script Execution
+
+### 26.1 Overview
+
+The **Brave Search skill** adds web search capability via the
+[Brave Search API](https://brave.com/search/api/).  It is a pure
+script skill — no UI components, no registered tools.  The agent
+calls `run_skill` to execute `scripts/search.py`, which returns
+plaintext search results.
+
+Concurrently, the `run_skill` tool was refactored to execute Python
+scripts **in-process** instead of as subprocesses.  This gives scripts
+direct access to the `AppContext` (vault, config, database, etc.)
+without serialising secrets across process boundaries.
+
+### 26.2 In-Process Script Execution
+
+**File:** `tools/run_skill.py`
+
+Previously, all skill scripts ran as OS subprocesses — isolated but
+unable to access Python objects.  This meant vault credentials had to
+be injected via environment variables, requiring explicit per-skill
+wiring and leaking secrets into the process environment.
+
+The new approach:
+
+- **Python scripts** (`.py`) execute in-process via `exec()` with a
+  namespace that includes a `context` global (the `AppContext` instance)
+  and an `args` global (the argument list).  `sys.argv` and `sys.stdout`
+  are temporarily redirected so scripts behave as before.
+
+- **Non-Python scripts** (`.sh`, etc.) fall back to `subprocess.run()`
+  with no changes.
+
+The `context` global lets scripts access anything the app can:
+
+```python
+# Inside any skill script
+api_key = context.vault.get_credential("brave_search")[1]
+db = context.database
+provider = context.providers.get_default()
+```
+
+This is safe for **bundled skills** (shipped with the app) and
+**ecosystem skills** (user-installed).  Both are trusted code running
+in the same process as the main application.
+
+### 26.3 Brave Search Skill
+
+**Directory:** `skills/brave_search/`
+
+```
+skills/brave_search/
+├── SKILL.md          # Skill manifest + usage instructions
+└── scripts/
+    └── search.py      # Callable search script
+```
+
+The script reads the API key from the vault:
+
+```python
+def _get_api_key() -> str | None:
+    vault = context.vault          # injected by run_skill
+    if vault is None or vault.is_locked():
+        return None
+    cred = vault.get_credential("brave_search")
+    return cred[1] if cred else None   # password field = API key
+```
+
+Usage from an agent:
+
+```
+run_skill(skill_name="brave_search", script="scripts/search.py",
+          args=["Python async tutorial"])
+run_skill(skill_name="brave_search", script="scripts/search.py",
+          args=["--count", "3", "AI regulation news"])
+```
+
+Output is plaintext:
+
+```
+1. Title of the page
+   URL: https://example.com/page
+   A short snippet summarizing the page content.
+```
+
+**Setup:** Store a vault credential named `brave_search` with the
+API key in the password field.
+
+### 26.4 Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Script skill, not registered tool | Too many tools degrades agent accuracy; `run_skill` keeps the tool surface small |
+| Web search only, no separate news endpoint | Adding "news" to the query is sufficient; avoids an extra API endpoint |
+| In-process execution for Python scripts | Avoids serialising secrets; gives scripts direct access to vault, config, etc. |
+| No `__init__.py`, no `components/` | Pure script skill with no UI or service registration |

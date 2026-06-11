@@ -341,7 +341,7 @@ class GitPanel(Container):
         self._tree = Tree(TreeNode("git-root", "Loading..."))
         yield self._tree
         with Horizontal(classes="git-panel-actions"):
-            yield Button(REFRESH, id="git-refresh", variant="default")
+            yield Button(REFRESH, id="git-refresh", variant="primary")
             yield Button("\uf417 Commit", id="git-commit", variant="primary")
 
     def on_mount(self) -> None:

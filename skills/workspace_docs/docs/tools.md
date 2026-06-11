@@ -322,3 +322,92 @@ def test_my_tool():
 6. **Tag-based grouping** — Tags enable bulk hide/show (e.g. hide all
    "system" tools in a restricted session) and targeted queries (e.g.
    return only "database" tools for a DB-focused agent).
+
+---
+
+## In-Process Script Execution (`run_skill`)
+
+**File:** `tools/run_skill.py`
+
+The `run_skill` tool executes scripts bundled with registered skills.
+Python scripts (`.py`) run **in-process** via `exec()` — giving them
+access to the full `AppContext` (vault, config, database, providers,
+etc.) through a `context` global variable.  Non-Python scripts fall
+back to `subprocess.run()`.
+
+### Why in-process?
+
+Previously, all scripts ran as subprocesses.  This isolated the app from
+script crashes but made it impossible to pass Python objects across the
+process boundary.  Vault credentials had to be serialised into
+environment variables — requiring explicit per-skill wiring and
+leaking secrets into the process environment.
+
+In-process execution solves this: scripts get a `context` global that
+is the `AppContext` instance, so they can read from the vault, query
+config, use the database, etc. — just like any other component.
+
+### Execution model
+
+When `run_skill` is called with a `.py` script:
+
+1. `sys.argv` is set to `[script_path] + args` (for `argparse` compatibility)
+2. `sys.stdout` is redirected to a `StringIO` to capture output
+3. The working directory is temporarily changed to `ctx.working_directory`
+4. The script is compiled and executed via `exec(code, namespace)`
+5. The namespace includes:
+   - `"context"` — the `AppContext` instance (or `None`)
+   - `"args"` — the argument list
+   - `"__name__"` — `"__main__"` (so `if __name__ == "__main__"` guards work)
+   - `"__file__"` — the script path
+6. After execution, `sys.argv`, `sys.stdout`, and `os.getcwd()` are restored
+
+### What scripts can access
+
+```python
+# Inside any skill script (e.g. skills/brave_search/scripts/search.py)
+
+# Vault — read credentials, secure notes
+api_key = context.vault.get_credential("brave_search")[1]
+
+# Config — read any config value
+max_results = context.config.get("brave_search", {}).get("max_results", 10)
+
+# Database — execute queries
+result = context.database.execute("SELECT * FROM agents")
+
+# Providers — get LLM provider instances
+provider = context.providers.get_default()
+```
+
+### Writing a script that uses the context
+
+```python
+# skills/my_skill/scripts/lookup.py
+"""Look up a credential from the vault."""
+
+def _get_token() -> str | None:
+    try:
+        vault = context.vault  # type: ignore[name-defined]
+    except NameError:
+        return None
+    if vault is None or vault.is_locked():
+        return None
+    cred = vault.get_credential("my_service")
+    return cred[1] if cred else None
+
+def main() -> None:
+    token = _get_token()
+    if not token:
+        print("API key not configured.")
+        return
+    # ... use token ...
+
+if __name__ == "__main__":
+    main()
+```
+
+The `context` variable is available as a global in the script's
+namespace.  The `# type: ignore[name-defined]` comment suppresses
+linter warnings since `context` isn't imported — it's injected by
+`run_skill` at execution time.
