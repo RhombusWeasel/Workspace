@@ -17,8 +17,18 @@ GitPanel .git-panel-actions {
     background: $surface;
 }
 
-GitPanel .git-panel-actions Button {
-    margin: 0;
-    height: 1;
-    border: none;
+GitPanel .git-stage-btn {
+    color: $success;
+}
+
+GitPanel .git-unstage-btn {
+    color: $warning;
+}
+
+GitPanel .git-stage-all-btn {
+    color: $success;
+}
+
+GitPanel #git-commit {
+    min-width: 10;
 }

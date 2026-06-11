@@ -4,6 +4,20 @@ Registered as a sidebar tab via ``@register_sidebar_tab``.  Leader chords
 are registered for quick git actions.  Uses the Tree widget to display
 branch info, staged/unstaged/untracked files, and recent commits.
 
+Each file row includes inline action buttons:
+
+- **Staged** files show a **−** (unstage) button → ``git reset HEAD -- <path>``
+- **Unstaged** files show a **+** (stage) button → ``git add <path>``
+- **Untracked** files show a **+** (track) button → ``git add <path>``
+
+Section headers for Unstaged and Untracked groups include a **+All**
+button to stage all files in that group.
+
+The action bar at the bottom includes:
+
+- **Refresh** — rescan the repository
+- **Commit** — open a commit modal with AI-generated message support
+
 Event handlers:
 - ``git.refresh`` — refresh the git panel
 - ``git.status`` — run detailed status script
@@ -28,8 +42,8 @@ from core.events import WorkspaceEvent, register_handler
 from core.leader import register_submenu, register_action
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeSelected
-from ui.tree.tree_row import TreeNode
-from utils.icons import REFRESH
+from ui.tree.tree_row import TreeNode, RowButton
+from utils.icons import PLUS, REFRESH
 
 # ---------------------------------------------------------------------------
 # Config defaults
@@ -57,6 +71,17 @@ register_action(["g", "r"], "Refresh", event_type="git.refresh", labels={"g": "G
 # Git helpers
 # ---------------------------------------------------------------------------
 
+# Button action IDs
+_STAGE = "git-stage"
+_UNSTAGE = "git-unstage"
+_STAGE_ALL_UNSTAGED = "git-stage-all-unstaged"
+_STAGE_ALL_UNTRACKED = "git-stage-all-untracked"
+
+# Button labels
+STAGE_LABEL = PLUS          # ＋  stage/track
+UNSTAGE_LABEL = "−"         # −  unstage
+STAGE_ALL_LABEL = f"{PLUS}All"
+
 
 def _run_git(*args: str) -> str:
     """Run a git command and return stdout."""
@@ -66,6 +91,21 @@ def _run_git(*args: str) -> str:
             capture_output=True,
             text=True,
             timeout=10,
+        )
+        return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def _run_git_in_dir(wd: str, *args: str) -> str:
+    """Run a git command in a specific directory and return stdout."""
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=wd,
         )
         return result.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -87,7 +127,11 @@ def _is_git_repo() -> bool:
 
 
 def _build_status_tree(wd: str, log_count: int = 5) -> TreeNode:
-    """Build a tree of git status information for the sidebar panel."""
+    """Build a tree of git status information for the sidebar panel.
+
+    Each file node includes inline action buttons for staging/unstaging.
+    Section headers for Unstaged and Untracked include a "stage all" button.
+    """
     old_cwd = os.getcwd()
     try:
         os.chdir(wd)
@@ -138,7 +182,6 @@ def _build_status_tree(wd: str, log_count: int = 5) -> TreeNode:
                 filepath = line[3:] if len(line) > 3 else line.strip()
 
                 if idx in "MADRC":
-                    # Map status codes to readable labels
                     label_map = {"M": "modified", "A": "added", "D": "deleted", "R": "renamed", "C": "copied"}
                     staged_files.append((filepath, label_map.get(idx, idx)))
 
@@ -149,9 +192,14 @@ def _build_status_tree(wd: str, log_count: int = 5) -> TreeNode:
                 if idx == "?" and wrk == "?":
                     untracked_files.append(filepath)
 
-        # Staged section
+        # Staged section — each file gets an unstage button
         staged_children = [
-            TreeNode(f"staged-{i}", f"  {path}", data={"path": path, "type": "staged"})
+            TreeNode(
+                f"staged-{i}",
+                f"  {path}",
+                data={"path": path, "type": "staged"},
+                buttons=[RowButton(_UNSTAGE, UNSTAGE_LABEL, "git-unstage")],
+            )
             for i, (path, _) in enumerate(staged_files)
         ]
         staged_node = TreeNode(
@@ -162,28 +210,42 @@ def _build_status_tree(wd: str, log_count: int = 5) -> TreeNode:
         if not staged_files:
             staged_node.children = [TreeNode("staged-empty", "  (clean)", data={"type": "empty"})]
 
-        # Unstaged section
+        # Unstaged section — each file gets a stage button; header gets "stage all"
+        unstaged_buttons = [RowButton(_STAGE_ALL_UNSTAGED, STAGE_ALL_LABEL, "git-stage-all")] if unstaged_files else []
         unstaged_children = [
-            TreeNode(f"unstaged-{i}", f"  {path}", data={"path": path, "type": "unstaged"})
+            TreeNode(
+                f"unstaged-{i}",
+                f"  {path}",
+                data={"path": path, "type": "unstaged"},
+                buttons=[RowButton(_STAGE, STAGE_LABEL, "git-stage")],
+            )
             for i, (path, _) in enumerate(unstaged_files)
         ]
         unstaged_node = TreeNode(
             "git-unstaged",
             f"\uf068 Unstaged ({len(unstaged_files)})",
             children=unstaged_children if unstaged_files else [],
+            buttons=unstaged_buttons,
         )
         if not unstaged_files:
             unstaged_node.children = [TreeNode("unstaged-empty", "  (clean)", data={"type": "empty"})]
 
-        # Untracked section
+        # Untracked section — each file gets a track button; header gets "track all"
+        untracked_buttons = [RowButton(_STAGE_ALL_UNTRACKED, STAGE_ALL_LABEL, "git-stage-all")] if untracked_files else []
         untracked_children = [
-            TreeNode(f"untracked-{i}", f"  {path}", data={"path": path, "type": "untracked"})
+            TreeNode(
+                f"untracked-{i}",
+                f"  {path}",
+                data={"path": path, "type": "untracked"},
+                buttons=[RowButton(_STAGE, STAGE_LABEL, "git-track")],
+            )
             for i, path in enumerate(untracked_files)
         ]
         untracked_node = TreeNode(
             "git-untracked",
             f"\uf128 Untracked ({len(untracked_files)})",
             children=untracked_children if untracked_files else [],
+            buttons=untracked_buttons,
         )
         if not untracked_files:
             untracked_node.children = [TreeNode("untracked-empty", "  (none)", data={"type": "empty"})]
@@ -258,8 +320,14 @@ class GitPanel(Container):
     Displays current branch, tracking info, staged/unstaged/untracked
     files, recent commits, and stashes in a tree structure.
 
+    Inline action buttons allow staging and unstaging individual files
+    or all files in a group.  The Commit button opens a
+    :class:`~ui.widgets.commit_modal.CommitModal` that supports
+    AI-generated commit messages.
+
     Actions:
     - **Refresh**: Rescan the repository and rebuild the tree.
+    - **Commit**: Open a commit dialog (with AI message generation).
     - **Status**: Run the detailed status script (via event).
     - **Checkpoint**: Create a safety checkpoint (via event).
     """
@@ -274,9 +342,9 @@ class GitPanel(Container):
         yield self._tree
         with Horizontal(classes="git-panel-actions"):
             yield Button(REFRESH, id="git-refresh", variant="default")
+            yield Button("\uf417 Commit", id="git-commit", variant="primary")
 
     def on_mount(self) -> None:
-        # Get working directory from AppContext
         app = self.app
         if hasattr(app, "context") and app.context is not None:
             self._wd = app.context.working_directory or self._wd
@@ -314,6 +382,134 @@ class GitPanel(Container):
         event.stop()
         if event.button.id == "git-refresh":
             self._rebuild()
+        elif event.button.id == "git-commit":
+            self._open_commit_modal()
+
+    # ------------------------------------------------------------------
+    # Tree row button handlers
+    # ------------------------------------------------------------------
+
+    def on_tree_row_button_pressed(self, msg) -> None:
+        """Handle inline action button presses on tree rows."""
+        msg.stop()
+        action_id = msg.action_id
+        node = msg.node
+        data = node.data or {}
+
+        if action_id == _STAGE:
+            filepath = data.get("path", "")
+            if filepath:
+                self._stage_file(filepath)
+        elif action_id == _UNSTAGE:
+            filepath = data.get("path", "")
+            if filepath:
+                self._unstage_file(filepath)
+        elif action_id == _STAGE_ALL_UNSTAGED:
+            self._stage_all_unstaged()
+        elif action_id == _STAGE_ALL_UNTRACKED:
+            self._stage_all_untracked()
+
+    # ------------------------------------------------------------------
+    # Git actions
+    # ------------------------------------------------------------------
+
+    def _stage_file(self, filepath: str) -> None:
+        """Stage a single file."""
+        subprocess.run(
+            ["git", "add", filepath],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=self._wd,
+        )
+        self.app.notify(f"Staged {filepath}", title="Git", timeout=3, markup=False)
+        self._rebuild()
+
+    def _unstage_file(self, filepath: str) -> None:
+        """Unstage a single file."""
+        subprocess.run(
+            ["git", "reset", "HEAD", "--", filepath],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=self._wd,
+        )
+        self.app.notify(f"Unstaged {filepath}", title="Git", timeout=3, markup=False)
+        self._rebuild()
+
+    def _stage_all_unstaged(self) -> None:
+        """Stage all unstaged (modified/deleted tracked) files."""
+        subprocess.run(
+            ["git", "add", "-u"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=self._wd,
+        )
+        self.app.notify("Staged all unstaged changes", title="Git", timeout=3, markup=False)
+        self._rebuild()
+
+    def _stage_all_untracked(self) -> None:
+        """Stage all untracked files."""
+        subprocess.run(
+            ["git", "add", "."],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=self._wd,
+        )
+        self.app.notify("Staged all untracked files", title="Git", timeout=3, markup=False)
+        self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Commit modal
+    # ------------------------------------------------------------------
+
+    def _open_commit_modal(self) -> None:
+        """Open the commit modal dialog."""
+        # Check if there are staged changes
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=self._wd,
+        )
+        if result.returncode == 0:
+            # No staged changes (diff is empty)
+            self.app.notify("Nothing staged — stage files first", title="Git", timeout=3, markup=False)
+            return
+
+        from ui.widgets.commit_modal import CommitModal
+
+        ctx = None
+        if hasattr(self.app, "context") and self.app.context is not None:
+            ctx = self.app.context
+
+        async def do_commit() -> None:
+            modal = CommitModal(ctx, self._wd)
+            result = await self.app.push_screen_wait(modal)
+            if result is None:
+                return
+
+            # Perform the commit
+            proc = subprocess.run(
+                ["git", "commit", "-m", result],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=self._wd,
+            )
+            if proc.returncode == 0:
+                output = proc.stdout.strip() or "Committed"
+                self.app.notify(output, title="Git Commit", timeout=5, markup=False)
+            else:
+                error = proc.stderr.strip() or proc.stdout.strip() or "Commit failed"
+                self.app.notify(error, title="Git Error", timeout=5, markup=False)
+
+            self._rebuild()
+
+        self.app.run_worker(do_commit())
 
     # ------------------------------------------------------------------
     # Selection handler
@@ -364,9 +560,9 @@ def _on_git_checkpoint(data: dict, ctx: AppContext) -> None:
         )
         if not result:
             return
-        # Run the checkpoint script via run_skill pattern
         import subprocess
         import os
+        import sys
         script_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "scripts", "checkpoint.py"

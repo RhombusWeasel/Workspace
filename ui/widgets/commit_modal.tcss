@@ -1,0 +1,37 @@
+CommitModal {
+    align: center middle;
+}
+
+CommitModal #commit-dialog {
+    width: 60%;
+    height: auto;
+    min-height: 8;
+    max-height: 20;
+    padding: 1 2;
+    background: $surface;
+    border: round $primary;
+}
+
+CommitModal #commit-dialog Label {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+CommitModal #commit-input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+CommitModal #commit-buttons {
+    width: 100%;
+    height: auto;
+    align-horizontal: center;
+}
+
+CommitModal #commit-buttons Button {
+    margin-left: 1;
+    min-width: 12;
+    height: 1;
+    border: none;
+}
