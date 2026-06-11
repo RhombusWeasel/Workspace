@@ -56,6 +56,12 @@ class ChatManager(Widget):
     partial response is saved.
     """
 
+    can_focus = True
+    """Mark as focusable so that :meth:`WorkspaceTabs._focus_active_content`
+    calls our :meth:`focus` method (which delegates to the chat input)
+    instead of walking descendants and landing on an unrelated focusable
+    widget (e.g. a Tree or Markdown inside ChatDisplay)."""
+
     def __init__(self):
         super().__init__()
         self._agent: Any = None
@@ -91,7 +97,7 @@ class ChatManager(Widget):
             yield self._chat_input
 
     def on_mount(self) -> None:
-        self._chat_input.focus()
+        self.focus()
         # Wire up palette references so ChatInput can control them
         self._chat_input.set_palette(self._chat_palette)
         self._chat_input.set_file_palette(self._file_palette)
@@ -106,6 +112,15 @@ class ChatManager(Widget):
         # as a background worker.
         if self._state is not None and self._sections:
             self.run_worker(self._rebuild_display_from_sections())
+
+    def focus(self) -> None:
+        """Focus the chat input.
+
+        Overrides :meth:`Widget.focus` so that :meth:`WorkspaceTabs._focus_active_content`
+        lands on the input field instead of walking descendants and picking
+        the first focusable widget (e.g. a Tree inside ChatDisplay).
+        """
+        self._chat_input.focus()
 
     # ------------------------------------------------------------------
     # State persistence (survives workspace recomposition)

@@ -40,6 +40,7 @@ class FakeCtx:
     def __init__(self, wd: str):
         self.working_directory = wd
         self.app = None
+        self.config = None
 
 
 class FakeApp:
@@ -55,6 +56,28 @@ class AutoConfirmCtx:
     def __init__(self, wd: str):
         self.working_directory = wd
         self.app = FakeApp()
+        self.config = None
+
+
+class FakeConfig:
+    """Minimal config stub for testing yolo_mode."""
+
+    def __init__(self, yolo_mode: bool = False):
+        self._yolo_mode = yolo_mode
+
+    def get(self, key: str, default=None):
+        if key == "session.yolo_mode":
+            return self._yolo_mode
+        return default
+
+
+class YoloCtx:
+    """Context with yolo_mode enabled — no modal needed."""
+
+    def __init__(self, wd: str):
+        self.working_directory = wd
+        self.app = None  # not needed in yolo mode
+        self.config = FakeConfig(yolo_mode=True)
 
 
 class RejectApp:
@@ -70,6 +93,7 @@ class CancelCtx:
     def __init__(self, wd: str):
         self.working_directory = wd
         self.app = RejectApp()
+        self.config = None
 
 
 # ---------------------------------------------------------------------------
@@ -425,3 +449,57 @@ class TestEditFileTool:
         # alpha and gamma unchanged
         assert content.startswith("alpha\n")
         assert content.endswith("gamma\n")
+
+
+# ---------------------------------------------------------------------------
+# YOLO mode tests
+# ---------------------------------------------------------------------------
+
+class TestYoloMode:
+    """Test that session.yolo_mode skips confirmation modals."""
+
+    @pytest.mark.asyncio
+    async def test_yolo_mode_skips_modal_edit(self, tmp_dir):
+        from tools.edit_file import edit_file
+
+        # YOLO mode — no app needed, edits apply immediately
+        ctx = YoloCtx(tmp_dir)
+        result = await edit_file(
+            "simple.txt",
+            [{"search": "beta", "replace": "BETA"}],
+            ctx=ctx,
+        )
+        assert "Applied 1 edit" in result
+
+        with open(os.path.join(tmp_dir, "simple.txt")) as f:
+            assert f.read() == "alpha\nBETA\ngamma\n"
+
+    @pytest.mark.asyncio
+    async def test_yolo_mode_skips_modal_write(self, tmp_dir):
+        from tools.write_file import write_file
+
+        ctx = YoloCtx(tmp_dir)
+        result = await write_file(
+            "new_file.txt",
+            "hello world",
+            ctx=ctx,
+        )
+        assert "Wrote" in result
+
+        with open(os.path.join(tmp_dir, "new_file.txt")) as f:
+            assert f.read() == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_yolo_mode_false_still_requires_app(self, tmp_dir):
+        """When yolo_mode is False, lack of app should still cause an error."""
+        from tools.edit_file import edit_file
+
+        # Config says yolo_mode=False, no app — should fail
+        ctx = FakeCtx(tmp_dir)
+        ctx.config = FakeConfig(yolo_mode=False)
+        result = await edit_file(
+            "simple.txt",
+            [{"search": "beta", "replace": "BETA"}],
+            ctx=ctx,
+        )
+        assert "no application context" in result.lower() or "error" in result.lower()

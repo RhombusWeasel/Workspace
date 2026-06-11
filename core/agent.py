@@ -192,6 +192,7 @@ class Agent:
                         "— summarizing…",
                         title="Progress update",
                         timeout=3,
+                        markup=False,
                     )
                 messages.append(Message(
                     role="system",
@@ -271,6 +272,7 @@ class Agent:
                         "— summarizing…",
                         title="Progress update",
                         timeout=3,
+                        markup=False,
                     )
                 messages.append(Message(
                     role="system",
@@ -363,6 +365,7 @@ class Agent:
                 f"🔧 {tc.name}({_brief_args(tc.arguments)})",
                 title="Tool call",
                 timeout=3,
+                markup=False,
             )
 
         try:

@@ -64,6 +64,7 @@ register_defaults(
         "session": {
             "default_provider": "ollama",
             "max_tool_calls": 10,
+            "yolo_mode": False,
         },
     }
 )

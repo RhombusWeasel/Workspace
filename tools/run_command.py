@@ -43,19 +43,27 @@ async def run_command(command: str, ctx: "AppContext | None" = None) -> str:
     Shows a confirmation modal with the command text.  The user must
     click **Confirm** for execution to proceed.  Runs in the working
     directory with a 30-second timeout.
+
+    If ``session.yolo_mode`` is enabled in config, the confirmation
+    modal is skipped and the command runs immediately.
     """
-    if ctx is None or ctx.app is None:
-        return "Error: no application context available for confirmation."
+    if ctx is None:
+        return "Error: no context available (working directory unknown)."
 
-    # Ask the user.
-    from ui.widgets.confirm_modal import ConfirmModal
+    # YOLO mode: skip the confirmation modal and run directly.
+    if ctx.config is not None and ctx.config.get("session.yolo_mode", False):
+        confirmed = True
+    else:
+        if ctx.app is None:
+            return "Error: no application context available for confirmation."
+        from ui.widgets.confirm_modal import ConfirmModal
 
-    modal = ConfirmModal(
-        title="Run this command?",
-        body=f"Directory: {ctx.working_directory}\n\n{command}",
-        confirm_label="Run",
-    )
-    confirmed = await ctx.app.push_screen_wait(modal)
+        modal = ConfirmModal(
+            title="Run this command?",
+            body=f"Directory: {ctx.working_directory}\n\n{command}",
+            confirm_label="Run",
+        )
+        confirmed = await ctx.app.push_screen_wait(modal)
 
     if not confirmed:
         return "Command cancelled by user."

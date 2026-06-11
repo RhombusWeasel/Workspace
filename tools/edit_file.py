@@ -187,6 +187,8 @@ async def edit_file(
       operation is aborted with an informative error message.
     * The user is shown a unified diff and must confirm before the file
       is written.
+    * If ``session.yolo_mode`` is enabled in config, the confirmation
+      modal is skipped and edits are applied immediately.
     """
     if ctx is None:
         return "Error: no context available (working directory unknown)."
@@ -229,19 +231,22 @@ async def edit_file(
     if new_content == original:
         return f"No changes to make — the search and replace strings are identical in '{path}'."
 
-    if ctx.app is None:
-        return "Error: no application context available for confirmation."
+    # YOLO mode: skip the confirmation modal and apply directly.
+    if ctx.config is not None and ctx.config.get("session.yolo_mode", False):
+        confirmed = True
+    else:
+        if ctx.app is None:
+            return "Error: no application context available for confirmation."
+        # Show the diff to the user.
+        from ui.widgets.confirm_modal import ConfirmModal
 
-    # Show the diff to the user.
-    from ui.widgets.confirm_modal import ConfirmModal
-
-    preview = f"File: {path}\n\n{diff_text}"
-    modal = ConfirmModal(
-        title=f"Edit '{path}'?",
-        body=preview,
-        confirm_label="Apply Edits",
-    )
-    confirmed = await ctx.app.push_screen_wait(modal)
+        preview = f"File: {path}\n\n{diff_text}"
+        modal = ConfirmModal(
+            title=f"Edit '{path}'?",
+            body=preview,
+            confirm_label="Apply Edits",
+        )
+        confirmed = await ctx.app.push_screen_wait(modal)
 
     if not confirmed:
         return "Edit cancelled by user."

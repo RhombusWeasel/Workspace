@@ -46,6 +46,9 @@ async def write_file(path: str, content: str, ctx: "AppContext | None" = None) -
 
     Shows a confirmation modal with the proposed file content.  The
     user must click **Confirm** for the write to proceed.
+
+    If ``session.yolo_mode`` is enabled in config, the confirmation
+    modal is skipped and the file is written immediately.
     """
     if ctx is None:
         return "Error: no context available (working directory unknown)."
@@ -64,9 +67,6 @@ async def write_file(path: str, content: str, ctx: "AppContext | None" = None) -
             f"Access denied: '{path}' resolves outside the working directory "
             f"({wd})."
         )
-
-    if ctx.app is None:
-        return "Error: no application context available for confirmation."
 
     # Build a preview.
     existing = ""
@@ -90,15 +90,21 @@ async def write_file(path: str, content: str, ctx: "AppContext | None" = None) -
             f"{content}"
         )
 
-    # Ask the user.
-    from ui.widgets.confirm_modal import ConfirmModal
+    # YOLO mode: skip the confirmation modal and write directly.
+    if ctx.config is not None and ctx.config.get("session.yolo_mode", False):
+        confirmed = True
+    else:
+        if ctx.app is None:
+            return "Error: no application context available for confirmation."
+        # Ask the user.
+        from ui.widgets.confirm_modal import ConfirmModal
 
-    modal = ConfirmModal(
-        title=f"Write to '{path}'?",
-        body=preview,
-        confirm_label="Write",
-    )
-    confirmed = await ctx.app.push_screen_wait(modal)
+        modal = ConfirmModal(
+            title=f"Write to '{path}'?",
+            body=preview,
+            confirm_label="Write",
+        )
+        confirmed = await ctx.app.push_screen_wait(modal)
 
     if not confirmed:
         return "Write cancelled by user."

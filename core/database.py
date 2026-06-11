@@ -65,10 +65,15 @@ class SQLiteProvider(BaseDBProvider):
     def execute(self, sql: str, params: tuple = ()) -> list[tuple]:
         assert self._conn is not None
         cur = self._conn.execute(sql, params)
+        self._conn.commit()
         return cur.fetchall()
 
     def close(self) -> None:
         if self._conn:
+            try:
+                self._conn.commit()
+            except Exception:
+                pass
             self._conn.close()
             self._conn = None
 
@@ -273,6 +278,7 @@ class DatabaseManager:
             "VALUES (?, ?, ?, ?, ?)",
             (chat_id, turn_id, content_type, content, _now()),
         )
+        self._provider.conn.commit()
         return cur.lastrowid
 
     def load_sections(self, chat_id: str) -> list[dict[str, Any]]:
@@ -490,6 +496,7 @@ class DatabaseManager:
             "VALUES (?, ?, 'pending', ?, ?)",
             (title, description, now, now),
         )
+        self._provider.conn.commit()
         return cur.lastrowid
 
     def get_todo(self, todo_id: int) -> dict[str, Any] | None:
@@ -539,6 +546,7 @@ class DatabaseManager:
                 "INSERT INTO input_history (input, created_at) VALUES (?, ?)",
                 (text, _now()),
             )
+            self._provider.conn.commit()
             return cur.lastrowid
         except sqlite3.IntegrityError:
             # Duplicate — update timestamp instead
