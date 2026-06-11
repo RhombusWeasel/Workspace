@@ -38,6 +38,7 @@ from textual.app import ComposeResult
 from textual import events
 from textual.widget import Widget
 from textual_terminal import Terminal as PtyTerminal
+from textual_terminal._terminal import TerminalDisplay
 import pyte
 
 from ui.workspace.tabs import TabState
@@ -393,7 +394,7 @@ class TerminalView(Widget):
 
             lines.append(line_text)
 
-        pty._display = pty.TerminalDisplay(lines)
+        pty._display = TerminalDisplay(lines)
         pty.refresh()
 
     # ------------------------------------------------------------------
