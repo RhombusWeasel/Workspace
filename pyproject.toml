@@ -9,6 +9,7 @@ dependencies = [
     "ollama>=0.6.2",
     "pyperclip>=1.11.0",
     "textual[syntax]>=8.2.5",
+    "tree-sitter-pwsh>=0.38.1",
     "textual-terminal",
     "requests>=2.34.2",
 ]

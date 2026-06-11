@@ -70,6 +70,9 @@ _EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".bash": "bash",
     ".zsh": "bash",
     ".md": "markdown",
+    ".ps1": "pwsh",
+    ".psm1": "pwsh",
+    ".psd1": "pwsh",
 }
 
 
@@ -77,6 +80,36 @@ def _language_for_file(filepath: str) -> str | None:
     """Return the Textual TextArea language name for *filepath*, or None."""
     _, ext = os.path.splitext(filepath)
     return _EXTENSION_TO_LANGUAGE.get(ext.lower())
+
+
+def _register_custom_languages(text_area: TextArea) -> None:
+    """Register tree-sitter languages that aren't built into Textual.
+
+    Textual ships highlight queries for a set of built-in languages, but
+    additional languages (like PowerShell) need to be registered manually
+    with their tree-sitter ``Language`` object and highlight query.
+    """
+    if "pwsh" not in text_area._languages:
+        try:
+            from textual._tree_sitter import get_language
+            import tree_sitter_pwsh
+
+            lang = get_language("pwsh")
+            if lang is not None:
+                highlights_path = os.path.join(
+                    os.path.dirname(tree_sitter_pwsh.__file__),
+                    "queries",
+                    "highlights.scm",
+                )
+                highlight_query = ""
+                if os.path.exists(highlights_path):
+                    with open(highlights_path) as f:
+                        highlight_query = f.read()
+                text_area.register_language("pwsh", lang, highlight_query)
+        except ImportError:
+            # tree-sitter-pwsh not installed — PowerShell files will
+            # open as plain text.
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -172,13 +205,16 @@ class FileEditor(Widget):
     def compose(self) -> ComposeResult:
         text_area = TextArea.code_editor(
             self._content,
-            language=self._language,
+            language=None,  # set after registering custom languages
             theme="monokai",
             soft_wrap=False,
             show_line_numbers=True,
             read_only=False,
             tab_behavior="indent",
         )
+        _register_custom_languages(text_area)
+        if self._language:
+            text_area.language = self._language
         yield text_area
         yield SuggestionOverlay()
 
@@ -453,7 +489,7 @@ class FileEditor(Widget):
                 context_lines_above=cfg["lines_above"],
                 context_lines_below=cfg["lines_below"],
                 max_suggestion_lines=cfg["max_lines"],
-                ctx=ctx,
+                ctx=self.app.context,
             )
 
             if suggestion:
@@ -462,8 +498,10 @@ class FileEditor(Widget):
                 if current_row == cursor_row and current_col == cursor_col:
                     self._display_suggestion(suggestion)
         except Exception:
-            # Silently fail — inline suggestions are non-critical UI hints
-            pass
+            # Inline suggestions are non-critical UI hints — log but
+            # don't disrupt the user with error notifications.
+            from textual import log
+            log.warning("Inline suggestion failed", exc_info=True)
 
     def _display_suggestion(self, suggestion: str) -> None:
         """Show a suggestion — inline ghost text, and overlay if multi-line."""
