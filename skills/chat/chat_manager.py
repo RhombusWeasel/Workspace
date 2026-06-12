@@ -23,7 +23,7 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import TextArea
 
 from core.commands import execute_command, list_commands
 from skills.chat.chat_input import ChatInput
@@ -368,14 +368,14 @@ class ChatManager(Widget):
         """Handle selection from the command palette — fill the input."""
         event.stop()
         self._chat_palette.hide()
-        # Suppress the on_input_changed that setting value triggers,
+        # Suppress the on_text_area_changed that setting text triggers,
         # otherwise the palette re-shows because the text starts with /.
         self._chat_input._suppress_palette_update = True
         try:
-            inp = self._chat_input.query_one(Input)
-            inp.value = f"/{event.command_name} "
-            inp.cursor_position = len(inp.value)
-            inp.focus()
+            ta = self._chat_input.query_one(TextArea)
+            ta.text = f"/{event.command_name} "
+            ta.cursor_location = (0, len(ta.text))
+            ta.focus()
         finally:
             self._chat_input._suppress_palette_update = False
 
@@ -385,8 +385,8 @@ class ChatManager(Widget):
         """Handle selection from the file palette — insert the file path."""
         event.stop()
         self._file_palette.hide()
-        inp = self._chat_input.query_one(Input)
-        text = inp.value
+        ta = self._chat_input.query_one(TextArea)
+        text = ta.text
         at_idx = text.rfind("@")
         if at_idx != -1:
             prefix = text[:at_idx]
@@ -399,9 +399,9 @@ class ChatManager(Widget):
             new_text = prefix + f"@{event.filepath} " + text[at_idx + 1 + token_end :]
             self._chat_input._suppress_palette_update = True
             try:
-                inp.value = new_text
-                inp.cursor_position = len(inp.value)
-                inp.focus()
+                ta.text = new_text
+                ta.cursor_location = (0, len(ta.text))
+                ta.focus()
             finally:
                 self._chat_input._suppress_palette_update = False
 

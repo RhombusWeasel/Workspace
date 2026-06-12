@@ -1,4 +1,4 @@
-"""Chat input — wraps a Textual ``Input`` with send/abort button and command/file palette.
+"""Chat input — wraps a Textual ``TextArea`` with send/abort button and command/file palette.
 
 When idle, shows a **send** button.  When the agent is streaming,
 the send button transforms into an **abort** button.  Pressing
@@ -8,6 +8,9 @@ Typing ``/`` shows a command palette above the input that lists
 available slash commands.  Typing ``@`` shows a file palette that
 lists project files.  Arrow keys navigate the active palette, Enter
 or Tab selects an item, and Escape dismisses it.
+
+**Enter** submits the message.  **Shift+Enter** inserts a newline so
+the user can write multi-line messages.
 
 Both palette widgets are owned by :class:`~skills.chat.chat_manager.ChatManager`
 and wired into the input via :meth:`set_palette` and :meth:`set_file_palette`.
@@ -21,9 +24,10 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input
+from textual.widgets import Button, TextArea
 
 from skills.chat.command_palette import CommandPalette
 from skills.chat.file_palette import FilePalette
@@ -40,6 +44,9 @@ class ChatInput(Widget):
     The button starts as a send icon and switches to an abort icon when
     :meth:`set_streaming` is called with ``True``.  Call
     ``set_streaming(False)`` to switch back.
+
+    **Enter** submits the message.  **Shift+Enter** inserts a newline
+    so the user can compose multi-line messages.
 
     Provides ``focus()``, ``clear()``, and ``set_streaming()`` methods.
     The :meth:`set_palette` method must be called during mount to inject
@@ -78,7 +85,15 @@ class ChatInput(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="chat-input-bar-horizontal"):
-            yield Input(placeholder="Type a message…", classes="chat-input")
+            yield TextArea(
+                "",
+                placeholder="Type a message…",
+                classes="chat-input",
+                soft_wrap=True,
+                show_line_numbers=False,
+                tab_behavior="focus",
+                compact=True,
+            )
             yield Button(SEND, classes="chat-action-btn -send", id="chat-action-btn")
 
     # ------------------------------------------------------------------
@@ -119,7 +134,7 @@ class ChatInput(Widget):
         if self._file_palette is None:
             raise RuntimeError(
                 "set_file_palette() must be called during mount — "
-                "the file palette is injected by ChatManager"
+                "the palette is injected by ChatManager"
             )
         return self._file_palette
 
@@ -135,7 +150,7 @@ class ChatInput(Widget):
     # Command palette integration
     # ------------------------------------------------------------------
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Show/filter the command palette when input starts with /, or the
         file palette when the input contains @.
 
@@ -150,7 +165,7 @@ class ChatInput(Widget):
         """
         if self._suppress_palette_update:
             return
-        text = event.value
+        text = event.text_area.text
 
         # Command palette — only when input starts with /
         if text.startswith("/"):
@@ -210,10 +225,10 @@ class ChatInput(Widget):
                 self._palette.hide()
                 self._suppress_palette_update = True
                 try:
-                    inp = self.query_one(Input)
-                    inp.value = f"/{name} "
-                    inp.cursor_position = len(inp.value)
-                    inp.focus()
+                    ta = self.query_one(TextArea)
+                    ta.text = f"/{name} "
+                    ta.cursor_location = (0, len(ta.text))
+                    ta.focus()
                 finally:
                     self._suppress_palette_update = False
             return
@@ -223,14 +238,12 @@ class ChatInput(Widget):
             filepath = self._file_palette.select_highlighted()
             if filepath:
                 self._file_palette.hide()
-                inp = self.query_one(Input)
-                text = inp.value
+                ta = self.query_one(TextArea)
+                text = ta.text
                 at_idx = text.rfind("@")
                 if at_idx != -1:
                     # Replace from @ to cursor with @filepath
                     prefix = text[:at_idx]
-                    suffix_start = at_idx + 1 + len(text[at_idx + 1 :])
-                    # Find end of current @query token (stop at space or end)
                     after_at = text[at_idx + 1 :]
                     token_end = len(after_at)
                     for i, ch in enumerate(after_at):
@@ -240,9 +253,9 @@ class ChatInput(Widget):
                     new_text = prefix + f"@{filepath} " + text[at_idx + 1 + token_end :]
                     self._suppress_palette_update = True
                     try:
-                        inp.value = new_text
-                        inp.cursor_position = len(inp.value)
-                        inp.focus()
+                        ta.text = new_text
+                        ta.cursor_location = (0, len(ta.text))
+                        ta.focus()
                     finally:
                         self._suppress_palette_update = False
             return
@@ -266,12 +279,12 @@ class ChatInput(Widget):
         self._streaming = streaming
         try:
             btn = self.query_one("#chat-action-btn", Button)
-            inp = self.query_one(Input)
+            ta = self.query_one(TextArea)
             if streaming:
                 btn.label = ABORT
                 btn.remove_class("-send")
                 btn.add_class("-abort")
-                inp.disabled = True
+                ta.disabled = True
                 # Hide palettes when streaming starts
                 if self._palette is not None and self._palette.is_visible:
                     self._palette.hide()
@@ -281,62 +294,68 @@ class ChatInput(Widget):
                 btn.label = SEND
                 btn.remove_class("-abort")
                 btn.add_class("-send")
-                inp.disabled = False
-                inp.focus()
+                ta.disabled = False
+                ta.focus()
         except Exception:
             pass
 
     # ------------------------------------------------------------------
-    # Input submission
+    # Key handling — Enter submits, Shift+Enter inserts newline
     # ------------------------------------------------------------------
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Intercept ``Input.Submitted`` and repost as ``ChatSubmitted``.
+    def _on_key(self, event: Key) -> None:
+        """Handle key presses in the TextArea.
 
-        If a palette is currently visible, Enter selects from it:
-        - Command palette: submits the command immediately.
-        - File palette: inserts the file path into the input (does not
-          submit the message).
-        If nothing is highlighted in the palette, it just closes
-        without submitting.
+        **Enter** (without Shift) submits the message or selects from
+        the active palette.  **Shift+Enter** inserts a newline for
+        multi-line input (TextArea's default behaviour).
         """
-        # Command palette
-        if self._palette is not None and self._palette.is_visible:
-            name = self._palette.select_highlighted()
-            self._palette.hide()
-            if name:
-                self.post_message(self.ChatSubmitted(f"/{name}"))
-            return
+        if event.key == "enter" and not event.shift:
+            # If a palette is visible, Enter selects from it.
+            if self._palette is not None and self._palette.is_visible:
+                name = self._palette.select_highlighted()
+                self._palette.hide()
+                if name:
+                    self.post_message(self.ChatSubmitted(f"/{name}"))
+                event.prevent_default()
+                event.stop()
+                return
 
-        # File palette — insert the file path, don't submit
-        if self._file_palette is not None and self._file_palette.is_visible:
-            filepath = self._file_palette.select_highlighted()
-            self._file_palette.hide()
-            if filepath:
-                inp = self.query_one(Input)
-                text = inp.value
-                at_idx = text.rfind("@")
-                if at_idx != -1:
-                    prefix = text[:at_idx]
-                    after_at = text[at_idx + 1 :]
-                    token_end = len(after_at)
-                    for i, ch in enumerate(after_at):
-                        if ch == " ":
-                            token_end = i
-                            break
-                    new_text = prefix + f"@{filepath} " + text[at_idx + 1 + token_end :]
-                    self._suppress_palette_update = True
-                    try:
-                        inp.value = new_text
-                        inp.cursor_position = len(inp.value)
-                        inp.focus()
-                    finally:
-                        self._suppress_palette_update = False
-            return
+            if self._file_palette is not None and self._file_palette.is_visible:
+                filepath = self._file_palette.select_highlighted()
+                self._file_palette.hide()
+                if filepath:
+                    ta = self.query_one(TextArea)
+                    text = ta.text
+                    at_idx = text.rfind("@")
+                    if at_idx != -1:
+                        prefix = text[:at_idx]
+                        after_at = text[at_idx + 1 :]
+                        token_end = len(after_at)
+                        for i, ch in enumerate(after_at):
+                            if ch == " ":
+                                token_end = i
+                                break
+                        new_text = prefix + f"@{filepath} " + text[at_idx + 1 + token_end :]
+                        self._suppress_palette_update = True
+                        try:
+                            ta.text = new_text
+                            ta.cursor_location = (0, len(ta.text))
+                            ta.focus()
+                        finally:
+                            self._suppress_palette_update = False
+                event.prevent_default()
+                event.stop()
+                return
 
-        text = event.value.strip()
-        if text and not self._streaming:
-            self.post_message(self.ChatSubmitted(text))
+            # No palette — submit the message.
+            event.prevent_default()
+            event.stop()
+            ta = self.query_one(TextArea)
+            text = ta.text.strip()
+            if text and not self._streaming:
+                self.post_message(self.ChatSubmitted(text))
+        # Shift+Enter: let TextArea handle it (inserts a newline).
 
     # ------------------------------------------------------------------
     # Button press
@@ -351,9 +370,9 @@ class ChatInput(Widget):
         if self._streaming:
             self.post_message(self.ChatAbortRequested())
         else:
-            # Send: read the input value and submit
-            inp = self.query_one(Input)
-            text = inp.value.strip()
+            # Send: read the text area value and submit
+            ta = self.query_one(TextArea)
+            text = ta.text.strip()
             if text:
                 self.post_message(self.ChatSubmitted(text))
 
@@ -377,12 +396,14 @@ class ChatInput(Widget):
     # ------------------------------------------------------------------
 
     def focus(self) -> None:
-        """Focus the underlying ``Input`` widget."""
-        self.query_one(Input).focus()
+        """Focus the underlying ``TextArea`` widget."""
+        self.query_one(TextArea).focus()
 
     def clear(self) -> None:
-        """Clear the underlying ``Input`` value and hide all palettes."""
-        self.query_one(Input).clear()
+        """Clear the underlying ``TextArea`` value and hide all palettes."""
+        ta = self.query_one(TextArea)
+        ta.text = ""
+        ta.cursor_location = (0, 0)
         if self._palette is not None and self._palette.is_visible:
             self._palette.hide()
         if self._file_palette is not None and self._file_palette.is_visible:

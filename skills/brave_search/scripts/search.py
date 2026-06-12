@@ -12,6 +12,7 @@ as a credential named ``brave_search`` (password field = API key).
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import sys
 import urllib.error
@@ -65,7 +66,10 @@ def search(query: str, count: int = 10, country: str | None = None) -> str:
 
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read()
+            if resp.headers.get("Content-Encoding") == "gzip":
+                raw = gzip.decompress(raw)
+            data = json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             return "Brave Search API error: invalid API key (401 Unauthorized)."

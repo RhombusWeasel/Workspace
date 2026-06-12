@@ -12,6 +12,7 @@ dependencies = [
     "tree-sitter-pwsh>=0.38.1",
     "textual-terminal",
     "requests>=2.34.2",
+    "textual-dev>=1.8.0",
 ]
 
 [dependency-groups]
