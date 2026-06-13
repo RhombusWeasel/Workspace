@@ -128,11 +128,12 @@ class WorkspaceApp(App):
         yield Header(show_clock=True)
 
         self.left_container = SidebarContainer(
-            Sidebar("left"), side="left", id="sidebar-left"
+            Sidebar("left"), side="left", start_hidden=False,
+            id="sidebar-left"
         )
         self.ws = Workspace()
         self.right_container = SidebarContainer(
-            Sidebar("right"), side="right", start_hidden=False,
+            Sidebar("right"), side="right",
             id="sidebar-right"
         )
 
