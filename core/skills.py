@@ -274,8 +274,10 @@ class SkillManager:
 
         Skills that are not enabled or not found are silently skipped.
         Used by agents that specify a restricted ``skills`` list.
+        The XML is wrapped in a triple-backtick ````xml```` code fence so that
+        LLMs interpret it as a code block in system prompts.
         """
-        parts = ["<available_skills>"]
+        parts = ["```xml", "<available_skills>"]
         for name in sorted(skill_names):
             if name not in self._enabled:
                 continue
@@ -292,6 +294,7 @@ class SkillManager:
             )
             parts.append("  </skill>")
         parts.append("</available_skills>")
+        parts.append("```")
         return "\n".join(parts) + "\n"
 
 

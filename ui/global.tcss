@@ -10,8 +10,9 @@ Tooltip {
     margin: 0;
     offset-y: 0;
     offset-x: 3;
+    background: $surface-lighten-1;
 }
 
-Toast {
-    dock: top;
+ToastRack {
+    align: right top;
 }
