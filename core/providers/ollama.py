@@ -74,6 +74,8 @@ class OllamaProvider(BaseProvider):
         self._app_config = config
         self.model = model or config.get("session.model") or _DEFAULT_MODEL
         self.base_url = base_url or config.get("ollama.base_url") or _DEFAULT_BASE_URL
+        self._context_length_cache: dict[str, int | None] = {}
+        """Cache of model → context_length to avoid repeated show() calls."""
 
     # ------------------------------------------------------------------
     # BaseProvider implementation (receives already-redacted messages)
@@ -88,12 +90,13 @@ class OllamaProvider(BaseProvider):
         client = self._make_client()
         ollama_messages = self._to_ollama_messages(messages)
         ollama_tools = self._to_ollama_tools(tools)
+        context_length = await self.get_context_length(model)
         response = await client.chat(
             model=model or self.model,
             messages=ollama_messages,
             tools=ollama_tools,
         )
-        return self._normalise_response(response)
+        return self._normalise_response(response, context_length=context_length)
 
     async def _do_stream_chat(
         self,
@@ -104,13 +107,55 @@ class OllamaProvider(BaseProvider):
         client = self._make_client()
         ollama_messages = self._to_ollama_messages(messages)
         ollama_tools = self._to_ollama_tools(tools)
+        context_length = await self.get_context_length(model)
         async for chunk in await client.chat(
             model=model or self.model,
             messages=ollama_messages,
             tools=ollama_tools,
             stream=True,
         ):
-            yield self._normalise_stream_chunk(chunk)
+            yield self._normalise_stream_chunk(chunk, context_length=context_length)
+
+    # ------------------------------------------------------------------
+    # Context length resolution
+    # ------------------------------------------------------------------
+
+    async def get_context_length(self, model: str | None = None) -> int | None:
+        """Return the maximum context length (token limit) for a model.
+
+        Uses ``client.show()`` to read the GGUF metadata, looking up the
+        architecture-specific ``{arch}.context_length`` key.  Results are
+        cached per model so the API call only happens once per session.
+
+        Returns ``None`` if the model is not found or the key is absent.
+        """
+        model = model or self.model
+        if model in self._context_length_cache:
+            return self._context_length_cache[model]
+
+        try:
+            client = self._make_client()
+            info = await client.show(model)
+        except Exception:
+            self._context_length_cache[model] = None
+            return None
+
+        modelinfo = getattr(info, "modelinfo", None) or {}
+        arch = modelinfo.get("general.architecture")
+        ctx: int | None = None
+        if arch:
+            raw = modelinfo.get(f"{arch}.context_length")
+            if raw is not None:
+                ctx = int(raw)
+        if ctx is None:
+            # Fallback: search for any key ending in .context_length
+            for k, v in modelinfo.items():
+                if k.endswith(".context_length") and v is not None:
+                    ctx = int(v)
+                    break
+
+        self._context_length_cache[model] = ctx
+        return ctx
 
     # ------------------------------------------------------------------
     # API key resolution
@@ -197,7 +242,7 @@ class OllamaProvider(BaseProvider):
     # -- response normalisation --------------------------------------------
 
     @staticmethod
-    def _normalise_response(raw: Any) -> ChatResponse:
+    def _normalise_response(raw: Any, context_length: int | None = None) -> ChatResponse:
         msg = raw.message
         content = msg.content or ""
         thinking = getattr(msg, "thinking", None) or None
@@ -218,6 +263,7 @@ class OllamaProvider(BaseProvider):
                 (getattr(raw, "prompt_eval_count", 0) or 0)
                 + (getattr(raw, "eval_count", 0) or 0)
             ),
+            context_length=context_length,
         )
         return ChatResponse(
             content=content,
@@ -227,7 +273,7 @@ class OllamaProvider(BaseProvider):
         )
 
     @staticmethod
-    def _normalise_stream_chunk(raw: Any) -> StreamChunk:
+    def _normalise_stream_chunk(raw: Any, context_length: int | None = None) -> StreamChunk:
         msg = raw.message
         content = msg.content or ""
         thinking = getattr(msg, "thinking", None) or None
@@ -242,6 +288,7 @@ class OllamaProvider(BaseProvider):
                     (getattr(raw, "prompt_eval_count", 0) or 0)
                     + (getattr(raw, "eval_count", 0) or 0)
                 ),
+                context_length=context_length,
             )
         # Extract tool calls from any chunk — they may arrive on
         # non-done chunks depending on the Ollama server version.

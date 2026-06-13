@@ -148,8 +148,20 @@ class Tree(VerticalScroll, can_focus=True):
                     row.node.content = None
                 row.remove()
 
-        # Mount rows for new nodes.
+        # Sync existing rows — a node may have gained or lost children
+        # since the last rebuild, transitioning between leaf and branch.
+        # Also update the tree-line prefix which depends on sibling order.
         prefixes = self._compute_prefixes()
+        for row in self.query(TreeRow):
+            node = row.node
+            new_branch = bool(node.children) or not node.loaded
+            new_prefix = prefixes.get(node.id, "")
+            if row.is_branch != new_branch or row.prefix != new_prefix:
+                row.is_branch = new_branch
+                row.prefix = new_prefix
+                row.set_expanded(node.id in self._expanded)
+
+        # Mount rows for new nodes.
         existing_ids = {row.node.id for row in self.query(TreeRow)}
         order: dict[str, int] = {}
         for i, (node, depth) in enumerate(self._get_all_nodes_depth()):

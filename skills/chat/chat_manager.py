@@ -23,15 +23,14 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widget import Widget
-from textual.widgets import TextArea
 
 from core.commands import execute_command, list_commands
-from skills.chat.chat_input import ChatInput
+from skills.chat.chat_input import ChatInput, ChatTextArea
 from skills.chat.chat_display import ChatDisplay
 from skills.chat.command_palette import CommandPalette
 from skills.chat.file_palette import FilePalette
 from skills.chat.stream_section import StreamSection
-from skills.chat.tool_format import format_tool_call_display, format_tool_call_json
+from skills.chat.tool_format import format_tool_call_json
 
 
 class ChatManager(Widget):
@@ -86,24 +85,29 @@ class ChatManager(Widget):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        # Read config-driven defaults for thinking/tool-call expand state.
+        open_thinking = False
+        open_tools = False
+        if hasattr(self.app, "context") and self.app.context is not None:
+            cfg = self.app.context.config
+            if cfg is not None:
+                open_thinking = cfg.get("session.open_thinking", False)
+                open_tools = cfg.get("session.open_tools", False)
         with Vertical():
-            self._chat_display = ChatDisplay()
-            self._chat_palette = CommandPalette()
-            self._file_palette = FilePalette()
+            self._chat_display = ChatDisplay(
+                open_thinking=open_thinking,
+                open_tools=open_tools,
+            )
             self._chat_input = ChatInput()
             yield self._chat_display
-            yield self._chat_palette
-            yield self._file_palette
             yield self._chat_input
 
     def on_mount(self) -> None:
         self.focus()
-        # Wire up palette references so ChatInput can control them
-        self._chat_input.set_palette(self._chat_palette)
-        self._chat_input.set_file_palette(self._file_palette)
-        # Set working directory on file palette for scanning
+        # Set working directory on ChatInput (propagates to ChatTextArea
+        # for inline suggestions and to FilePalette for the dropdown picker)
         if hasattr(self.app, "context") and self.app.context is not None:
-            self._file_palette.set_working_directory(
+            self._chat_input.set_working_directory(
                 self.app.context.working_directory
             )
 
@@ -172,7 +176,6 @@ class ChatManager(Widget):
             return
 
         import json as _json
-        from skills.chat.tool_format import format_tool_call_display
 
         # Group sections by turn_id, preserving order of first appearance.
         turn_order: list[str] = []
@@ -182,8 +185,7 @@ class ChatManager(Widget):
             if tid not in turns:
                 turn_order.append(tid)
                 turns[tid] = []
-            # Use a mutable copy so we can mark tool-calls as displayed.
-            turns[tid].append(dict(sec))
+            turns[tid].append(sec)
 
         # Yield to the event loop so that the display tree finishes
         # mounting before we start adding sections.
@@ -192,7 +194,6 @@ class ChatManager(Widget):
         for tid in turn_order:
             sections = turns[tid]
             assistant_started = False
-            tools_displayed = False
             for sec in sections:
                 ct = sec["content_type"]
                 content = sec["content"]
@@ -223,30 +224,27 @@ class ChatManager(Widget):
                         self._chat_display.begin_assistant_turn()
                         assistant_started = True
                         await asyncio.sleep(0)
-                    # Display all tool_call entries for this turn as
-                    # a single "tools" section (only once).
-                    if not tools_displayed:
-                        tool_calls_in_turn = [
-                            s for s in sections
-                            if s["content_type"] == "tool_call"
-                        ]
-                        tool_display = ""
-                        for tc_sec in tool_calls_in_turn:
-                            try:
-                                tc_data = _json.loads(tc_sec["content"])
-                                tool_display += format_tool_call_display(
-                                    tc_data["name"], tc_data["arguments"]
-                                )
-                            except (_json.JSONDecodeError, KeyError):
-                                tool_display += tc_sec["content"] + "\n"
-                        section_id = self._chat_display.add_section("tools")
-                        await asyncio.sleep(0)
-                        await self._chat_display.update_section(
-                            section_id, tool_display
+                    # Add tool calls one at a time, in their original
+                    # order, so that branches appear in the same
+                    # sequence as they were created during streaming.
+                    try:
+                        tc_data = _json.loads(content)
+                        self._chat_display.add_tool_call(
+                            tc_data["name"],
+                            tc_data["arguments"],
                         )
-                        tools_displayed = True
+                    except (_json.JSONDecodeError, KeyError):
+                        self._chat_display.add_tool_call(
+                            "unknown",
+                            {"raw": content},
+                        )
 
-        self._chat_display.finalize_turn()
+            # Finalise each assistant turn as we go so that sections
+            # are swapped from Static to Markdown and empty sections are
+            # removed.  This is important for multi-turn conversations
+            # where finalize_turn() only processes the active turn.
+            if assistant_started:
+                await self._chat_display.finalize_turn()
 
     # ------------------------------------------------------------------
     # Setup
@@ -265,10 +263,13 @@ class ChatManager(Widget):
 
         If no agent was explicitly set, this creates a default agent
         using the provider and agent registries.
+
+        The database chat row is **not** created here — it is created
+        lazily on first persist so that opening a tab without sending
+        a message does not leave an empty conversation in the DB.
         """
         if ctx.database is not None:
             self._db = ctx.database
-            self._chat_id = self._db.create_chat()
         if self._agent is None:
             self._wire_agent(ctx)
 
@@ -277,10 +278,13 @@ class ChatManager(Widget):
 
         Like :meth:`wire_from_context`, but forces the use of the named
         agent instead of the session default.
+
+        The database chat row is **not** created here — it is created
+        lazily on first persist so that opening a tab without sending
+        a message does not leave an empty conversation in the DB.
         """
         if ctx.database is not None:
             self._db = ctx.database
-            self._chat_id = self._db.create_chat()
         self._wire_agent(ctx, agent_id=agent_id)
 
     def _wire_agent(self, ctx: Any, agent_id: str | None = None) -> None:
@@ -367,12 +371,12 @@ class ChatManager(Widget):
     ) -> None:
         """Handle selection from the command palette — fill the input."""
         event.stop()
-        self._chat_palette.hide()
+        self._chat_input.palette.hide()
         # Suppress the on_text_area_changed that setting text triggers,
         # otherwise the palette re-shows because the text starts with /.
         self._chat_input._suppress_palette_update = True
         try:
-            ta = self._chat_input.query_one(TextArea)
+            ta = self._chat_input.query_one(ChatTextArea)
             ta.text = f"/{event.command_name} "
             ta.cursor_location = (0, len(ta.text))
             ta.focus()
@@ -384,8 +388,8 @@ class ChatManager(Widget):
     ) -> None:
         """Handle selection from the file palette — insert the file path."""
         event.stop()
-        self._file_palette.hide()
-        ta = self._chat_input.query_one(TextArea)
+        self._chat_input.file_palette.hide()
+        ta = self._chat_input.query_one(ChatTextArea)
         text = ta.text
         at_idx = text.rfind("@")
         if at_idx != -1:
@@ -456,7 +460,7 @@ class ChatManager(Widget):
         if self._agent is None:
             section = StreamSection(self._chat_display, "response")
             await section.replace("No agent configured.")
-            self._chat_display.finalize_turn()
+            await self._chat_display.finalize_turn()
             self._chat_input.focus()
             return
 
@@ -476,6 +480,7 @@ class ChatManager(Widget):
                     if watcher is None or watcher.section_type != "thinking":
                         # Close previous section and persist its text.
                         if watcher is not None:
+                            await watcher.flush()
                             self._persist_section(
                                 turn_id, watcher.section_type, watcher.text
                             )
@@ -486,18 +491,16 @@ class ChatManager(Widget):
                 if chunk.tool_calls:
                     # Close previous section and persist its text.
                     if watcher is not None:
+                        await watcher.flush()
                         self._persist_section(
                             turn_id, watcher.section_type, watcher.text
                         )
                         watcher = None
 
-                    # Tool calls always get a fresh section.
-                    watcher = StreamSection(self._chat_display, "tools")
-                    tool_display = ""
+                    # Create individual tool call branches directly under the assistant turn.
                     for tc in chunk.tool_calls:
-                        # Display-friendly markdown
-                        tool_display += format_tool_call_display(
-                            tc.name, tc.arguments
+                        self._chat_display.add_tool_call(
+                            tc.name, tc.arguments,
                         )
                         # Persist each tool call as a separate row (structured JSON).
                         self._persist_section(
@@ -505,10 +508,8 @@ class ChatManager(Widget):
                             "tool_call",
                             format_tool_call_json(tc.name, tc.arguments),
                         )
-                    await watcher.replace(tool_display)
-                    # Tool section is a discrete display event — no additional
-                    # persistence needed here.  Each tool call was already
-                    # persisted as structured JSON above.
+                    # No StreamSection for tool calls — they are
+                    # discrete display events, not streamed content.
                     watcher = None
 
                 # --- Response text ---
@@ -516,11 +517,21 @@ class ChatManager(Widget):
                     if watcher is None or watcher.section_type != "response":
                         # Close previous section and persist its text.
                         if watcher is not None:
+                            await watcher.flush()
                             self._persist_section(
                                 turn_id, watcher.section_type, watcher.text
                             )
                         watcher = StreamSection(self._chat_display, "response")
                     await watcher.append(chunk.content)
+
+                # --- Token usage (on done chunk) ---
+                if chunk.done and chunk.usage:
+                    model_name = getattr(self._agent, "_model", "")
+                    self._chat_input.update_context_progress(
+                        model_name,
+                        chunk.usage.total_tokens,
+                        chunk.usage.context_length,
+                    )
 
         except asyncio.CancelledError:
             # Aborted — persist whatever we have so far.
@@ -530,6 +541,7 @@ class ChatManager(Widget):
                     turn_id, watcher.section_type, watcher.text
                 )
                 if replacement is not None:
+                    await replacement.flush()
                     watcher = replacement
                     self._persist_section(
                         turn_id, watcher.section_type, watcher.text
@@ -542,6 +554,7 @@ class ChatManager(Widget):
         except Exception as exc:
             if watcher is None or watcher.section_type != "response":
                 if watcher is not None:
+                    await watcher.flush()
                     self._persist_section(
                         turn_id, watcher.section_type, watcher.text
                     )
@@ -552,6 +565,7 @@ class ChatManager(Widget):
         else:
             # Normal completion — persist the final section.
             if watcher is not None:
+                await watcher.flush()
                 self._persist_section(
                     turn_id, watcher.section_type, watcher.text
                 )
@@ -562,7 +576,7 @@ class ChatManager(Widget):
 
         # Exit streaming mode.
         self._chat_input.set_streaming(False)
-        self._chat_display.finalize_turn()
+        await self._chat_display.finalize_turn()
         self._chat_input.focus()
 
     # ------------------------------------------------------------------
@@ -617,7 +631,12 @@ class ChatManager(Widget):
     def _persist_section(
         self, turn_id: str, content_type: str, content: str
     ) -> None:
-        """Write a single section row to the database and in-memory list."""
+        """Write a single section row to the database and in-memory list.
+
+        The database chat row is created lazily on the first persist
+        call, so that tabs which are opened but never used do not leave
+        empty conversations in the database.
+        """
         # Always track in memory so history works without a database.
         self._sections.append({
             "turn_id": turn_id,
@@ -625,8 +644,14 @@ class ChatManager(Widget):
             "content": content,
         })
 
-        if self._db is None or self._chat_id is None:
+        if self._db is None:
             return
+
+        # Lazy chat creation — only write to the DB when there's
+        # actual content to persist.
+        if self._chat_id is None:
+            self._chat_id = self._db.create_chat()
+
         try:
             self._db.save_section(
                 self._chat_id, turn_id, content_type, content
@@ -707,14 +732,17 @@ class ChatManager(Widget):
     # ------------------------------------------------------------------
 
     def new_conversation(self) -> None:
-        """Start a fresh conversation: clear display, reset history, create
-        a new database chat.
+        """Start a fresh conversation: clear display, reset history.
+
+        The database chat row is **not** created eagerly — it will be
+        created lazily on the first ``_persist_section()`` call, so that
+        starting a new conversation without sending a message does not
+        leave an empty row in the database.
         """
         self._chat_display.clear()
         self._history.clear()
         self._sections.clear()
-        if self._db is not None:
-            self._chat_id = self._db.create_chat()
+        self._chat_id = None
         self._chat_display.add_system_message("New conversation started.")
         self._chat_input.focus()
         # Sync cleared state back to ChatTabState so it stays consistent

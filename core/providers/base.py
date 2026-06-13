@@ -31,6 +31,8 @@ class TokenUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    context_length: int | None = None
+    """Maximum context window size in tokens, if known."""
 
 
 @dataclass

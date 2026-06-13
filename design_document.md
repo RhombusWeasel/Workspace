@@ -574,7 +574,12 @@ No more `MsgBox`/`StreamingMsgBox` duplication.
 reduce re-rendering overhead during streaming.  Reasoning models emit
 rapid thinking tokens that previously caused lag when each chunk triggered
 a full markdown re-render of the entire accumulated thinking text.  Response
-and tools sections continue to use `Markdown` for rich formatting.
+and tools sections **also** use `Static` during streaming for the same
+reason — Textual's `Markdown.update()` re-parses the entire accumulated text
+and recreates all child widgets on every call, which is O(n²) over response
+length.  On `finalize_turn()`, response and tools sections are swapped from
+`Static` to `Markdown` for rich formatting.  Thinking sections remain as
+`Static` permanently since they don't benefit from markdown rendering.
 
 **Auto-scroll** — the `ChatDisplay` schedules a scroll-to-bottom after
 every content addition or update (`add_user_message`, `begin_assistant_turn`,

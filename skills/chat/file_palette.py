@@ -158,6 +158,7 @@ class FilePalette(Vertical):
 
     def compose(self) -> ComposeResult:
         self._option_list = OptionList(id="file-option-list")
+        self._option_list.can_focus = False
         yield self._option_list
 
     # ------------------------------------------------------------------

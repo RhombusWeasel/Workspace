@@ -41,6 +41,52 @@ def format_tool_call_json(name: str, arguments: dict[str, Any]) -> str:
     return json.dumps({"name": name, "arguments": arguments})
 
 
+def format_tool_call_branch_label(name: str, arguments: dict[str, Any]) -> str:
+    """Format a tool call for a tree branch collapsed label.
+
+    Returns a Rich-markup string like::
+
+        🔧 `read_file(path="foo.py")`
+
+    Shows a short argument summary so the user can identify the
+    call without expanding the branch.
+    """
+    args_str = _format_args(arguments)
+    return f"\U0001f527 `{name}({args_str})`"
+
+
+def format_tool_call_branch_label_expanded(name: str) -> str:
+    """Format the expanded label for a tool call branch.
+
+    Returns a Rich-markup string like::
+
+        🔧 read_file
+
+    When the branch is expanded, the detail leaf is visible so
+    the label only needs the tool name.
+    """
+    return f"\U0001f527 {name}"
+
+
+def format_tool_call_detail(name: str, arguments: dict[str, Any]) -> str:
+    """Format tool call arguments as Markdown for the detail leaf.
+
+    Returns a Markdown string with key-value pairs, one per line::
+
+        **path**: `"foo.py"`
+        **content**: `"Hello world"`
+
+    Long values are truncated to 200 characters.
+    """
+    lines: list[str] = []
+    for key, value in arguments.items():
+        val_repr = repr(value)
+        if len(val_repr) > 200:
+            val_repr = val_repr[:197] + "..."
+        lines.append(f"**{key}**: `{val_repr}`")
+    return "\n".join(lines)
+
+
 def _format_args(args: dict[str, Any]) -> str:
     """Render *args* as a compact ``key=value`` string for display."""
     items = [f"{k}={v!r}" for k, v in args.items()]

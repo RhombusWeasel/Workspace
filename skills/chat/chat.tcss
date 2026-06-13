@@ -26,49 +26,66 @@ ChatDisplay .thinking-content {
 }
 
 /* --------------------------------------------------------------- */
-/* Command Palette — popup between display and input                 */
+/* Streaming sections — plain Static text during streaming, swapped  */
+/* to Markdown on finalize. Minimal styling; matches Markdown layout. */
 /* --------------------------------------------------------------- */
 
-CommandPalette {
+ChatDisplay .streaming-content {
+    width: 1fr;
+}
+
+/* --------------------------------------------------------------- */
+/* Command Palette — popup inside ChatInput above the text bar       */
+/* --------------------------------------------------------------- */
+
+ChatInput CommandPalette {
     display: none;
     width: 1fr;
     height: auto;
     max-height: 10;
     background: $surface;
-    border-bottom: tall $surface-lighten-1;
+    border: none;
     padding: 0;
+    margin: 0;
     overflow-y: auto;
 }
 
-CommandPalette.-visible {
+ChatInput CommandPalette.-visible {
     display: block;
 }
 
-CommandPalette #cmd-option-list {
+ChatInput CommandPalette #cmd-option-list {
     max-height: 10;
+    border: none;
+    padding: 0;
+    margin: 0;
 }
 
 /* --------------------------------------------------------------- */
-/* File Palette — popup between display and input                     */
+/* File Palette — popup inside ChatInput above the text bar         */
 /* --------------------------------------------------------------- */
 
-FilePalette {
+ChatInput FilePalette {
     display: none;
     width: 1fr;
     height: auto;
     max-height: 10;
     background: $surface;
-    border-bottom: tall $surface-lighten-1;
+    border: none;
     padding: 0;
+    margin: 0;
     overflow-y: auto;
 }
 
-FilePalette.-visible {
+ChatInput FilePalette.-visible {
     display: block;
 }
 
-FilePalette #file-option-list {
+ChatInput FilePalette #file-option-list {
     max-height: 10;
+    border: none;
+    padding: 0;
+    margin: 0;
 }
 
 /* --------------------------------------------------------------- */
@@ -77,24 +94,40 @@ FilePalette #file-option-list {
 
 ChatInput {
     height: auto;
+    dock: bottom;
+}
+
+ChatInput .chat-input-container {
+    width: 1fr;
+    height: auto;
 }
 
 ChatInput .chat-input-bar-horizontal {
-    height: auto;
     width: 1fr;
     layout: horizontal;
-    dock: bottom;
+    height: auto;
+    min-height: 3;
+    max-height: 11;
 }
 
 ChatInput .chat-input-bar-horizontal > TextArea {
     width: 1fr;
-    min-height: 1;
-    max-height: 8;
-    margin: 0 0 1 0;
+    margin: 0;
+    padding: 0 1 0 0;
     border-top: heavy $surface-lighten-1;
     border-bottom: heavy $surface-lighten-1;
     border-left: none;
     border-right: none;
+}
+
+ChatInput .chat-input-bar-horizontal > TextArea.single-line {
+    height: 3;
+}
+
+ChatInput .chat-input-bar-horizontal > TextArea.multiline {
+    height: auto;
+    min-height: 3;
+    max-height: 11;
 }
 
 ChatInput .chat-input-bar-horizontal > TextArea:focus {
@@ -106,12 +139,20 @@ ChatInput .chat-input-bar-horizontal > TextArea:focus {
 
 ChatInput .chat-input-bar-horizontal > TextArea .text-area--gutter {
     display: none;
+    dock: bottom;
+}
+
+ChatInput .chat-input-bar-horizontal > TextArea .text-area--suggestion {
+    color: $text-muted;
+    text-style: italic;
 }
 
 ChatInput .chat-input-bar-horizontal > .chat-action-btn {
     min-width: 6;
     width: 6;
-    height: 3;
+    height: 100%;
+    min-height: 3;
+    max-height: 11;
     border: none !important;
     background: transparent;
 }

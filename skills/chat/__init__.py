@@ -5,10 +5,22 @@ Importing this module triggers all side-effect registrations:
 - ``@register_handler("chat.open")`` to open a chat tab on demand
 - ``register_chat_leader_chords()`` for the ``Ctrl+Space a`` leader chord
 - ``@register_command("clear")`` and ``@register_command("new")``
+- ``register_defaults`` for ``session.open_thinking`` and ``session.open_tools``
 
 The chat tab is opened via the leader chord or by posting a
 ``WorkspaceEvent("chat.open")``.  It is NOT auto-opened on startup.
 """
+
+from core.config import register_defaults
+
+# Config defaults for the chat skill.
+# When False, thinking/tool-call branches in the chat tree start collapsed.
+register_defaults({
+    "session": {
+        "open_thinking": False,
+        "open_tools": False,
+    },
+})
 
 # Side-effect imports — trigger decorator registrations.
 from skills.chat.chat_tab import register_chat_leader_chords  # noqa: F401

@@ -348,14 +348,17 @@ class HistoryPanel(Container):
 
     def _delete_chat(self, chat_id: str) -> None:
         """Delete a chat after confirmation."""
-        from ui.widgets.input_modal import InputModal
+        from ui.widgets.confirm_modal import ConfirmModal
 
         async def do_delete() -> None:
-            modal = InputModal(
-                "Delete conversation? Type 'yes' to confirm:", "Confirm"
+            confirmed = await self.app.push_screen_wait(
+                ConfirmModal(
+                    "Delete this conversation?",
+                    "This will permanently remove the conversation and all its messages.",
+                    confirm_label="Delete",
+                )
             )
-            result = await self.app.push_screen_wait(modal)
-            if result != "yes":
+            if not confirmed:
                 return
 
             if self._ctx is None or self._ctx.database is None:
