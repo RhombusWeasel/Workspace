@@ -2,20 +2,3 @@ HistoryPanel {
     width: 1fr;
     height: 1fr;
 }
-
-HistoryPanel .section-header {
-    text-style: bold;
-    padding: 1 1 0 1;
-    width: 1fr;
-}
-
-HistoryPanel .history-actions {
-    width: 1fr;
-    height: auto;
-    padding: 0 1;
-    align: center middle;
-}
-
-HistoryPanel .history-actions Button {
-    margin: 0 1;
-}

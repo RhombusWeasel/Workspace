@@ -16,8 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
-from textual.widgets import Button, Static
+from textual.containers import Container
 
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeSelected
@@ -96,11 +95,8 @@ class HistoryPanel(Container):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static("󰉉  History", classes="section-header")
-        self._tree = Tree(TreeNode("history-root", "Loading..."))
+        self._tree = Tree(TreeNode("history-root", "Loading...", buttons=[RowButton("refresh", REFRESH)]))
         yield self._tree
-        with Horizontal(classes="history-actions"):
-            yield Button(REFRESH, id="history-refresh", variant="default")
 
     def on_mount(self) -> None:
         app = self.app
@@ -125,7 +121,8 @@ class HistoryPanel(Container):
         """Load chats from the database and populate the tree."""
         if self._db is None:
             self._tree.set_root(
-                TreeNode("history-root", "No database available")
+                TreeNode("history-root", "No database available",
+                         buttons=[RowButton("refresh", REFRESH)])
             )
             return
 
@@ -133,7 +130,8 @@ class HistoryPanel(Container):
             chats = self._db.list_chats()
         except Exception:
             self._tree.set_root(
-                TreeNode("history-root", "Error loading chats")
+                TreeNode("history-root", "Error loading chats",
+                         buttons=[RowButton("refresh", REFRESH)])
             )
             return
 
@@ -142,6 +140,7 @@ class HistoryPanel(Container):
                 TreeNode(
                     "history-root",
                     "󰉉  History",
+                    buttons=[RowButton("refresh", REFRESH)],
                     children=[
                         TreeNode(
                             "history-empty",
@@ -189,19 +188,11 @@ class HistoryPanel(Container):
         root = TreeNode(
             "history-root",
             "󰉉  History",
+            buttons=[RowButton("refresh", REFRESH)],
             children=children,
         )
         self._tree.set_root(root)
         self._tree.expand_all()
-
-    # ------------------------------------------------------------------
-    # Button handlers
-    # ------------------------------------------------------------------
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "history-refresh":
-            self._rebuild()
 
     # ------------------------------------------------------------------
     # Tree selection — open chat in a new tab
@@ -223,15 +214,17 @@ class HistoryPanel(Container):
     # ------------------------------------------------------------------
 
     def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
-        """Handle the delete button on a chat node."""
+        """Handle inline button presses on tree rows."""
         event.stop()
-        if event.action_id != _DEL:
+        if event.action_id == "refresh":
+            self._rebuild()
             return
-        node = event.node
-        chat_id = node.data.get("chat_id", "") if node.data else ""
-        if not chat_id:
-            return
-        self._delete_chat(chat_id)
+        if event.action_id == _DEL:
+            node = event.node
+            chat_id = node.data.get("chat_id", "") if node.data else ""
+            if not chat_id:
+                return
+            self._delete_chat(chat_id)
 
     # ------------------------------------------------------------------
     # Actions — Open chat
