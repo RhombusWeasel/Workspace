@@ -3,20 +3,6 @@ GitPanel {
     background: $surface;
 }
 
-GitPanel .section-header {
-    color: $text;
-    text-style: bold;
-    padding: 1 2;
-    background: $surface;
-}
-
-GitPanel .git-panel-actions {
-    height: 1;
-    padding: 0;
-    dock: bottom;
-    background: $surface;
-}
-
 GitPanel .git-stage-btn {
     color: $success;
 }
@@ -27,20 +13,4 @@ GitPanel .git-unstage-btn {
 
 GitPanel .git-stage-all-btn {
     color: $success;
-}
-
-GitPanel #git-commit {
-    min-width: 10;
-    height: 1;
-    border: none;
-    padding: 0 1 0 0;
-    margin: 0;
-}
-
-GitPanel #git-refresh {
-    min-width: 10;
-    height: 1;
-    border: none;
-    padding: 0 0 0 1;
-    margin: 0;
 }

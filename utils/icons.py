@@ -28,6 +28,7 @@ EXPAND = "󰅁"         # 󰅁  chevron-right
 SEARCH = "󰍉"         # 󰍉  search / magnifying glass
 EYE = ""            #   eye / show hidden
 EYE_OFF = ""        #   eye-off / hide hidden
+COMMIT = ""         #   git commit
 
 # ---------------------------------------------------------------------------
 # Chat action icons

@@ -15,8 +15,7 @@ import os
 
 import pyperclip
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
-from textual.widgets import Button, Static
+from textual.containers import Container
 
 from context import AppContext
 from core.events import WorkspaceEvent, register_handler
@@ -24,7 +23,7 @@ from core.vault import VaultManager
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import NodeSelected, NodeToggled, Tree
 from ui.tree.tree_row import TreeRow, RowButton, TreeNode
-from utils.icons import COPY, EDIT, DELETE
+from utils.icons import COPY, EDIT, DELETE, PLUS, REFRESH
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,6 +32,11 @@ from utils.icons import COPY, EDIT, DELETE
 _EDIT = "edit"
 _COPY = "copy"
 _DEL = "del"
+_ADD_CRED = "add-cred"
+_ADD_NOTE = "add-note"
+_CREATE_LOCAL = "create-local"
+_REMOVE_LOCAL = "remove-local"
+_REFRESH = "refresh"
 
 
 def _action_buttons() -> list[RowButton]:
@@ -52,6 +56,19 @@ def _build_entry_node(
         data={"type": entry_type, "name": name},
         buttons=_action_buttons(),
     )
+
+
+def _section_buttons(prefix: str) -> list[RowButton]:
+    """Buttons for credential/notes section nodes."""
+    if prefix == "global":
+        return [
+            RowButton(f"{prefix}-{_ADD_CRED}", f"{PLUS}Cred", "vault-add-cred"),
+            RowButton(f"{prefix}-{_ADD_NOTE}", f"{PLUS}Note", "vault-add-note"),
+        ]
+    return [
+        RowButton(f"{prefix}-{_ADD_CRED}", f"{PLUS}Cred", "vault-add-cred"),
+        RowButton(f"{prefix}-{_ADD_NOTE}", f"{PLUS}Note", "vault-add-note"),
+    ]
 
 
 @register_sidebar_tab(name="vault", icon="󰦝", side="right", tooltip="Vault")
@@ -91,31 +108,24 @@ class VaultPanel(Container):
 
     def compose(self) -> ComposeResult:
         # -- Global vault --
-        yield Static("󰋘  Global Vault", classes="vault-section-header")
-        self._global_tree = Tree(TreeNode("global-root", "Global Vault"))
+        self._global_tree = Tree(TreeNode(
+            "global-root", "󰋘  Global Vault",
+            buttons=[RowButton(_REFRESH, REFRESH, "vault-refresh")],
+        ))
         self._global_tree.id = "global-tree"
         yield self._global_tree
 
-        with Horizontal(classes="vault-actions", id="global-actions"):
-            yield Button("+ Credential", id="add-global-cred")
-            yield Button("+ Note", id="add-global-note")
-
         # -- Local vault (hidden unless a local vault exists) --
-        yield Static("󰋘  Local Vault", id="local-vault-header",
-                     classes="vault-section-header")
-        self._local_tree = Tree(TreeNode("local-root", "Local Vault"))
+        self._local_tree = Tree(TreeNode(
+            "local-root", "󰋘  Local Vault",
+            buttons=[
+                RowButton(_REFRESH, REFRESH, "vault-refresh"),
+                RowButton(f"local-{_REMOVE_LOCAL}", "−Remove", "vault-remove-local"),
+                RowButton(f"local-{_CREATE_LOCAL}", f"{PLUS}Local", "vault-create-local"),
+            ],
+        ))
         self._local_tree.id = "local-tree"
         yield self._local_tree
-
-        with Horizontal(classes="vault-actions", id="local-actions"):
-            yield Button("+ Credential", id="add-local-cred")
-            yield Button("+ Note", id="add-local-note")
-
-        yield Button("− Remove Local Vault", id="remove-local-vault")
-
-        # Shown when no local vault exists yet
-        yield Button("+ Add Local Vault", id="create-local-vault",
-                     classes="vault-add-local")
 
     # ------------------------------------------------------------------
     # Rebuild
@@ -163,10 +173,14 @@ class VaultPanel(Container):
         else:
             # Empty placeholder
             self._local_tree.set_root(
-                TreeNode("local-root", "Local Vault",
+                TreeNode("local-root", "󰋘  Local Vault",
                          children=[
                              TreeNode("local-creds", "󰢥  Credentials"),
                              TreeNode("local-notes", "󰢥  Notes"),
+                         ],
+                         buttons=[
+                             RowButton(_REFRESH, REFRESH, "vault-refresh"),
+                             RowButton(f"local-{_CREATE_LOCAL}", f"{PLUS}Local", "vault-create-local"),
                          ])
             )
             self._local_tree.expand_all()
@@ -210,55 +224,64 @@ class VaultPanel(Container):
             pass
 
         root_children: list[TreeNode] = [
-            TreeNode(f"{prefix}-creds", "󰢥  Credentials", children=cred_nodes),
-            TreeNode(f"{prefix}-notes", "󰢥  Notes", children=note_nodes),
+            TreeNode(f"{prefix}-creds", "󰢥  Credentials", children=cred_nodes,
+                      buttons=[
+                          RowButton(f"{prefix}-{_ADD_CRED}", f"{PLUS}Cred", "vault-add-cred"),
+                      ]),
+            TreeNode(f"{prefix}-notes", "󰢥  Notes", children=note_nodes,
+                      buttons=[
+                          RowButton(f"{prefix}-{_ADD_NOTE}", f"{PLUS}Note", "vault-add-note"),
+                      ]),
         ]
 
+        root_buttons = [RowButton(_REFRESH, REFRESH, "vault-refresh")]
+        if prefix == "local":
+            root_buttons.append(RowButton(f"local-{_REMOVE_LOCAL}", "−Remove", "vault-remove-local"))
+
         root = TreeNode(f"{prefix}-root",
-                        "Local Vault" if prefix == "local" else "Global Vault",
-                        children=root_children)
+                        "󰋘  Local Vault" if prefix == "local" else "󰋘  Global Vault",
+                        children=root_children,
+                        buttons=root_buttons)
         tree.set_root(root)
         tree.expand_all()
 
     # ------------------------------------------------------------------
-    # Button handlers — section-level Add buttons
-    # ------------------------------------------------------------------
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route section-level buttons to the appropriate handler."""
-        event.stop()
-        btn_id = event.button.id
-
-        if btn_id == "add-global-cred":
-            self._prompt_add("global", "credential")
-        elif btn_id == "add-global-note":
-            self._prompt_add("global", "note")
-        elif btn_id == "add-local-cred":
-            self._prompt_add("local", "credential")
-        elif btn_id == "add-local-note":
-            self._prompt_add("local", "note")
-        elif btn_id == "create-local-vault":
-            self._create_local_vault()
-        elif btn_id == "remove-local-vault":
-            self._remove_local_vault()
-
-    # ------------------------------------------------------------------
-    # ActionRow button handlers — Copy / Edit / Delete
+    # Tree row button handlers — all actions
     # ------------------------------------------------------------------
 
     def on_tree_row_button_pressed(self, event: TreeRow.ButtonPressed) -> None:
-        """Handle copy / edit / delete from an entry row."""
+        """Handle copy / edit / delete / add / vault actions from tree rows."""
         event.stop()
+        action_id = event.action_id
         node = event.node
-        entry_type: str = node.data.get("type", "")
-        entry_name: str = node.data.get("name", "")
+        data = node.data or {}
+        entry_type: str = data.get("type", "")
+        entry_name: str = data.get("name", "")
 
-        if event.action_id == _COPY:
+        # Entry-level actions
+        if action_id == _COPY:
             self._copy_entry(entry_type, entry_name)
-        elif event.action_id == _EDIT:
+        elif action_id == _EDIT:
             self._prompt_edit(entry_type, entry_name)
-        elif event.action_id == _DEL:
+        elif action_id == _DEL:
             self._delete_entry(entry_type, entry_name)
+
+        # Section add buttons: action_id is like "global-add-cred" or "local-add-note"
+        elif _ADD_CRED in action_id:
+            # Extract scope from action_id prefix
+            scope = action_id.split(f"-{_ADD_CRED}")[0]
+            self._prompt_add(scope, "credential")
+        elif _ADD_NOTE in action_id:
+            scope = action_id.split(f"-{_ADD_NOTE}")[0]
+            self._prompt_add(scope, "note")
+
+        # Vault-level actions
+        elif action_id == f"local-{_CREATE_LOCAL}":
+            self._create_local_vault()
+        elif action_id == f"local-{_REMOVE_LOCAL}":
+            self._remove_local_vault()
+        elif action_id == _REFRESH:
+            self._rebuild()
 
     # ------------------------------------------------------------------
     # Actions — Copy

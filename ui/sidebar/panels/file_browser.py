@@ -11,8 +11,7 @@ import hashlib
 import os
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
-from textual.widgets import Button, Static
+from textual.containers import Container
 
 from core.events import WorkspaceEvent
 from ui.sidebar.registry import register_sidebar_tab
@@ -29,6 +28,8 @@ _ADD_FILE = "add_file"
 _ADD_DIR = "add_dir"
 _RENAME = "rename"
 _DEL = "del"
+_REFRESH = "refresh"
+_TOGGLE_HIDDEN = "toggle_hidden"
 
 # Directories and files to skip
 _IGNORED_NAMES: set[str] = {
@@ -70,6 +71,18 @@ def _dir_buttons() -> list[RowButton]:
     ]
 
 
+def _root_buttons(show_hidden: bool = False) -> list[RowButton]:
+    """Buttons for the root directory node."""
+    return [
+        RowButton(_ADD_FILE, ADD_FILE, "btn-add-file"),
+        RowButton(_ADD_DIR, ADD_DIR, "btn-add-dir"),
+        RowButton(_RENAME, RENAME, "btn-rename"),
+        RowButton(_DEL, DELETE, "btn-del"),
+        RowButton(_REFRESH, REFRESH, "btn-refresh"),
+        RowButton(_TOGGLE_HIDDEN, EYE_OFF if not show_hidden else EYE, "btn-toggle-hidden"),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Panel
 # ---------------------------------------------------------------------------
@@ -107,14 +120,9 @@ class FileBrowserPanel(Container):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static("\uf07c  Files", classes="section-header")
-        self._tree = Tree(TreeNode("fb-root", "Loading..."))
+        self._tree = Tree(TreeNode("fb-root", "Loading...",
+                                  buttons=_root_buttons()))
         yield self._tree
-        with Horizontal(classes="file-browser-actions"):
-            yield Button("+ File", id="fb-new-file", variant="default")
-            yield Button("+ Dir", id="fb-new-dir", variant="default")
-            yield Button(EYE_OFF, id="fb-show-hidden", variant="default")
-            yield Button(REFRESH, id="fb-refresh", variant="default")
 
     def on_mount(self) -> None:
         # Override working directory from AppContext if available
@@ -148,7 +156,7 @@ class FileBrowserPanel(Container):
             f"{get_folder_icon(self._wd)}  {root_label}",
             children=children,
             data={"path": self._wd, "type": "dir", "name": root_label},
-            buttons=_dir_buttons(),
+            buttons=_root_buttons(show_hidden=self._show_hidden),
         )
         self._tree.set_root(root)
         self._tree.expand_node(root.id)
@@ -156,9 +164,6 @@ class FileBrowserPanel(Container):
     def _toggle_hidden(self) -> None:
         """Toggle whether hidden entries are shown and rebuild the tree."""
         self._show_hidden = not self._show_hidden
-        # Update the toggle button label
-        btn = self.query_one("#fb-show-hidden", Button)
-        btn.label = EYE if self._show_hidden else EYE_OFF
         self._rebuild()
 
     def _scan_dir(self, dirpath: str) -> list[TreeNode]:
@@ -232,23 +237,6 @@ class FileBrowserPanel(Container):
         self._tree.expand_node(msg.node_id)
 
     # ------------------------------------------------------------------
-    # Button handlers — root actions
-    # ------------------------------------------------------------------
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        btn_id = event.button.id
-
-        if btn_id == "fb-new-file":
-            self._prompt_add_file(self._wd)
-        elif btn_id == "fb-new-dir":
-            self._prompt_add_dir(self._wd)
-        elif btn_id == "fb-show-hidden":
-            self._toggle_hidden()
-        elif btn_id == "fb-refresh":
-            self._rebuild()
-
-    # ------------------------------------------------------------------
     # Selection handler — click on file label opens it for editing
     # ------------------------------------------------------------------
 
@@ -279,6 +267,10 @@ class FileBrowserPanel(Container):
             self._prompt_rename(path, node.data.get("name", ""))
         elif action == _DEL:
             self._prompt_delete(path, node.data.get("name", ""))
+        elif action == _REFRESH:
+            self._rebuild()
+        elif action == _TOGGLE_HIDDEN:
+            self._toggle_hidden()
 
     # ------------------------------------------------------------------
     # Actions — Edit

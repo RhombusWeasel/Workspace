@@ -33,8 +33,7 @@ import subprocess
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
-from textual.widgets import Button, Static
+from textual.containers import Container
 
 from context import AppContext
 from core.config import register_defaults
@@ -43,11 +42,14 @@ from core.leader import register_submenu, register_action
 from ui.sidebar.registry import register_sidebar_tab
 from ui.tree.tree import Tree, NodeSelected
 from ui.tree.tree_row import TreeNode, RowButton
-from utils.icons import PLUS, REFRESH
+from utils.icons import PLUS, REFRESH, COMMIT
 
 # ---------------------------------------------------------------------------
 # Config defaults
 # ---------------------------------------------------------------------------
+
+_COMMIT = "git-commit"
+_REFRESH = "git-refresh"
 
 register_defaults({
     "git": {
@@ -142,6 +144,12 @@ def _build_status_tree(wd: str, log_count: int = 5) -> TreeNode:
         root_label_parts: list[str] = []
         branch = _run_git("rev-parse", "--abbrev-ref", "HEAD")
 
+        # Root-level action buttons
+        root_buttons = [
+            RowButton(_REFRESH, REFRESH, "git-refresh"),
+            RowButton(_COMMIT, COMMIT, "git-commit"),
+        ]
+
         if branch and branch != "(detached HEAD)":
             root_label_parts.append(f"\ue725 {branch}")
         else:
@@ -165,6 +173,7 @@ def _build_status_tree(wd: str, log_count: int = 5) -> TreeNode:
             "git-root",
             "  ".join(root_label_parts),
             children=[],
+            buttons=root_buttons,
         )
 
         # Parse porcelain status
@@ -337,12 +346,12 @@ class GitPanel(Container):
         self._wd = working_directory or os.getcwd()
 
     def compose(self) -> ComposeResult:
-        yield Static("\ue702  Git", classes="section-header")
-        self._tree = Tree(TreeNode("git-root", "Loading..."))
+        self._tree = Tree(TreeNode("git-root", "Loading...",
+                                  buttons=[
+                                      RowButton(_REFRESH, REFRESH, "git-refresh"),
+                                      RowButton(_COMMIT, COMMIT, "git-commit"),
+                                  ]))
         yield self._tree
-        with Horizontal(classes="git-panel-actions"):
-            yield Button(REFRESH, id="git-refresh", variant="primary")
-            yield Button("\uf417 Commit", id="git-commit", variant="primary")
 
     def on_mount(self) -> None:
         app = self.app
@@ -375,17 +384,6 @@ class GitPanel(Container):
         self._rebuild()
 
     # ------------------------------------------------------------------
-    # Button handlers
-    # ------------------------------------------------------------------
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "git-refresh":
-            self._rebuild()
-        elif event.button.id == "git-commit":
-            self._open_commit_modal()
-
-    # ------------------------------------------------------------------
     # Tree row button handlers
     # ------------------------------------------------------------------
 
@@ -408,6 +406,10 @@ class GitPanel(Container):
             self._stage_all_unstaged()
         elif action_id == _STAGE_ALL_UNTRACKED:
             self._stage_all_untracked()
+        elif action_id == _REFRESH:
+            self._rebuild()
+        elif action_id == _COMMIT:
+            self._open_commit_modal()
 
     # ------------------------------------------------------------------
     # Git actions

@@ -3,26 +3,3 @@ FileBrowserPanel {
     height: 1fr;
     overflow-y: auto;
 }
-
-FileBrowserPanel .section-header {
-    width: 1fr;
-    height: 1;
-    padding: 0 1;
-    background: $surface;
-    text-style: bold;
-}
-
-FileBrowserPanel .file-browser-actions {
-    height: 1;
-    width: 1fr;
-    background: $surface;
-}
-
-FileBrowserPanel .file-browser-actions Button {
-    height: 1;
-    min-width: 3;
-    padding: 0 1;
-    border: none;
-    background: $primary;
-    margin: 0 0 0 1;
-}
