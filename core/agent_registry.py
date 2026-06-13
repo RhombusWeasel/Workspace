@@ -37,6 +37,9 @@ register_defaults({
         "default_id": "default",
         "inline_suggest_id": "inline-suggest",
     },
+    "agents": {
+        "name": "Cody",
+    },
 })
 
 # ---------------------------------------------------------------------------
@@ -69,18 +72,15 @@ DEFAULT_CHAT_AGENT = {
     "name": "Default Assistant",
     "description": "General-purpose coding assistant",
     "template": (
-        "You are a helpful AI coding assistant working in {{project_name}}.\n\n"
+        "You are {{agent_name}}, a helpful AI coding assistant working in {{project_name}}.  A Personalized Development Environment with agentic AI [You] at it's core.\n\n"
         "Current working directory: {{working_directory}}\n"
-        "Date: {{date}}\n"
+        "Date: {{date}}\n\n"
         "{{workspace_agents}}"
-        "{{global_agents}}"
-        "{{local_agents}}"
-        "\n"
-        "{{skills}}\n"
-        "\n"
-        "Use the available tools when appropriate. "
-        "You can activate specific skills for detailed instructions "
-        "by using the activate_skill tool.\n"
+        "{{skills}}\n\n"
+        "The users global settings are detailed below:"
+        "{{global_agents}}\n\n"
+        "Repo specific settings are detailed below, these settings take prescidence over all others as it involves interaction with the users codebase so must be followed."
+        "{{local_agents}}\n"
     ),
     "model": "",
     "provider": "",

@@ -23,6 +23,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["."]
 
 [tool.uv.sources]
 textual-terminal = { git = "https://github.com/RhombusWeasel/textual-terminal" }

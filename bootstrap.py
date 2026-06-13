@@ -407,6 +407,13 @@ class Bootstrap:
     ) -> None:
         """Register dynamic variable providers for agent templates."""
         agents.register_dynamic(
+            "agent_name",
+            lambda ctx: (
+                ctx.config.get("agents.name", "Cody")
+                if ctx and ctx.config else "Cody"
+            ),
+        )
+        agents.register_dynamic(
             "skills",
             lambda ctx: {
                 "__default__": skill_manager.get_catalog_xml(),

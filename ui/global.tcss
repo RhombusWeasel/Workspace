@@ -6,11 +6,11 @@
  */
 
 Tooltip {
-    padding: 0;
+    padding: 0 1;
     margin: 0;
     offset-y: 0;
     offset-x: 3;
-    background: $surface-lighten-1;
+    background: $surface-lighten-2;
 }
 
 ToastRack {
