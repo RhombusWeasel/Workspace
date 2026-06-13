@@ -46,6 +46,17 @@ import core.providers.registry  # noqa: F401 — side-effect import for config d
 import core.providers.base  # noqa: F401 — side-effect import for redaction defaults
 # Import ollama provider so its config defaults register.
 import core.providers.ollama  # noqa: F401 — side-effect import for config defaults
+# Chat skill session defaults must be registered before apply_defaults().
+# We register them inline here to avoid importing the entire skill
+# (which triggers handler/command/leader registrations that depend on
+# services not yet available at this point in bootstrap).
+register_defaults({
+    "session": {
+        "open_thinking": False,
+        "open_tools": False,
+        "show_system_prompt": False,
+    },
+})
 # Terminal handler is now registered by the terminal plugin
 # (plugins/terminal/__init__.py) at plugin load time.
 

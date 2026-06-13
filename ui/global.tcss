@@ -1,0 +1,17 @@
+/* Global — app-wide widget overrides.
+ *
+ * This file is collected by the 3-tier CSS scanner (core/paths.py)
+ * and loaded for every Workspace instance.  Use it for cross-cutting
+ * styles that don't belong to a single component's .tcss file.
+ */
+
+Tooltip {
+    padding: 0;
+    margin: 0;
+    offset-y: 0;
+    offset-x: 3;
+}
+
+Toast {
+    dock: top;
+}

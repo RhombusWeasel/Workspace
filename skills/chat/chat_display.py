@@ -12,6 +12,11 @@ are collapsed by default, controlled by the ``open_thinking`` and
 corresponding config keys are ``session.open_thinking`` and
 ``session.open_tools``.
 
+**System prompt display** — When ``show_system_prompt`` is True, the
+LLM system prompt is displayed as a collapsible branch at the start
+of each conversation.  The corresponding config key is
+``session.show_system_prompt``.
+
 **Streaming optimisation** — During streaming, ALL section types use
 plain :class:`~textual.widgets.Static` text instead of
 :class:`~textual.widgets.Markdown`.  This eliminates expensive markdown
@@ -73,6 +78,9 @@ class ChatDisplay(Widget):
     ``finalize_turn()``, response and tools sections are swapped to
     ``Markdown`` for rich formatting.  Thinking sections stay as
     ``Static`` permanently.
+
+    When ``show_system_prompt`` is True, the LLM system prompt is displayed
+    as a collapsible system section at the start of each conversation.
     """
 
     def __init__(
@@ -80,6 +88,7 @@ class ChatDisplay(Widget):
         *,
         open_thinking: bool = False,
         open_tools: bool = False,
+        show_system_prompt: bool = False,
     ):
         super().__init__()
         self._root = TreeNode("chat-display-root", "Conversation")
@@ -92,6 +101,10 @@ class ChatDisplay(Widget):
         # branches are expanded or collapsed when first created.
         self._open_thinking = open_thinking
         self._open_tools = open_tools
+
+        # Whether to display the LLM system prompt at the start of each
+        # conversation.
+        self._show_system_prompt = show_system_prompt
 
         # Populated by add_section, cleared by finalize_turn.
         # Maps section_id → content widget (Markdown or Static).
@@ -388,6 +401,44 @@ class ChatDisplay(Widget):
 
         tree = self.query_one(Tree)
         tree.expand_node(node_id)
+
+        self._schedule_scroll()
+
+        return node_id
+
+    # ------------------------------------------------------------------
+    # System prompt display
+    # ------------------------------------------------------------------
+
+    def add_system_prompt(self, text: str) -> str:
+        """Add the LLM system prompt as a collapsible branch with a Markdown leaf.
+
+        Only displayed when the ``show_system_prompt`` config option is True.
+        The branch starts collapsed so it doesn't dominate the conversation
+        view.  The caller (ChatManager) checks the config before calling.
+
+        Returns the branch node ID.
+        """
+        self._turn_count += 1
+        node_id = f"msg-{self._turn_count}"
+
+        md = Markdown(text, id=f"md-{node_id}")
+        leaf = TreeNode(f"{node_id}-leaf", "", content=md)
+
+        branch = TreeNode(
+            node_id,
+            "  \U000f0e38 System Prompt",
+            label_expanded="  \U000f0e38 System Prompt",
+            data={"role": "system_prompt"},
+            children=[leaf],
+        )
+        self._root.children.append(branch)
+        self._rebuild()
+
+        tree = self.query_one(Tree)
+        # Always collapse system prompt branches — the user can expand
+        # them if they want to inspect the prompt.
+        tree.collapse_node(node_id)
 
         self._schedule_scroll()
 

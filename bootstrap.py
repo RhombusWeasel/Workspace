@@ -44,7 +44,7 @@ from core.agent_registry import AgentManager
 from core.providers.registry import ProviderRegistry
 from core.leader import leader as leader_registry
 from core.vault import VaultManager
-from core.agents_md import load_global_agents_md, load_local_agents_md
+from core.agents_md import load_global_agents_md, load_local_agents_md, load_workspace_agents_md
 
 
 class Bootstrap:
@@ -445,6 +445,10 @@ class Bootstrap:
                 if ctx and ctx.config
                 else "ollama"
             ),
+        )
+        agents.register_dynamic(
+            "workspace_agents",
+            lambda ctx: load_workspace_agents_md(ctx),
         )
         agents.register_dynamic(
             "global_agents",

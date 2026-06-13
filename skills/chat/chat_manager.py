@@ -85,18 +85,22 @@ class ChatManager(Widget):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        # Read config-driven defaults for thinking/tool-call expand state.
+        # Read config-driven defaults for thinking/tool-call expand state
+        # and system prompt display.
         open_thinking = False
         open_tools = False
+        show_system_prompt = False
         if hasattr(self.app, "context") and self.app.context is not None:
             cfg = self.app.context.config
             if cfg is not None:
                 open_thinking = cfg.get("session.open_thinking", False)
                 open_tools = cfg.get("session.open_tools", False)
+                show_system_prompt = cfg.get("session.show_system_prompt", False)
         with Vertical():
             self._chat_display = ChatDisplay(
                 open_thinking=open_thinking,
                 open_tools=open_tools,
+                show_system_prompt=show_system_prompt,
             )
             self._chat_input = ChatInput()
             yield self._chat_display
@@ -116,6 +120,9 @@ class ChatManager(Widget):
         # as a background worker.
         if self._state is not None and self._sections:
             self.run_worker(self._rebuild_display_from_sections())
+        elif self._state is None or not self._sections:
+            # Fresh chat tab — show system prompt if configured.
+            self._maybe_show_system_prompt()
 
     def focus(self) -> None:
         """Focus the chat input.
@@ -739,16 +746,39 @@ class ChatManager(Widget):
         created lazily on the first ``_persist_section()`` call, so that
         starting a new conversation without sending a message does not
         leave an empty row in the database.
+
+        If the ``session.show_system_prompt`` config is True and an agent
+        is wired, the system prompt is displayed as a collapsible branch.
         """
         self._chat_display.clear()
         self._history.clear()
         self._sections.clear()
         self._chat_id = None
         self._chat_display.add_system_message("New conversation started.")
+        self._maybe_show_system_prompt()
         self._chat_input.focus()
         # Sync cleared state back to ChatTabState so it stays consistent
         # if a workspace recomposition happens before the next flush.
         self.flush_state()
+
+    # ------------------------------------------------------------------
+    # System prompt display
+    # ------------------------------------------------------------------
+
+    def _maybe_show_system_prompt(self) -> None:
+        """Display the LLM system prompt if the config option is enabled.
+
+        Checks the ``session.show_system_prompt`` config.  When True and
+        an agent is wired, the rendered system prompt is added as a
+        collapsible branch in the chat display.
+        """
+        if not self._chat_display._show_system_prompt:
+            return
+        if self._agent is None:
+            return
+        prompt = self._agent.system_prompt
+        if prompt:
+            self._chat_display.add_system_prompt(prompt)
 
 
 # ---------------------------------------------------------------------------
