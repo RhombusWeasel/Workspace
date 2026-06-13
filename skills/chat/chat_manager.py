@@ -31,6 +31,7 @@ from skills.chat.command_palette import CommandPalette
 from skills.chat.file_palette import FilePalette
 from skills.chat.stream_section import StreamSection
 from skills.chat.tool_format import format_tool_call_json
+from ui.tree.tree_row import RowButton
 
 
 class ChatManager(Widget):
@@ -73,6 +74,17 @@ class ChatManager(Widget):
         self._chat_id: str | None = None
         self._streaming_task: asyncio.Task | None = None
         self._state: Any = None
+        self._turn_checkpoint_tags: dict[str, str] = {}
+        """Map of turn_id to checkpoint tag for revert support.
+
+        When a user message is submitted, a git checkpoint is created
+        and the tag is stored here.  When the user clicks the revert
+        button on a user message branch, the tag is used to restore
+        the working tree to that point."""
+        self._streaming: bool = False
+        """Whether the chat is currently streaming a response.
+
+        Used to prevent revert actions during active streaming."""
         """Reference to the owning ChatTabState, set via ``set_state()``.
 
         When the workspace is recomposed, ``flush_state()`` copies the
@@ -151,6 +163,7 @@ class ChatManager(Widget):
         self._tools = state._tools
         self._db = state._db
         self._chat_id = state._chat_id
+        self._turn_checkpoint_tags = getattr(state, '_turn_checkpoint_tags', {})
 
     def flush_state(self) -> None:
         """Sync current widget state back to the ChatTabState.
@@ -167,6 +180,7 @@ class ChatManager(Widget):
             self._state._tools = self._tools
             self._state._db = self._db
             self._state._chat_id = self._chat_id
+            self._state._turn_checkpoint_tags = self._turn_checkpoint_tags
 
     async def _rebuild_display_from_sections(self) -> None:
         """Reconstruct the chat display from persisted sections.
@@ -252,6 +266,10 @@ class ChatManager(Widget):
             # where finalize_turn() only processes the active turn.
             if assistant_started:
                 await self._chat_display.finalize_turn()
+
+        # Re-attach revert buttons to completed user message nodes that
+        # have checkpoint tags from a previous session.
+        self._attach_revert_buttons()
 
     # ------------------------------------------------------------------
     # Setup
@@ -452,8 +470,11 @@ class ChatManager(Widget):
         """Full streaming turn: display user msg, stream assistant, save."""
         turn_id = uuid.uuid4().hex
 
+        # Create a git checkpoint before processing the user message.
+        checkpoint_tag = self._create_turn_checkpoint(turn_id)
+
         # User message in display and database.
-        self._chat_display.add_user_message(user_text)
+        self._chat_display.add_user_message(user_text, checkpoint_tag=checkpoint_tag)
         self._persist_section(turn_id, "user", user_text)
 
         # Assistant branch (no sections yet — added on demand).
@@ -474,6 +495,7 @@ class ChatManager(Widget):
 
         # Enter streaming mode.
         self._chat_input.set_streaming(True)
+        self._streaming = True
 
         watcher: StreamSection | None = None
 
@@ -584,8 +606,13 @@ class ChatManager(Widget):
 
         # Exit streaming mode.
         self._chat_input.set_streaming(False)
+        self._streaming = False
         await self._chat_display.finalize_turn()
         self._chat_input.focus()
+
+        # After the turn is finalized, attach revert buttons to completed
+        # user message branches that have checkpoint tags.
+        self._attach_revert_buttons()
 
     # ------------------------------------------------------------------
     # Slash command dispatch
@@ -736,6 +763,173 @@ class ChatManager(Widget):
         return history
 
     # ------------------------------------------------------------------
+    # Revert checkpoint support
+    # ------------------------------------------------------------------
+
+    def _create_turn_checkpoint(self, turn_id: str) -> str | None:
+        """Create a git checkpoint before processing a user message.
+
+        Imports and calls the git checkpoint script's create_checkpoint
+        function directly.  Returns the tag name on success, or None on
+        failure (e.g. no git repo, git not available).
+
+        The tag is stored in ``_turn_checkpoint_tags`` so it can be
+        looked up later when the user clicks a revert button.
+        """
+        try:
+            from skills.git.scripts.checkpoint import create_checkpoint
+            result = create_checkpoint(f"turn-{turn_id[:8]}")
+            # create_checkpoint returns a multiline string;
+            # the first line contains the tag name.
+            if result and not result.startswith(("Error", "Not a git")):
+                # Parse the tag from the first line:
+                # "Checkpoint created: workspace-checkpoint/turn-xxxx"
+                first_line = result.strip().split("\n")[0]
+                if "Checkpoint created:" in first_line:
+                    tag = first_line.split("Checkpoint created:")[1].strip()
+                    if tag:
+                        self._turn_checkpoint_tags[turn_id] = tag
+                        return tag
+        except Exception:
+            pass  # Best-effort — no checkpoint if git is unavailable.
+        return None
+
+    def _attach_revert_buttons(self) -> None:
+        """Attach revert RowButtons to completed user message branches.
+
+        Iterates over the ChatDisplay tree root's children, finds user
+        message nodes that have a checkpoint_tag in their data, and
+        attaches a revert button if they don't already have one.
+
+        Called after each streaming turn is finalized so that completed
+        turns get the revert button.
+        """
+        root = self._chat_display._root
+        for child in root.children:
+            if child.data and child.data.get("role") == "user":
+                tag = child.data.get("checkpoint_tag")
+                if tag and not any(b.action_id == "revert" for b in child.buttons):
+                    child.buttons.append(
+                        RowButton(action_id="revert", label="\u21a9", style="revert-btn")
+                    )
+        self._chat_display._rebuild()
+
+    def on_tree_row_button_pressed(self, event: Any) -> None:
+        """Handle RowButton presses from the ChatDisplay tree.
+
+        Listens for ``revert`` button presses on user message branches
+        and dispatches the confirm-and-restore flow.
+        """
+        from ui.tree.tree_row import TreeRow
+        if not isinstance(event, TreeRow.ButtonPressed):
+            return
+        if event.action_id != "revert":
+            return
+        event.stop()
+
+        # Don't allow revert during active streaming.
+        if self._streaming:
+            self._chat_display.add_system_message(
+                "Cannot revert during an active response."
+            )
+            return
+
+        node = event.node
+        checkpoint_tag = (node.data or {}).get("checkpoint_tag")
+        if not checkpoint_tag:
+            self._chat_display.add_system_message(
+                "No checkpoint found for this message."
+            )
+            return
+
+        node_id = node.id
+        self.run_worker(self._handle_revert(node_id, checkpoint_tag))
+
+    async def _handle_revert(self, node_id: str, checkpoint_tag: str) -> None:
+        """Confirm and execute a revert to the given checkpoint.
+
+        Shows a confirmation dialog, then restores the git working tree
+        to the checkpoint, trims the conversation display and database.
+        """
+        # Show confirmation dialog.
+        from ui.widgets.confirm_modal import ConfirmModal
+        confirmed = await self.app.push_screen_wait(
+            ConfirmModal(
+                f"Revert to checkpoint '{checkpoint_tag}'?\n"
+                "This will reset the working tree and remove conversation "
+                "history from this point onward."
+            )
+        )
+        if not confirmed:
+            return
+
+        # Restore the git checkpoint.
+        try:
+            from skills.git.scripts.checkpoint import restore_checkpoint
+            # Strip the "workspace-checkpoint/" prefix if present —
+            # restore_checkpoint expects just the short name.
+            short_name = checkpoint_tag
+            if short_name.startswith("workspace-checkpoint/"):
+                short_name = short_name[len("workspace-checkpoint/"):]
+            result = restore_checkpoint(short_name)
+            # Check for error messages from the script.
+            if result:
+                msg = result.strip()
+                if msg.startswith(("Error", "Warning", "No checkpoint")):
+                    self._chat_display.add_system_message(
+                        f"Could not restore checkpoint: {msg}"
+                    )
+                    return
+        except Exception as exc:
+            self._chat_display.add_system_message(
+                f"Error restoring checkpoint: {exc}"
+            )
+            return
+
+        # Trim the conversation display from the reverted node onward.
+        self._chat_display.trim_from_node(node_id)
+
+        # Trim in-memory sections and history.
+        # Find the turn_id for the node that was trimmed.
+        # The node_id is no longer in the tree (it was trimmed), so we
+        # need to find it in our sections list by matching the
+        # checkpoint_tag.
+        turn_id_to_trim = None
+        for tid, tag in self._turn_checkpoint_tags.items():
+            if tag == checkpoint_tag:
+                turn_id_to_trim = tid
+                break
+
+        if turn_id_to_trim is not None:
+            # Find the index of the first section with this turn_id.
+            trim_idx = None
+            for i, sec in enumerate(self._sections):
+                if sec["turn_id"] == turn_id_to_trim:
+                    trim_idx = i
+                    break
+            if trim_idx is not None:
+                self._sections = self._sections[:trim_idx]
+
+            # Wipe DB entries from this turn onward.
+            if self._db is not None and self._chat_id is not None:
+                try:
+                    self._db.delete_sections_from_turn(
+                        self._chat_id, turn_id_to_trim
+                    )
+                except Exception:
+                    pass  # Best-effort.
+
+        # Rebuild history from remaining sections.
+        self._rebuild_history()
+
+        # Add a system message confirming the revert.
+        self._chat_display.add_system_message(
+            f"Reverted to checkpoint: {checkpoint_tag}"
+        )
+
+        self._chat_input.focus()
+
+    # ------------------------------------------------------------------
     # New conversation
     # ------------------------------------------------------------------
 
@@ -754,6 +948,7 @@ class ChatManager(Widget):
         self._history.clear()
         self._sections.clear()
         self._chat_id = None
+        self._turn_checkpoint_tags.clear()
         self._chat_display.add_system_message("New conversation started.")
         self._maybe_show_system_prompt()
         self._chat_input.focus()

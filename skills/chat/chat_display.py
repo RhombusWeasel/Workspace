@@ -41,7 +41,7 @@ from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
 from ui.tree.tree import Tree
-from ui.tree.tree_row import TreeNode
+from ui.tree.tree_row import TreeNode, RowButton
 from ui.tree.tree_row_guttered import GutteredTreeRow
 
 
@@ -153,7 +153,7 @@ class ChatDisplay(Widget):
     # User messages
     # ------------------------------------------------------------------
 
-    def add_user_message(self, text: str) -> str:
+    def add_user_message(self, text: str, *, checkpoint_tag: str | None = None) -> str:
         """Add a user message as a branch node with a Markdown leaf.
 
         Creates an expandable **User** branch whose child is a Markdown
@@ -162,6 +162,9 @@ class ChatDisplay(Widget):
 
         When expanded the label shows ``\uf007  User``; when collapsed
         it shows a truncated preview like ``\uf007  User: Hello there...``.
+
+        If *checkpoint_tag* is provided, it is stored in the node's
+        ``data`` dict for later use by the revert feature.
 
         Returns the branch node ID.
         """
@@ -178,7 +181,7 @@ class ChatDisplay(Widget):
             node_id,
             f"\uf007  [cyan]User:[/cyan] {preview}",
             label_expanded="\uf007  [cyan]User[/cyan]",
-            data={"role": "user"},
+            data={"role": "user", "checkpoint_tag": checkpoint_tag},
             children=[leaf],
         )
         self._root.children.append(branch)
@@ -462,6 +465,63 @@ class ChatDisplay(Widget):
         self._section_widgets = {}
         self._section_texts = {}
         self._section_types = {}
+        self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Revert checkpoint support
+    # ------------------------------------------------------------------
+
+    def add_revert_button(self, node_id: str, checkpoint_tag: str) -> None:
+        """Add a revert RowButton to the given user message node.
+
+        Attaches a small ↩ button to the node's ``buttons`` list that
+        will trigger a revert to the given checkpoint when clicked.
+        The button is only added to completed/abandoned turns — not
+        during active streaming.
+
+        After adding the button, the tree is rebuilt so the button
+        appears in the UI.
+        """
+        node = self._find_node(node_id)
+        if node is None:
+            return
+
+        # Store the checkpoint tag on the node data for reference.
+        if node.data is None:
+            node.data = {}
+        node.data["checkpoint_tag"] = checkpoint_tag
+
+        # Add the revert button if not already present.
+        if not any(b.action_id == "revert" for b in node.buttons):
+            node.buttons.append(
+                RowButton(action_id="revert", label="\u21a9", style="revert-btn")
+            )
+
+        self._rebuild()
+
+    def trim_from_node(self, node_id: str) -> None:
+        """Remove all top-level children after the given node.
+
+        Used by the revert feature to remove conversation turns that
+        occurred after a checkpoint.  Finds the target node among
+        the root's children, truncates the list to include only
+        nodes before it (exclusive), and rebuilds the tree.
+
+        Does NOT clear internal section state — the caller (ChatManager)
+        is responsible for trimming ``_history`` and ``_sections``.
+        """
+        # Find the index of the target node.
+        idx = None
+        for i, child in enumerate(self._root.children):
+            if child.id == node_id:
+                idx = i
+                break
+
+        if idx is None:
+            return  # Node not found — nothing to trim.
+
+        # Truncate: keep only nodes before the target (exclusive).
+        self._root.children = self._root.children[:idx]
         self._rebuild()
 
     # ------------------------------------------------------------------

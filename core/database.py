@@ -379,6 +379,32 @@ class DatabaseManager:
             "DELETE FROM messages WHERE chat_id = ?", (chat_id,)
         )
 
+    def delete_sections_from_turn(self, chat_id: str, turn_id: str) -> None:
+        """Delete all message sections from the given turn onward.
+
+        Finds the row id of the first section with the given turn_id
+        and deletes all rows (for the same chat_id) with id >= that
+        row id.  Used by the "revert to here" feature to remove
+        conversation history from a specific turn point.
+
+        If the turn_id is not found, this is a no-op.
+        """
+        # Find the minimum row id for the target turn_id.
+        rows = self._provider.execute(
+            "SELECT MIN(id) AS min_id FROM messages "
+            "WHERE chat_id = ? AND turn_id = ?",
+            (chat_id, turn_id),
+        )
+        if not rows or rows[0]["min_id"] is None:
+            return  # turn_id not found — nothing to delete.
+
+        min_id = rows[0]["min_id"]
+        self._provider.execute(
+            "DELETE FROM messages WHERE chat_id = ? AND id >= ?",
+            (chat_id, min_id),
+        )
+        self._provider.conn.commit()
+
     # ------------------------------------------------------------------
     # Agent CRUD (deprecated — use AgentManager from core.agent_registry)
     # ------------------------------------------------------------------
