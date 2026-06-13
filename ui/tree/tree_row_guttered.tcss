@@ -1,0 +1,28 @@
+/* -----------------------------------------------------------------------
+ * Guttered tree row — extends TreeRow styles with gutter support
+ *
+ * The gutter sits inside .tree-row-content.guttered alongside the
+ * content widget.  We remove the original padding-left (1 cell)
+ * because the gutter now provides the correct indentation.
+ *
+ * The gutter uses height: 1fr to stretch to match the content widget.
+ * On resize it repeats the │ pattern vertically.
+ * ----------------------------------------------------------------------- */
+
+/* The guttered content container — lays out gutter + content side by side */
+.tree-row-content.guttered {
+    width: 1fr;
+    height: auto;
+    padding-left: 0;   /* gutter handles indentation now */
+}
+
+/* The gutter strip — stretches to content height, repeats │ vertically */
+_RowGutter {
+    width: auto;
+    height: 1fr;
+    overflow: hidden;
+    padding: 0;
+    margin: 0;
+    border: none;
+    color: $text-muted;
+}

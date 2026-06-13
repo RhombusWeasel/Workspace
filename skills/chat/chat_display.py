@@ -42,6 +42,7 @@ from textual.widgets import Markdown, Static
 
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode
+from ui.tree.tree_row_guttered import GutteredTreeRow
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ class ChatDisplay(Widget):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Tree(self._root)
+        yield Tree(self._root, row_class=GutteredTreeRow)
 
     # ------------------------------------------------------------------
     # Scrolling

@@ -29,6 +29,7 @@ from ui.tree.tree_row import (
     _LAST_BRANCH,
     _INDENT,
 )
+from ui.tree.tree_row_guttered import GutteredTreeRow
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +93,16 @@ class Tree(VerticalScroll, can_focus=True):
 
     selected_id: reactive[str | None] = reactive(None)
 
-    def __init__(self, root: TreeNode):
+    DEFAULT_CSS = """
+    Tree {
+        height: 1fr;
+    }
+    """
+
+    def __init__(self, root: TreeNode, *, row_class: type[TreeRow] | None = None):
         super().__init__()
         self._root = root
+        self._row_class = row_class or TreeRow
         self._expanded: set[str] = {root.id}
         # IDs of branches the user has manually collapsed.
         # These persist across rebuild() calls so that user collapse
@@ -171,7 +179,7 @@ class Tree(VerticalScroll, can_focus=True):
             is_branch = bool(node.children) or not node.loaded
             prefix = prefixes.get(node.id, "")
             expanded = node.id in self._expanded
-            row = TreeRow(
+            row = self._row_class(
                 node, depth=depth, is_branch=is_branch,
                 prefix=prefix, expanded=expanded,
             )
@@ -373,7 +381,7 @@ class Tree(VerticalScroll, can_focus=True):
             is_branch = bool(node.children) or not node.loaded
             prefix = prefixes.get(node.id, "")
             expanded = node.id in self._expanded
-            row = TreeRow(
+            row = self._row_class(
                 node, depth=depth, is_branch=is_branch,
                 prefix=prefix, expanded=expanded,
             )
