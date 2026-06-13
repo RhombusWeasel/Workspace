@@ -8,8 +8,9 @@ lines below lose the │ connectors, breaking the visual tree indentation.
 
 This variant adds a :class:`_RowGutter` widget — a narrow vertical strip
 that repeats the ancestor portion of the prefix alongside the content.
-The gutter sits in the same Horizontal container as the content widget
-and stretches to match its height.
+The gutter sits in the same Horizontal container as the content widget.
+The parent :class:`GutteredTreeRow` watches the content widget's height
+via :class:`~textual.events.Resize` and keeps the gutter in sync.
 
 Usage
 -----
@@ -21,14 +22,11 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.events import Resize
 from textual.widgets import Static
 
 from ui.tree.tree_row import (
     TreeNode,
     TreeRow,
-    _INDENT,
-    _LINE_VERTICAL,
 )
 
 
@@ -45,17 +43,20 @@ class _RowGutter(Static):
     (├─ or └─).  For example, if the full prefix is ``"   │  └─ "``, the
     gutter shows ``"   │  "`` repeated for every line of the content.
 
-    The gutter width is fixed to ``len(gutter_text)`` cells and it
-    expands vertically with ``height: 1fr`` to match the content
-    alongside it.  On each :class:`~textual.events.Resize` it
-    recalculates how many repetitions are needed and updates its
-    content accordingly.
+    The gutter is ``height: auto`` — it does **not** stretch to fill
+    available space.  Instead, the parent :class:`GutteredTreeRow`
+    monitors the content widget's :class:`~textual.events.Resize` events
+    and calls :meth:`update_height` to keep the gutter in sync.
+
+    An empty gutter string (root-level nodes) is rendered as a single
+    space per line so that the Horizontal layout keeps the gutter slot
+    allocated.
     """
 
     DEFAULT_CSS = """
     _RowGutter {
         width: auto;
-        height: 1fr;
+        height: auto;
         overflow: hidden;
         padding: 0;
         margin: 0;
@@ -64,11 +65,8 @@ class _RowGutter(Static):
     """
 
     def __init__(self, gutter_text: str):
-        # Store the raw gutter string (e.g. "   │  ") — the ancestor
-        # portion of the prefix.  We repeat it vertically by joining
-        # with newlines.
         self._gutter_text = gutter_text
-        self._last_height: int | None = None
+        self._line_count: int = 1
         super().__init__(self._build_gutter(1))
 
     # ------------------------------------------------------------------
@@ -77,14 +75,27 @@ class _RowGutter(Static):
 
     def set_gutter(self, gutter_text: str) -> None:
         """Update the gutter string (e.g. when the prefix changes after
-        a rebuild)."""
+        a rebuild) and re-render."""
         if gutter_text != self._gutter_text:
             self._gutter_text = gutter_text
-            self.update(self._build_gutter(self._last_height or 1))
+            self.update(self._build_gutter(self._line_count))
 
     @property
     def gutter_text(self) -> str:
         return self._gutter_text
+
+    def update_height(self, height: int) -> None:
+        """Update the gutter to show *height* lines of the pattern.
+
+        Called by the parent :class:`GutteredTreeRow` when the content
+        widget resizes.  The gutter's own height is set explicitly and
+        its content is rebuilt to fill exactly that many visual lines.
+        """
+        if height < 1:
+            height = 1
+        if height != self._line_count:
+            self._line_count = height
+            self.update(self._build_gutter(height))
 
     # ------------------------------------------------------------------
     # Internals
@@ -97,27 +108,14 @@ class _RowGutter(Static):
         stack vertically, creating a continuous tree-line guide.
 
         An empty gutter string (root-level content nodes) produces a
-        minimal indentation — we still yield a single space so the
-        Horizontal layout keeps the gutter slot allocated.
+        single space per line so the Horizontal layout keeps the gutter
+        slot allocated.
         """
         if not self._gutter_text:
             # Root-level: no ancestor lines, just a tiny spacer.
-            # Returning empty string would cause Textual to collapse
-            # the widget, so we use a single space per line.
+            # A single space per line prevents the widget from collapsing.
             return "\n".join(" " for _ in range(max(1, height)))
-        return "\n".join(self._gutter_text for _ in range(height))
-
-    def on_resize(self, event: Resize) -> None:
-        """When the gutter is resized, recalculate how many lines to fill.
-
-        The Horizontal parent sizes the gutter to match the content
-        widget's height, so ``event.size.height`` gives us the exact
-        number of lines we need to fill with the gutter pattern.
-        """
-        new_height = event.size.height
-        if new_height != self._last_height:
-            self._last_height = new_height
-            self.update(self._build_gutter(new_height))
+        return "\n".join(self._gutter_text for _ in range(max(height, 1)))
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +153,7 @@ def _extract_gutter(prefix: str) -> str:
         '│  │  '
     """
     if len(prefix) <= 3:
-        # Root-level or empty prefix — no ancestor gutter needed.
         return ""
-    # Strip the final 3-char connector (├─  or └─ ), keeping the
-    # ancestor segments which contain │ or spaces.
     return prefix[:-3]
 
 
@@ -172,13 +167,13 @@ class GutteredTreeRow(TreeRow):
     widgets so that tree-line │ characters continue through multi-line
     content.
 
-    The gutter width matches the ancestor portion of the tree-line prefix
-    and the content widget is indented accordingly.  The rest of the
-    row (label, buttons, events) is unchanged from the base class.
+    The gutter width matches the ancestor portion of the tree-line prefix.
+    When the content widget resizes, this row catches the
+    :class:`~textual.events.Resize` event and updates the gutter height
+    to match, keeping the │ characters aligned.
     """
 
     def compose(self) -> ComposeResult:
-        # Build the label the same way as TreeRow
         self._label = self._render_label_widget()
 
         if self.node.inline_edit is not None:
@@ -235,6 +230,22 @@ class GutteredTreeRow(TreeRow):
             else self.node.label
         )
         return label
+
+    def on_resize(self, event) -> None:
+        """When this row resizes, check if the content widget changed
+        height and update the gutter to match."""
+        if not hasattr(self, "_gutter") or self._gutter is None:
+            return
+        if self.node.content is None:
+            return
+        # The content widget's region height tells us how many lines
+        # the gutter should span.
+        try:
+            content_height = self.node.content.region.size.height
+        except Exception:
+            return
+        if content_height and content_height > 0:
+            self._gutter.update_height(content_height)
 
     def set_expanded(self, expanded: bool) -> None:
         """Update the expand/collapse indicator and re-render the label.

@@ -5,8 +5,8 @@
  * content widget.  We remove the original padding-left (1 cell)
  * because the gutter now provides the correct indentation.
  *
- * The gutter uses height: 1fr to stretch to match the content widget.
- * On resize it repeats the │ pattern vertically.
+ * The gutter uses height: auto and is sized by the parent
+ * GutteredTreeRow to match the content widget's height.
  * ----------------------------------------------------------------------- */
 
 /* The guttered content container — lays out gutter + content side by side */
@@ -16,10 +16,10 @@
     padding-left: 0;   /* gutter handles indentation now */
 }
 
-/* The gutter strip — stretches to content height, repeats │ vertically */
+/* The gutter strip — auto height, sized by parent to match content */
 _RowGutter {
     width: auto;
-    height: 1fr;
+    height: auto;
     overflow: hidden;
     padding: 0;
     margin: 0;
