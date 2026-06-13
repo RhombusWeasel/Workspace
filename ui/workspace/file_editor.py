@@ -322,8 +322,8 @@ class FileEditor(Widget):
         """Return the shared provider and model from the app context.
 
         Uses the provider registry to get the default provider instance.
-        Falls back to ``session.model`` if ``inline_suggest.model`` is
-        not set.
+        Falls back to the active provider's model from config if
+        ``inline_suggest.model`` is not set.
 
         Returns ``(provider, model)`` or ``(None, "")`` on failure.
         """
@@ -336,7 +336,8 @@ class FileEditor(Widget):
                 provider = ctx.provider
             model = ctx.config.get("inline_suggest.model", "")
             if not model:
-                model = ctx.config.get("session.model", "")
+                provider_name = ctx.config.get("session.provider", "ollama")
+                model = ctx.config.get(f"providers.{provider_name}.model", "")
             return provider, model
         except Exception:
             return None, ""

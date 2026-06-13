@@ -1,9 +1,13 @@
 """Provider registry — manages named LLM provider instances.
 
-Provider instances are defined in config under ``providers.instances``
-as a mapping of name → config dict.  Each config dict requires a ``type``
-key (e.g. ``"ollama"``, ``"openai"``) plus provider-specific settings
-like ``base_url`` and ``model``.
+Provider definitions live directly under ``providers`` in config as a mapping
+of name → config dict.  Each config dict requires a ``type`` key (e.g.
+``"ollama"``, ``"openai"``) plus provider-specific settings like ``base_url``
+and ``model``.
+
+The active provider is selected by ``session.provider``, which names the
+provider to use.  The model is looked up from the provider definition at
+``providers.<name>.model``, falling back to the provider's default.
 
 The registry lazily creates provider instances on first access and
 caches them for the session.  Provider *types* are registered via
@@ -14,25 +18,22 @@ Example config::
 
     {
       "providers": {
-        "instances": {
-          "ollama-local": {
-            "type": "ollama",
-            "base_url": "http://localhost:11434",
-            "model": "deepseek-r1:14b"
-          },
-          "ollama-cloud": {
-            "type": "ollama",
-            "base_url": "http://localhost:11434",
-            "model": "deepseek-v4-pro:cloud"
-          },
-          "openai-main": {
-            "type": "openai",
-            "model": "gpt-4o"
-          }
+        "ollama-local": {
+          "type": "ollama",
+          "base_url": "http://localhost:11434",
+          "model": "deepseek-r1:14b"
+        },
+        "ollama-cloud": {
+          "type": "ollama",
+          "model": "deepseek-v4-pro:cloud"
+        },
+        "openai-main": {
+          "type": "openai",
+          "model": "gpt-4o"
         }
       },
       "session": {
-        "default_provider": "ollama-cloud"
+        "provider": "ollama-cloud"
       }
     }
 """
@@ -55,14 +56,12 @@ if TYPE_CHECKING:
 register_defaults(
     {
         "providers": {
-            "instances": {
-                "ollama": {
-                    "type": "ollama",
-                },
+            "ollama": {
+                "type": "ollama",
             },
         },
         "session": {
-            "default_provider": "ollama",
+            "provider": "ollama",
             "max_tool_calls": 10,
             "yolo_mode": False,
         },
@@ -135,21 +134,30 @@ class ProviderRegistry:
     def get_default(self) -> BaseProvider:
         """Return the default provider instance.
 
-        Reads ``session.default_provider`` from config to determine
-        the instance name.  Falls back to ``"ollama"`` if not set.
+        Reads ``session.provider`` from config to determine
+        the provider name.  Falls back to ``"ollama"`` if not set.
         """
-        name = self._config.get("session.default_provider", "ollama")
+        name = self._config.get("session.provider", "ollama")
         return self.get(name)
 
     def list_instances(self) -> list[str]:
-        """Return sorted list of configured provider instance names."""
-        instances = self._config.get("providers.instances", {})
-        return sorted(instances.keys()) if isinstance(instances, dict) else []
+        """Return sorted list of configured provider instance names.
+
+        Only entries that are dicts with a ``type`` key are considered
+        provider definitions (other keys under ``providers`` are ignored).
+        """
+        providers = self._config.get("providers", {})
+        if not isinstance(providers, dict):
+            return []
+        return sorted(
+            k for k, v in providers.items()
+            if isinstance(v, dict) and "type" in v
+        )
 
     def has_instance(self, name: str) -> bool:
         """Return ``True`` if a provider instance with *name* is configured."""
-        instances = self._config.get("providers.instances", {})
-        return name in instances if isinstance(instances, dict) else False
+        provider_cfg = self._config.get(f"providers.{name}", {})
+        return isinstance(provider_cfg, dict) and "type" in provider_cfg
 
     # ------------------------------------------------------------------
     # Instance creation
@@ -158,45 +166,38 @@ class ProviderRegistry:
     def _create(self, name: str) -> BaseProvider:
         """Create a provider instance from config.
 
-        Reads the instance definition from ``providers.instances.<name>``,
+        Reads the provider definition from ``providers.<name>``,
         looks up the ``type`` to find the registered class, and constructs
         it with the global config, vault, and any extra keys from the
-        instance definition as keyword arguments (excluding ``type``).
+        provider definition as keyword arguments (excluding ``type``).
 
         The provider class receives:
         - ``config`` — the global Config instance
         - ``vault`` — the VaultManager
-        - Any remaining keys from the instance definition as kwargs
+        - Any remaining keys from the provider definition as kwargs
         """
-        instances = self._config.get("providers.instances", {})
-        if not isinstance(instances, dict) or name not in instances:
+        provider_cfg = self._config.get(f"providers.{name}", {})
+        if not isinstance(provider_cfg, dict) or "type" not in provider_cfg:
             raise ValueError(
-                f"Provider instance '{name}' not found in config. "
-                f"Available instances: {self.list_instances()}"
+                f"Provider '{name}' not found in config. "
+                f"Available providers: {self.list_instances()}"
             )
 
-        instance_config = instances[name]
-        if not isinstance(instance_config, dict):
-            raise ValueError(
-                f"Provider instance '{name}' config must be a dict, "
-                f"got {type(instance_config).__name__}"
-            )
-
-        type_name = instance_config.get("type", "ollama")
+        type_name = provider_cfg.get("type", "ollama")
         if type_name not in self._types:
             available = ", ".join(self.list_types()) or "(none registered)"
             raise ValueError(
-                f"Unknown provider type '{type_name}' for instance '{name}'. "
+                f"Unknown provider type '{type_name}' for provider '{name}'. "
                 f"Registered types: {available}"
             )
 
         cls = self._types[type_name]
 
-        # Build kwargs from the instance definition, excluding 'type'.
+        # Build kwargs from the provider definition, excluding 'type'.
         # The provider class receives config= and vault= explicitly,
         # plus any extra keys (model, base_url, etc.) as overrides.
         extra_kwargs = {
-            k: v for k, v in instance_config.items() if k != "type"
+            k: v for k, v in provider_cfg.items() if k != "type"
         }
 
         try:
@@ -209,6 +210,18 @@ class ProviderRegistry:
 
         self._instances[name] = instance
         return instance
+
+    # ------------------------------------------------------------------
+    # Backward compatibility
+    # ------------------------------------------------------------------
+
+    # Keep old config keys working during migration
+    _MIGRATED_KEYS = {
+        "providers.instances": "providers (flat)",
+        "session.default_provider": "session.provider",
+        "session.model": "providers.<name>.model",
+        "ollama.base_url": "providers.<name>.base_url",
+    }
 
     # ------------------------------------------------------------------
     # Testing helpers

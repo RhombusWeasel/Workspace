@@ -102,10 +102,10 @@ class TreeNode:
 # Constants — box-drawing characters for tree lines
 # ---------------------------------------------------------------------------
 
-_LINE_VERTICAL = "│   "
-_BRANCH = "├── "
-_LAST_BRANCH = "└── "
-_INDENT = "    "
+_LINE_VERTICAL = "│  "
+_BRANCH = "├─ "
+_LAST_BRANCH = "└─ "
+_INDENT = "   "
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +214,12 @@ class TreeRow(Widget):
         # Label area — handles clicks for select/toggle
         self._label = _RowLabel(
             self._render_label(), self.node, self.is_branch, self
+        )
+        # Tooltip shows the raw label (without tree-line prefix or toggle)
+        self._label.tooltip = (
+            self.node.label_expanded
+            if (self.expanded and self.node.label_expanded is not None)
+            else self.node.label
         )
         if self.node.inline_edit is not None:
             self.add_class("with-inline-editor")

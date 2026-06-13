@@ -24,6 +24,7 @@ conftest.py            ← Pytest fixtures
 ├── core/              ← Core systems (zero UI dependency)
 │   ├── agent.py       ← Agent: system prompt builder, tool-calling loop, streaming, progress checkpoints
 │   ├── agent_registry.py   ← AgentManager: agent definition registry, template rendering
+│   ├── agents_md.py   ← AGENTS.md loader (global + local agent rules files)
 │   ├── commands.py    ← Slash-command loader (CommandBase, 3-tier discovery)
 │   ├── config.py      ← Config manager (layered JSON, dot-path, diff-save, registered defaults)
 │   ├── database.py    ← Database manager (SQLite provider, CRUD)
@@ -370,6 +371,7 @@ been resolved during the rewrite:
 │   ├── __init__.py
 │   ├── agent.py               ← Agent: system prompt, tool-calling loop, streaming
 │   ├── agent_registry.py      ← AgentManager: agent definition registry, template rendering
+│   ├── agents_md.py           ← AGENTS.md loader (global + local agent rules files)
 │   ├── commands.py            ← Slash-command loader
 │   ├── config.py              ← Layered JSON config, dot-path, diff-save
 │   ├── database.py            ← SQLite DB manager, CRUD, agent seeding
@@ -454,6 +456,7 @@ been resolved during the rewrite:
 ├── tests/
 │   ├── test_agent.py
 │   ├── test_agent_registry.py
+│   ├── test_agents_md.py
 │   ├── test_bootstrap.py
 │   ├── test_chat_display.py
 │   ├── test_chat_display_system.py
@@ -1001,7 +1004,7 @@ Key changes:
 - `skills/prompts/` → `skills/agents/` (renamed, new SKILL.md + panel)
 - `ctx.provider` → `ctx.providers` (ProviderRegistry, with backward-compat property)
 - `ctx.prompts` → `ctx.agents` (AgentManager, with deprecated alias)
-- `session.provider` → `session.default_provider`
+- `session.provider` → `session.provider` (key unchanged, but now references flat `providers` dict instead of `providers.instances`)
 - `prompt.default_id` → `agent.default_id`
 - Agent table schema: added provider, tools, skills, temperature, max_tool_iterations
 - `cmd/agent.py` — `/agent` slash command for agent switching
@@ -1080,6 +1083,7 @@ and their body is available for agent activation.
 | Default themes | **DONE** | Theme switching functional |
 | Bundled skills (coding, todo, brave_search) | brave_search **DONE**; coding/todo **NOT STARTED** | brave_search skill + in-process script execution (§26) |
 | Agent registry + Provider registry | **DONE** | See §25 — replaced PromptManager with AgentManager + ProviderRegistry |
+| Provider config consolidation | **DONE** | See §28 — unified provider config, flattened `providers.instances` → `providers`, moved `session.model`/`ollama.base_url` into provider definitions |
 
 ---
 
@@ -1155,28 +1159,30 @@ each agent can route through a specific named instance.
 
 **File:** `core/providers/registry.py`
 
-Provider instances are defined in config under `providers.instances`:
+Provider definitions live directly under `providers` in config, with each named provider as a key:
 
 ```json
 {
   "providers": {
-    "instances": {
-      "ollama-local": {
-        "type": "ollama",
-        "base_url": "http://localhost:11434",
-        "model": "deepseek-r1:14b"
-      },
-      "ollama-cloud": {
-        "type": "ollama",
-        "model": "deepseek-v4-pro:cloud"
-      }
+    "ollama-local": {
+      "type": "ollama",
+      "base_url": "http://localhost:11434",
+      "model": "deepseek-r1:14b"
+    },
+    "ollama-cloud": {
+      "type": "ollama",
+      "model": "deepseek-v4-pro:cloud"
     }
   },
   "session": {
-    "default_provider": "ollama-cloud"
+    "provider": "ollama-cloud"
   }
 }
 ```
+
+The active provider is selected by `session.provider`. The model and base URL
+are looked up from the provider definition at `providers.<name>.model` and
+`providers.<name>.base_url`, eliminating the need for separate top-level keys.
 
 Key methods:
 
@@ -1184,7 +1190,7 @@ Key methods:
 |---|---|
 | `register_type(name, cls)` | Register a provider class for a type name |
 | `get(name)` | Get a named provider instance (lazily created) |
-| `get_default()` | Get the default provider (from `session.default_provider`) |
+| `get_default()` | Get the default provider (from `session.provider`) |
 | `list_instances()` | List configured instance names |
 | `has_instance(name)` | Check if an instance is configured |
 
@@ -1200,8 +1206,8 @@ former `PromptManager` with:
 
 | Field | Purpose | Default if empty |
 |---|---|---|
-| `model` | Override the LLM model | Session default (`session.model`) |
-| `provider` | Named provider instance | Session default (`session.default_provider`) |
+| `model` | Override the LLM model | Active provider's model (`providers.<name>.model`) |
+| `provider` | Named provider instance | Session default (`session.provider`) |
 | `tools` | JSON list of allowed tool names/tags | All tools |
 | `skills` | JSON list of skill names to activate | All skills (via `{{skills}}`) |
 | `temperature` | Sampling temperature override | Provider default |
@@ -1275,10 +1281,13 @@ name → provider → model → template.
 
 | Old key | New key |
 |---|---|
-| `session.provider` | `session.default_provider` |
+| `session.provider` | `session.provider` (unchanged) |
+| `session.default_provider` | `session.provider` |
 | `prompt.default_id` | `agent.default_id` |
 | `prompt.inline_suggest_id` | `agent.inline_suggest_id` |
-| *(none)* | `providers.instances` |
+| `providers.instances` | `providers` (flat, no `instances` nesting) |
+| `session.model` | `providers.<name>.model` (moved to provider definition) |
+| `ollama.base_url` | `providers.<name>.base_url` (moved to provider definition) |
 | *(none)* | `session.max_tool_calls` |
 
 The `{{provider}}` template variable is now available, resolving to the
@@ -1402,3 +1411,182 @@ API key in the password field.
 | Web search only, no separate news endpoint | Adding "news" to the query is sufficient; avoids an extra API endpoint |
 | In-process execution for Python scripts | Avoids serialising secrets; gives scripts direct access to vault, config, etc. |
 | No `__init__.py`, no `components/` | Pure script skill with no UI or service registration |
+
+---
+
+## 27. AGENTS.md — Layered Agent Rules
+
+### 27.1 Overview
+
+Workspace now supports **AGENTS.md** files that inject user-configurable
+rules into agent system prompts.  Two tiers of rules are available:
+
+- **Global rules** (`~/.agents/AGENTS.md`) — apply to every project on the machine
+- **Local rules** (`{working_directory}/.agents/AGENTS.md`) — apply only to the
+  current project
+
+These are exposed as `{{global_agents}}` and `{{local_agents}}` template
+variables in agent system prompt templates.  If the corresponding file
+does not exist, the variable resolves to an empty string — no extra
+blank lines are left in the rendered prompt.
+
+### 27.2 File Location
+
+```
+~/.agents/AGENTS.md                ← Global rules (user-wide)
+{working_directory}/.agents/AGENTS.md  ← Local rules (project-specific)
+```
+
+These paths follow the same tiered directory convention used by config
+files and skills.  Only the **user** and **project** tiers are scanned
+(not the bundled workspace directory), since AGENTS.md files are
+user-authored configuration, not bundled defaults.
+
+### 27.3 Template Variables
+
+| Variable | Source | Empty if |
+|---|---|---|
+| `{{global_agents}}` | `~/.agents/AGENTS.md` | File does not exist |
+| `{{local_agents}}` | `{wd}/.agents/AGENTS.md` | File does not exist |
+
+When a file exists, its content is wrapped with leading and trailing
+newlines so it composes cleanly with surrounding template lines:
+
+```
+Date: 2026-06-13
+\n<content>\n
+<available_skills>...
+```
+
+When the file is missing, the variable resolves to `""`, so no
+extra blank lines appear.
+
+### 27.4 Default Agent Template
+
+The default agent template now includes both placeholders:
+
+```
+You are a helpful AI coding assistant working in {{project_name}}.
+
+Current working directory: {{working_directory}}
+Date: {{date}}
+{{global_agents}}{{local_agents}}
+{{skills}}
+
+Use the available tools when appropriate...
+```
+
+This means:
+- With no AGENTS.md files, the prompt is identical to before
+- With only `~/.agents/AGENTS.md`, global rules appear before the skills catalog
+- With both files, global rules appear first, then local rules, then skills
+
+### 27.5 Implementation
+
+**File:** `core/agents_md.py`
+
+Two public functions:
+
+| Function | Purpose |
+|---|---|
+| `load_global_agents_md(ctx)` | Load `~/.agents/AGENTS.md`, return content or `""` |
+| `load_local_agents_md(ctx)` | Load `{wd}/.agents/AGENTS.md`, return content or `""` |
+
+Both are registered as dynamic providers in `bootstrap._register_agent_providers()`:
+
+```python
+agents.register_dynamic("global_agents", lambda ctx: load_global_agents_md(ctx))
+agents.register_dynamic("local_agents", lambda ctx: load_local_agents_md(ctx))
+```
+
+Error handling: `OSError` and `UnicodeDecodeError` are caught — the
+variable silently resolves to `""` if the file exists but cannot be read.
+
+### 27.6 Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Two separate variables, not one merged variable | Users may want global rules to always apply while customising local rules per project; separate variables give full control |
+| No bundled/workspace tier | AGENTS.md is user-authored rules, not bundled defaults; the workspace installation has no AGENTS.md |
+| Empty string on missing file, not a placeholder | Prevents `{{global_agents}}` from appearing literally in prompts when no file exists |
+| Content wrapped with newlines | Ensures clean separation in the rendered prompt regardless of whether one or both files exist |
+| Dynamic providers, not static | Rules are read at render time so users can create/edit AGENTS.md without restarting the application (next conversation picks up changes) |
+
+---
+
+## 28. Provider Config Consolidation
+
+### 28.1 Overview
+
+Provider configuration was previously spread across three separate config locations:
+
+- `session.model` — default LLM model
+- `ollama.base_url` — Ollama server URL (top-level, not under providers!)
+- `providers.instances.ollama.type` — provider definition (nested under `instances`)
+
+This has been unified so that **all provider settings live under `providers`** and
+the session only needs to point to the active provider by name.
+
+### 28.2 New Config Structure
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "type": "ollama",
+      "base_url": "http://localhost:11434",
+      "model": "deepseek-v4-pro:cloud"
+    },
+    "ollama-local": {
+      "type": "ollama",
+      "base_url": "http://localhost:11434",
+      "model": "deepseek-r1:14b"
+    },
+    "openai-main": {
+      "type": "openai",
+      "model": "gpt-4o"
+    }
+  },
+  "session": {
+    "provider": "ollama",
+    "max_tool_calls": 10,
+    "yolo_mode": false
+  }
+}
+```
+
+### 28.3 Key Changes
+
+| Old key | New key | Notes |
+|---|---|---|
+| `providers.instances` | `providers` (flat) | No `instances` nesting — provider names are direct keys |
+| `session.default_provider` | `session.provider` | Shorter, clearer key name |
+| `session.model` | `providers.<name>.model` | Model is per-provider, not global |
+| `ollama.base_url` | `providers.<name>.base_url` | Base URL is per-provider, not global |
+
+### 28.4 How It Works
+
+1. `session.provider` selects the active provider by name (e.g. `"ollama"`)
+2. The provider definition at `providers.<name>` contains the `type`, `model`, `base_url`, and any other provider-specific settings
+3. `ProviderRegistry._create()` passes all keys except `type` as kwargs to the provider class constructor
+4. `AgentManager.resolve_model()` now looks up the model from the active provider definition (`providers.<session.provider>.model`) instead of a global `session.model`
+5. The `{{model}}` template variable in agent prompts resolves dynamically from the active provider's model
+
+### 28.5 Affected Files
+
+| File | Change |
+|---|---|
+| `core/providers/registry.py` | Config defaults, `get_default()`, `list_instances()`, `has_instance()`, `_create()` all read from flat `providers` instead of `providers.instances` |
+| `core/providers/ollama.py` | Removed `session.model` and `ollama.base_url` defaults; model/base_url now come from provider definition kwargs |
+| `core/agent_registry.py` | `resolve_model()` looks up `providers.<name>.model` instead of `session.model`; `resolve_provider_name()` uses `session.provider` |
+| `bootstrap.py` | Dynamic providers for `model` and `provider` use new config paths |
+| `skills/chat/chat_manager.py` | Model fallback uses `providers.<name>.model` instead of `session.model` |
+| `ui/widgets/commit_modal.py` | Model fallback uses `providers.<name>.model` |
+| `ui/workspace/file_editor.py` | Model fallback uses `providers.<name>.model` |
+| `design_document.md` | Updated §25.2, §25.3, §25.7 config table |
+
+### 28.6 Backward Compatibility
+
+- `AppContext.provider` property still works (delegates to `providers.get_default()`)
+- Old config keys (`session.default_provider`, `session.model`, `ollama.base_url`) are no longer read — users must update their config files
+- The `ProviderRegistry` migration comment documents the old → new key mapping for reference

@@ -72,11 +72,12 @@ DEFAULT_CHAT_AGENT = {
         "You are a helpful AI coding assistant working in {{project_name}}.\n\n"
         "Current working directory: {{working_directory}}\n"
         "Date: {{date}}\n"
-        "\n"
+        "{{global_agents}}\n"
+        "{{local_agents}}\n"
         "{{skills}}\n"
         "\n"
         "Use the available tools when appropriate. "
-        "The user can activate specific skills for detailed instructions "
+        "You can activate specific skills for detailed instructions "
         "by using the activate_skill tool.\n"
     ),
     "model": "",
@@ -293,13 +294,15 @@ class AgentManager:
 
         Resolution order:
         1. Agent's ``model`` field (if non-empty)
-        2. ``session.model`` from config
+        2. The active provider's model from ``providers.<session.provider>.model``
         3. Empty string (provider default)
         """
         if agent_def.get("model"):
             return agent_def["model"]
         if ctx and ctx.config:
-            return ctx.config.get("session.model", "")
+            # Look up the model from the active provider definition
+            provider_name = ctx.config.get("session.provider", "ollama")
+            return ctx.config.get(f"providers.{provider_name}.model", "")
         return ""
 
     def resolve_provider_name(self, agent_def: dict[str, Any], ctx: AppContext) -> str:
@@ -307,13 +310,13 @@ class AgentManager:
 
         Resolution order:
         1. Agent's ``provider`` field (if non-empty)
-        2. ``session.default_provider`` from config
+        2. ``session.provider`` from config
         3. ``"ollama"`` (fallback)
         """
         if agent_def.get("provider"):
             return agent_def["provider"]
         if ctx and ctx.config:
-            return ctx.config.get("session.default_provider", "ollama")
+            return ctx.config.get("session.provider", "ollama")
         return "ollama"
 
     def resolve_tools(self, agent_def: dict[str, Any]) -> list[str] | None:

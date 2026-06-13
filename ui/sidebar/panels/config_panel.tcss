@@ -16,6 +16,7 @@ ConfigPanel Tree {
 TreeRow.with-inline-editor _RowLabel {
     width: 1fr;
     padding: 0 1 0 0;
+    text-overflow: ellipsis;
 }
 
 /* Input fields fill remaining horizontal space */

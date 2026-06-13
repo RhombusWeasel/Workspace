@@ -39,10 +39,18 @@ if TYPE_CHECKING:
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_MODEL = "deepseek-v4-pro:cloud"
 
-# Register config defaults so they flow through bootstrap → Config.apply_defaults()
+# Register config defaults for the default "ollama" provider instance.
+# The model and base_url now live under the provider definition
+# (providers.ollama.model, providers.ollama.base_url) rather than
+# as top-level keys (session.model, ollama.base_url).
 register_defaults({
-    "session": {"model": _DEFAULT_MODEL},
-    "ollama": {"base_url": _DEFAULT_BASE_URL},
+    "providers": {
+        "ollama": {
+            "type": "ollama",
+            "base_url": _DEFAULT_BASE_URL,
+            "model": _DEFAULT_MODEL,
+        },
+    },
 })
 
 
@@ -52,15 +60,15 @@ class OllamaProvider(BaseProvider):
     Parameters
     ----------
     config:
-        Workspace config for non-secret settings (base URL, model).
+        Workspace config for resolving fallback settings.
     vault:
         Vault manager for API key lookup and secret redaction.
     model:
-        Explicit model override.  Falls back to ``config.session.model``
-        then to the default model.
+        Explicit model override.  Falls back to
+        ``providers.<name>.model`` in config, then to the default model.
     base_url:
         Explicit base URL override.  Falls back to
-        ``config.ollama.base_url`` then to the default URL.
+        ``providers.<name>.base_url`` in config, then to the default URL.
     """
 
     def __init__(
@@ -72,8 +80,11 @@ class OllamaProvider(BaseProvider):
     ) -> None:
         super().__init__(vault=vault, config=config)
         self._app_config = config
-        self.model = model or config.get("session.model") or _DEFAULT_MODEL
-        self.base_url = base_url or config.get("ollama.base_url") or _DEFAULT_BASE_URL
+        # When created via ProviderRegistry._create(), kwargs come from the
+        # provider definition (e.g. providers.ollama.model).  When created
+        # directly, fall back to the default.
+        self.model = model or _DEFAULT_MODEL
+        self.base_url = base_url or _DEFAULT_BASE_URL
         self._context_length_cache: dict[str, int | None] = {}
         """Cache of model → context_length to avoid repeated show() calls."""
 

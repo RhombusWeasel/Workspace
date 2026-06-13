@@ -195,7 +195,8 @@ class CommitModal(ModalScreen[str | None]):
 
         model = ""
         if ctx.config is not None:
-            model = ctx.config.get("session.model", "")
+            provider_name = ctx.config.get("session.provider", "ollama")
+            model = ctx.config.get(f"providers.{provider_name}.model", "")
 
         agent = Agent(
             provider=provider,

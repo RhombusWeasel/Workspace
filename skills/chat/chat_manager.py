@@ -324,7 +324,8 @@ class ChatManager(Widget):
         if agent_def and ctx.agents is not None:
             model = ctx.agents.resolve_model(agent_def, ctx)
         elif ctx.config is not None:
-            model = ctx.config.get("session.model", "")
+            provider_name = ctx.config.get("session.provider", "ollama")
+            model = ctx.config.get(f"providers.{provider_name}.model", "")
 
         # Resolve tools — agent may specify a subset.
         tool_filter = None

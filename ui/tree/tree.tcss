@@ -7,22 +7,3 @@ Tree {
 Tree > Widget {
     width: 1fr;
 }
-
-TreeRow {
-    width: 1fr;
-    height: auto;
-}
-
-TreeRow:hover {
-    text-style: bold;
-}
-
-TreeRow.-hidden {
-    display: none;
-}
-
-_RowLabel {
-    width: 1fr;
-    height: auto;
-    min-height: 1;
-}

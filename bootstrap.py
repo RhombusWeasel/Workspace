@@ -44,6 +44,7 @@ from core.agent_registry import AgentManager
 from core.providers.registry import ProviderRegistry
 from core.leader import leader as leader_registry
 from core.vault import VaultManager
+from core.agents_md import load_global_agents_md, load_local_agents_md
 
 
 class Bootstrap:
@@ -432,7 +433,7 @@ class Bootstrap:
         agents.register_dynamic(
             "model",
             lambda ctx: (
-                ctx.config.get("session.model", "")
+                ctx.config.get(f"providers.{ctx.config.get('session.provider', 'ollama')}.model", "")
                 if ctx and ctx.config
                 else ""
             ),
@@ -440,10 +441,18 @@ class Bootstrap:
         agents.register_dynamic(
             "provider",
             lambda ctx: (
-                ctx.config.get("session.default_provider", "ollama")
+                ctx.config.get("session.provider", "ollama")
                 if ctx and ctx.config
                 else "ollama"
             ),
+        )
+        agents.register_dynamic(
+            "global_agents",
+            lambda ctx: load_global_agents_md(ctx),
+        )
+        agents.register_dynamic(
+            "local_agents",
+            lambda ctx: load_local_agents_md(ctx),
         )
 
     # ------------------------------------------------------------------
