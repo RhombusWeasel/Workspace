@@ -193,9 +193,38 @@ cfg.apply_defaults()
 from core.config import register_defaults
 
 register_defaults({
-    "session": {"provider": "ollama", "model": "llama3.2"}
+    "providers": {
+        "ollama": {
+            "type": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "deepseek-v4-pro:cloud",
+        },
+    },
+    "session": {"provider": "ollama", "max_tool_calls": 10, "yolo_mode": False},
 })
 ```
+
+---
+
+## Registered Config Keys
+
+The following config keys are registered with defaults by core modules
+at import time:
+
+| Key | Default | Registered by | Description |
+|---|---|---|---|
+| `providers.<name>.type` | varies | `ProviderRegistry` | Provider type name (e.g. `"ollama"`) |
+| `providers.<name>.model` | varies | Provider module | Default model for provider instance |
+| `providers.<name>.base_url` | varies | Provider module | API base URL |
+| `session.provider` | `"ollama"` | `ProviderRegistry` | Default provider name |
+| `session.max_tool_calls` | `10` | `ProviderRegistry` | Tool-call rounds between progress checkpoints |
+| `session.yolo_mode` | `false` | `ProviderRegistry` | Allow tool calls without confirmation |
+| `agent.default_id` | `"default"` | `AgentManager` | ID of the default chat agent |
+| `agent.inline_suggest_id` | `"inline-suggest"` | `AgentManager` | ID of the inline suggestion agent |
+| `agents.name` | `"Cody"` | `AgentManager` | Name used in `{{agent_name}}` template |
+| `redaction.enabled` | `true` | `BaseProvider` | Enable/disable message redaction |
+| `redaction.patterns` | `[]` | `BaseProvider` | Additional regex patterns to redact |
+| `db.default_page_size` | `200` | Database module | Default query result page size |
 
 Modules call `register_defaults()` at import time.  The bootstrap sequence
 then collects these via `get_registered_defaults()` and feeds them into
@@ -228,9 +257,20 @@ Each config file is standard JSON:
 
 ```json
 {
+  "providers": {
+    "ollama": {
+      "type": "ollama",
+      "model": "deepseek-v4-pro:cloud",
+      "base_url": "http://localhost:11434"
+    }
+  },
   "session": {
     "provider": "ollama",
-    "model": "llama3.2"
+    "max_tool_calls": 10,
+    "yolo_mode": false
+  },
+  "agents": {
+    "name": "Cody"
   },
   "ui": {
     "theme": "haxor"

@@ -12,8 +12,12 @@ handles the full cycle: build messages → send to provider → detect tool
 calls → execute via `execute_tool()` → feed results back → continue until
 the LLM produces a final text response.
 
-The agent also renders system prompt templates with `{{key}}` substitution
-and optionally injects the skills XML catalog.
+The agent renders system prompt templates with `{{key}}` and `{{key.sub}}`
+substitution and optionally injects the skills XML catalog.  Message
+redaction (scrubbing secrets) is handled automatically by the
+`BaseProvider` — every call to `provider.chat()` and
+`provider.stream_chat()` redacts messages before they leave the process.
+The Agent no longer needs its own redaction logic.
 
 ---
 
@@ -63,7 +67,7 @@ agent = Agent(
 | `variables` | `dict[str, str] \| None` | Values for template substitution |
 | `model` | `str` | Model name passed to provider on every call |
 | `skills_xml` | `str` | Optional `<available_skills>` XML appended to system prompt |
-| `max_tool_iterations` | `int` | Safety limit for tool-calling loop (default 10) |
+| `max_tool_iterations` | `int` | Tool-call rounds between progress checkpoints (default 10) |
 | `ctx` | `AppContext \| None` | Context injected into tool calls |
 
 ### `system_prompt` (property)
@@ -101,7 +105,8 @@ cancelled.  The agent raises `asyncio.CancelledError` on the next check.
 
 ## Template Rendering
 
-The `render_template()` function replaces `{{key}}` placeholders:
+The `render_template()` function replaces `{{key}}` and `{{key.sub}}`
+placeholders (dotted keys are supported):
 
 ```python
 from core.agent import render_template
@@ -111,15 +116,26 @@ prompt = render_template(
     {"role": "coding assistant", "project": "my-app"},
 )
 # → "You are coding assistant. Project: my-app."
+
+prompt = render_template(
+    "Skills: {{skills.catalog}}",
+    {"skills.catalog": "chat, git, terminal"},
+)
+# → "Skills: chat, git, terminal"
 ```
 
 Missing keys are left unchanged (the `{{key}}` string persists).
+Dotted keys like `{{skills.catalog}}` are matched as a single key name,
+not as nested object access — the variables dict must contain the exact
+dotted key.
 
 ---
 
 ## Tool-Calling Loop
 
-The loop runs up to `max_tool_iterations` times:
+The loop continues until the LLM naturally produces a final text response
+with no tool calls.  There is **no hard stop** — instead, the agent uses
+**progress checkpoints**:
 
 1. Send messages to the provider
 2. If the response has no `tool_calls` → return (or yield final chunk)
@@ -128,11 +144,26 @@ The loop runs up to `max_tool_iterations` times:
    - Execute each tool via `execute_tool(name, arguments, ctx=self._ctx)`
    - Append a `role="tool"` message with the result for each tool call
 4. Go back to step 1 with the extended message list
+5. **Progress checkpoint**: When `max_tool_iterations` tool-call rounds
+   have been completed, the agent:
+   - Injects a system message asking the LLM to summarize progress
+   - Calls the provider **without tools** (forcing a text-only response)
+   - Records the summary in the conversation history
+   - Resets the counter and continues the loop
 
-If the loop hits `max_tool_iterations`, the last response is returned
-as-is.
+The `max_tool_iterations` parameter (default: from `session.max_tool_calls`
+config, typically 10) controls **how many tool-call rounds happen between
+checkpoints**, not the total number of tool calls allowed.  The loop only
+ends when the LLM produces a final text response with no tool calls.
 
 ---
+
+## Message Redaction
+
+The `BaseProvider` automatically redacts secrets from messages before
+sending them to the LLM.  This happens transparently — the Agent never
+needs to handle redaction itself.  See [providers.md](providers.md) for
+details on the redaction system.
 
 ## Tool Execution
 
@@ -194,8 +225,11 @@ async for chunk in agent.stream_chat(history, user_message, tools=tool_list):
   rendered once and sent as the first message.  Skills XML is appended
   so the LLM knows what skills it can activate.
 
-4. **Safety limit on tool iterations** — Prevents infinite loops if the
-  LLM keeps calling tools that produce more tool calls.
+4. **Progress checkpoints, not hard stops** — `max_tool_iterations` controls
+  how many tool-call rounds happen between progress summaries, not a hard
+  limit.  The loop only ends when the LLM produces a final text response
+  with no tool calls.  This prevents infinite loops while allowing the
+  agent to work through complex tasks that require many tool calls.
 
 5. **Abort support** — `abort()` sets a flag checked at each iteration.
   Raises `asyncio.CancelledError` rather than silently stopping, so

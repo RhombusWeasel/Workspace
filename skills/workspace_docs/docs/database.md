@@ -37,12 +37,19 @@ CREATE TABLE messages (
 
 -- Custom agents (LLM personalities)
 CREATE TABLE agents (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    description   TEXT NOT NULL DEFAULT '',
-    system_prompt TEXT NOT NULL DEFAULT '',
-    model         TEXT NOT NULL DEFAULT '',
-    created_at    TEXT NOT NULL
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    template            TEXT NOT NULL,
+    model               TEXT NOT NULL DEFAULT '',
+    provider            TEXT NOT NULL DEFAULT '',
+    scope               TEXT NOT NULL DEFAULT 'global',
+    tools               TEXT NOT NULL DEFAULT '',
+    skills              TEXT NOT NULL DEFAULT '',
+    temperature         TEXT NOT NULL DEFAULT '',
+    max_tool_iterations TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
 );
 
 -- Todo tracking
@@ -115,13 +122,18 @@ that `Agent.stream_chat()` expects:
 
 ### Agent CRUD
 
+> **Deprecated**: Agent CRUD methods on `DatabaseManager` are deprecated and
+> delegate to `AgentManager`.  Use `ctx.agents.create_agent()` etc. in new
+> code.  These methods will emit `DeprecationWarning` and may be removed in a
+> future version.
+
 | Method | Signature | Description |
 |---|---|---|
-| `create_agent` | `(name, description, system_prompt, model="") → str` | Create agent, return ID |
-| `get_agent` | `(agent_id) → dict \| None` | Get an agent by ID |
-| `list_agents` | `() → list[dict]` | All agents, sorted by name |
-| `delete_agent` | `(agent_id)` | Delete an agent |
-| `seed_agents` | `(agents_list)` | Insert agents if they don't already exist |
+| `create_agent` | `(name, description, system_prompt, model="") → str` | **Deprecated** — Create agent, return ID |
+| `get_agent` | `(agent_id) → dict \| None` | **Deprecated** — Get an agent by ID |
+| `list_agents` | `() → list[dict]` | **Deprecated** — All agents, sorted by name |
+| `delete_agent` | `(agent_id)` | **Deprecated** — Delete an agent |
+| `seed_agents` | `(agents_list)` | **Deprecated** — Insert agents if they don't already exist |
 
 ### Todo CRUD
 
@@ -132,6 +144,15 @@ that `Agent.stream_chat()` expects:
 | `list_todos` | `(status=None) → list[dict]` | All todos, optionally filtered by status |
 | `update_todo` | `(todo_id, **kwargs)` | Update title, description, or status |
 | `delete_todo` | `(todo_id)` | Delete a todo |
+
+### Delete Sections from Turn
+
+| Method | Signature | Description |
+|---|---|---|
+| `delete_sections_from_turn` | `(chat_id, turn_id)` | Delete all sections for a specific turn |
+
+Used by the "revert to checkpoint" feature to wipe DB entries from a
+conversation point forward.
 
 ### Input History
 

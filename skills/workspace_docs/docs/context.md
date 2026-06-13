@@ -1,7 +1,7 @@
 # AppContext
 
 **File:** `context.py`
-**Depends on:** `core.config.Config`, `core.database.DatabaseManager`, `core.leader.LeaderRegistry`, `core.skills.SkillManager`, `core.vault.VaultManager`
+**Depends on:** `core.config.Config`, `core.database.DatabaseManager`, `core.leader.LeaderRegistry`, `core.skills.SkillManager`, `core.vault.VaultManager`, `core.providers.registry.ProviderRegistry`, `core.agent_registry.AgentManager`
 
 ---
 
@@ -28,10 +28,14 @@ class AppContext:
     database: DatabaseManager | None = None
     db_connections: Any = None
     leader: LeaderRegistry | None = None
+    providers: ProviderRegistry | None = None
+    agents: AgentManager | None = None
     vault: VaultManager | None = None
     working_directory: str = ""
     css_paths: list[str] = field(default_factory=list)
+    services: dict[str, Any] = field(default_factory=dict)
     app: Any = None
+    prompts: Any = None  # Deprecated — use ctx.agents instead
 ```
 
 | Field | Type | Set by | Description |
@@ -41,18 +45,41 @@ class AppContext:
 | `database` | `DatabaseManager \| None` | Bootstrap | SQLite persistence (chats, messages, agents, todos) |
 | `db_connections` | `Any` | Database skill | `ConnectionManager` if the database skill is loaded; `None` otherwise |
 | `leader` | `LeaderRegistry \| None` | Bootstrap | Keyboard chord tree for `Ctrl+Space` menu |
+| `providers` | `ProviderRegistry \| None` | Bootstrap | Named LLM provider instances, lazy creation from config |
+| `agents` | `AgentManager \| None` | Bootstrap | Agent definition registry (CRUD, templates, seeding) |
 | `vault` | `VaultManager \| None` | Bootstrap | Encrypted credential + secure note storage |
 | `working_directory` | `str` | Bootstrap | Current working directory (project root) |
 | `css_paths` | `list[str]` | Bootstrap | Collected `.tcss` file paths for Textual CSS |
+| `services` | `dict[str, Any]` | Bootstrap | Dynamic service instances from skill `SKILL_SERVICES` |
 | `app` | `Any` | `WorkspaceApp.__init__` | The running Textual app instance |
+| `prompts` | `Any` | Bootstrap | **Deprecated** — same as `ctx.agents`, for migration |
+
+### Backward-compatible `provider` property
+
+```python
+@property
+def provider(self) -> BaseProvider | None:
+    """The default LLM provider (convenience shortcut)."""
+    if self.providers is not None:
+        try:
+            return self.providers.get_default()
+        except (ValueError, KeyError):
+            return None
+    return None
+```
+
+`ctx.provider` is a convenience property that delegates to
+`ctx.providers.get_default()`.  New code should prefer
+`ctx.providers.get_default()` or `ctx.providers.get(name)` to be
+explicit about which named provider instance is being used.
 
 ---
 
 ## Plugin-Provided Services
 
-The `db_connections` field is a special case — it's populated by the
-database skill via the `SKILL_SERVICES` mechanism.  Plugins that need
-to provide services to other parts of the application follow this pattern:
+The `services` dict and `db_connections` field are populated by skills
+via the `SKILL_SERVICES` mechanism.  Plugins that need to provide
+services to other parts of the application follow this pattern:
 
 1. The skill declares `SKILL_SERVICES` in its `__init__.py`:
    ```python
@@ -62,18 +89,19 @@ to provide services to other parts of the application follow this pattern:
    ```
 
 2. Bootstrap calls each factory with `(config, vault)` and collects
-   the results.
+   the results into the `services` dict.
 
-3. The result is injected into `AppContext`:
+3. Known services also get dedicated fields for type-safety:
    ```python
-   db_connections = skill_services.get("db_connections")
+   ctx.services["db_connections"]  # Generic access
+   ctx.db_connections              # Convenience alias
    ```
 
-To add a new service from a skill, you need to:
+To add a new service from a skill:
 
-1. Add the field to `AppContext` with type `Any` and default `None`
-2. Extract it from `skill_services` in `Bootstrap.run()`
-3. Document the field so other skills know it exists
+1. Add the factory to the skill's `SKILL_SERVICES` dict
+2. (Optional) Add a dedicated field to `AppContext` for type-safety
+3. Wire it in `Bootstrap.run()` if a dedicated field was added
 
 ---
 
@@ -89,7 +117,7 @@ def _on_action(data: dict, ctx: AppContext) -> None:
     value = ctx.config.get("my_skill.setting", "default")
     if ctx.vault and not ctx.vault.is_locked():
         cred = ctx.vault.get_credential("service_name")
-    wd = ctx.working_directory
+    provider = ctx.providers.get_default()  # or ctx.providers.get("ollama")
 ```
 
 ### In tools (via context injection)
@@ -135,29 +163,34 @@ all services in order:
 
 ```python
 def run(self) -> AppContext:
-    self._ensure_project_on_path()   # sys.path for skill imports
-    config = self._init_config()     # Layered JSON → Config
+    self._ensure_project_on_path()
+    config = self._init_config()
     skills = self._discover_skills(config)
-    self._load_tools(skills)         # @register_tool decorators fire
-    self._load_commands(skills)       # @register_command decorators fire
-    self._load_sidebar_panels(skills) # @register_sidebar_tab decorators fire
+    self._load_tools(skills)
+    self._load_commands(skills)
+    self._load_sidebar_panels(skills)
     database = self._init_database(config)
     vault = self._init_vault()
-    skill_services = self._load_skills(config, vault)
-    self._init_leader()              # Leader chord registration
-    css_paths = self._collect_css()   # .tcss from all tiers
-
-    db_connections = skill_services.get("db_connections")
+    providers = self._init_provider_registry(config, vault)
+    agents = self._init_agent_registry(database)
+    self._register_agent_providers(agents, skills, providers)
+    skill_services = self._load_skill_init_files(skills, config, vault)
+    self._init_leader()
+    css_paths = self._collect_css()
 
     return AppContext(
         config=config,
         skills=skills,
         database=database,
-        db_connections=db_connections,
+        db_connections=skill_services.get("db_connections"),
+        providers=providers,
+        agents=agents,
+        prompts=agents,  # Deprecated alias
         vault=vault,
         leader=leader_registry,
         working_directory=self.wd,
         css_paths=css_paths,
+        services=skill_services,
     )
 ```
 
@@ -182,3 +215,10 @@ The `WorkspaceApp` constructor then receives this context and sets
 4. **No global singleton** — `AppContext` is passed around, not imported
    from a module.  This avoids circular imports and makes testing easier
    (construct an `AppContext` with mock services in tests).
+
+5. **`providers` registry over single `provider`** — Multiple named
+   provider instances can coexist (e.g. local Ollama + remote OpenAI).
+   The `provider` property is preserved for backward compatibility only.
+
+6. **`agents` replaces `prompts`** — The `prompts` field is a deprecated
+   alias for `agents`.  New code should use `ctx.agents` exclusively.

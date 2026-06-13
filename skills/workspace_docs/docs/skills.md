@@ -223,6 +223,28 @@ Return an XML string listing enabled skills for the agent's system prompt:
 </available_skills>
 ```
 
+This returns **bare XML** — no code fences.  For the wrapped version
+suitable for injection into LLM system prompts, use `render_selected()`.
+
+### `render_selected(skill_names) → str`
+
+Render the XML catalog for a subset of skills, wrapped in triple-backtick
+`xml` code fences.  This is the preferred method for injecting skill
+catalogs into agent system prompts, as the code fences help LLMs
+interpret the XML correctly.
+
+```python
+xml = skill_manager.render_selected(["chat", "git", "terminal"])
+# Returns:
+# ```xml
+# <available_skills>
+#   <skill>...
+# </available_skills>
+# ```
+```
+
+If `skill_names` is empty or `None`, renders all enabled skills.
+
 ### `reset()`
 
 Clear all skills, enabled state, and services.  Use between tests.
