@@ -74,12 +74,12 @@ def _dir_buttons() -> list[RowButton]:
 def _root_buttons(show_hidden: bool = False) -> list[RowButton]:
     """Buttons for the root directory node."""
     return [
+        RowButton(_REFRESH, REFRESH, "btn-refresh"),
+        RowButton(_TOGGLE_HIDDEN, EYE_OFF if not show_hidden else EYE, "btn-toggle-hidden"),
         RowButton(_ADD_FILE, ADD_FILE, "btn-add-file"),
         RowButton(_ADD_DIR, ADD_DIR, "btn-add-dir"),
         RowButton(_RENAME, RENAME, "btn-rename"),
         RowButton(_DEL, DELETE, "btn-del"),
-        RowButton(_REFRESH, REFRESH, "btn-refresh"),
-        RowButton(_TOGGLE_HIDDEN, EYE_OFF if not show_hidden else EYE, "btn-toggle-hidden"),
     ]
 
 
