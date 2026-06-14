@@ -12,6 +12,24 @@ ChatDisplay {
 }
 
 /* --------------------------------------------------------------- */
+/* Revert button — small icon button on user message branches        */
+/* --------------------------------------------------------------- */
+
+.revert-btn {
+    color: $text-muted;
+    background: transparent;
+    border: none;
+    padding: 0 1;
+    min-width: 3;
+    height: 1;
+}
+
+.revert-btn:hover {
+    color: $warning;
+    background: $surface-lighten-1;
+}
+
+/* --------------------------------------------------------------- */
 /* Thinking sections — plain Static text, no markdown rendering     */
 /* --------------------------------------------------------------- */
 
