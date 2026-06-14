@@ -356,11 +356,16 @@ class ChatDisplay(Widget):
         """Update the content widget for the section identified by *section_id*.
 
         During streaming all sections are ``Static``, so this is a
-        lightweight synchronous update — no markdown parsing.  The display
-        scrolls to show the latest content.
+        lightweight synchronous update — no markdown parsing.
 
         The section must have been created by a prior :meth:`add_section`
         call during the current assistant turn.
+
+        Note: This method does NOT trigger a scroll.  Scrolling is handled
+        at structural boundaries (section creation, tool calls, turn start)
+        and at stream completion (``chunk.done``), not on every content
+        update.  This avoids ~20 redundant scroll events per second during
+        streaming.
         """
         widget = self._section_widgets.get(section_id)
         if widget is None:
@@ -374,8 +379,6 @@ class ChatDisplay(Widget):
         elif isinstance(widget, Markdown):
             # Markdown update (only after finalize swap) — async re-render.
             await widget.update(text)
-
-        self._schedule_scroll()
 
     async def finalize_turn(self) -> None:
         """Remove empty sections, swap Static→Markdown for rich sections, clear state.

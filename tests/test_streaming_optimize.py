@@ -381,7 +381,7 @@ class TestStreamingEfficiency:
         """update_section should NOT trigger a tree rebuild.
 
         During streaming, update_section is called on every chunk.
-        It should only update the Static widget text and schedule a scroll.
+        It should only update the Static widget text — no rebuild.
         """
         app = _ChatApp()
         async with app.run_test(size=(80, 40)):
@@ -410,6 +410,80 @@ class TestStreamingEfficiency:
             await display.update_section(section_id, "Hello world")
             assert rebuild_count["count"] == 0, (
                 f"update_section should not rebuild, got {rebuild_count['count']}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_section_does_not_scroll(self):
+        """update_section should NOT trigger a scroll.
+
+        During streaming, update_section is called ~20 times/sec.
+        Scrolling is now only triggered at structural boundaries
+        (add_section, add_tool_call, etc.) and chunk.done, not on
+        every content update.
+        """
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+
+            display.add_user_message("Hello")
+            display.begin_assistant_turn()
+            section_id = display.add_section("response")
+
+            # Clear any pending scroll from structural additions.
+            display._scroll_pending = False
+
+            # Track scroll timer creation.
+            scroll_count = {"count": 0}
+            original_set_timer = display.set_timer
+
+            def counting_set_timer(delay, callback, **kwargs):
+                scroll_count["count"] += 1
+                return original_set_timer(delay, callback, **kwargs)
+
+            display.set_timer = counting_set_timer
+
+            # Simulate streaming: multiple update_section calls.
+            await display.update_section(section_id, "Hello")
+            await display.update_section(section_id, "Hello world")
+            await display.update_section(section_id, "Hello world!")
+
+            # No scroll timers should have been created by update_section.
+            assert scroll_count["count"] == 0, (
+                f"update_section should not create scroll timers, got {scroll_count['count']}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_structural_additions_do_scroll(self):
+        """Structural additions (add_section, add_tool_call) should
+        trigger a scroll — these are the boundaries where the user
+        needs to see new content."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+
+            # Track scroll timer creation.
+            scroll_count = {"count": 0}
+            original_schedule_scroll = display._schedule_scroll
+
+            def counting_schedule_scroll():
+                scroll_count["count"] += 1
+                return original_schedule_scroll()
+
+            display._schedule_scroll = counting_schedule_scroll
+
+            display.add_user_message("Hello")
+            assert scroll_count["count"] >= 1, (
+                f"add_user_message should trigger scroll, got {scroll_count['count']}"
+            )
+
+            display.begin_assistant_turn()
+            assert scroll_count["count"] >= 2, (
+                f"begin_assistant_turn should trigger scroll, got {scroll_count['count']}"
+            )
+
+            section_id = display.add_section("response")
+            assert scroll_count["count"] >= 3, (
+                f"add_section should trigger scroll, got {scroll_count['count']}"
             )
 
     @pytest.mark.asyncio

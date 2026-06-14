@@ -542,6 +542,10 @@ class ChatManager(Widget):
                         chunk.usage.context_length,
                     )
 
+                # --- Scroll on stream completion ---
+                if chunk.done:
+                    self._chat_display._schedule_scroll()
+
         except asyncio.CancelledError:
             # Aborted — persist whatever we have so far.
             if watcher is not None:
