@@ -741,6 +741,16 @@ class ChatManager(Widget):
                 except Exception:
                     pass
 
+        # Update context usage bar with token counts from the completed stream.
+        usage_chunk = sm.get_usage(stream_id)
+        if usage_chunk is not None and usage_chunk.usage is not None:
+            model_name = getattr(self._agent, "_model", "")
+            self._chat_input.update_context_progress(
+                model_name,
+                usage_chunk.usage.total_tokens,
+                usage_chunk.usage.context_length,
+            )
+
         # Exit streaming mode.
         self._streaming = False
         self._stream_id = None

@@ -56,6 +56,10 @@ class StreamManager:
     def __init__(self) -> None:
         self._streams: dict[str, asyncio.Task] = {}
         self._metadata: dict[str, dict[str, Any]] = {}
+        # Completed stream usage data — keyed by stream_id.
+        # Populated when a stream finishes with a done chunk that carries usage.
+        # Persisted after the stream task is cleaned up so callers can retrieve it.
+        self._usage: dict[str, StreamChunk] = {}
 
     def start(
         self,
@@ -106,6 +110,8 @@ class StreamManager:
         """Abort the stream and remove it from the manager."""
         task = self._streams.pop(stream_id, None)
         meta = self._metadata.pop(stream_id, None)
+        # Clean up usage data for cancelled streams.
+        self._usage.pop(stream_id, None)
         if task is None:
             return
 
@@ -132,6 +138,16 @@ class StreamManager:
             sid for sid, task in self._streams.items()
             if not task.done()
         ]
+
+    def get_usage(self, stream_id: str) -> StreamChunk | None:
+        """Return the usage data for a completed stream, or None.
+
+        The returned ``StreamChunk`` has its ``done`` flag set and carries
+        the ``usage`` attribute with token counts.  Returns ``None`` if
+        the stream is still running, was cancelled, or did not produce
+        usage data.
+        """
+        return self._usage.get(stream_id)
 
     def _write_text_sections(self, stream_id: str) -> None:
         """Flush accumulated response/thinking text to the DB."""
@@ -278,3 +294,7 @@ class StreamManager:
                     )
                 except Exception:
                     pass
+
+        # Capture token usage on the final done chunk.
+        if chunk.done:
+            self._usage[stream_id] = chunk
