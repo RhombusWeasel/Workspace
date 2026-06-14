@@ -620,13 +620,10 @@ class TestStreamingGracefulExit:
 
 	@pytest.mark.asyncio
 	async def test_rebuild_display_bails_out_when_not_mounted(self):
-		"""_rebuild_display_from_sections should return early if not mounted."""
+		"""_rebuild_and_maybe_resume should return early if no sections."""
 		manager = ChatManager()
-		manager._sections = [
-			{"turn_id": "t1", "content_type": "user", "content": "hello"},
-		]
+		manager._sections = []
 		manager._state = MagicMock()
 
-		# is_mounted will be False since we're not inside an app.
-		# This should return without error.
-		await manager._rebuild_display_from_sections()
+		# This should return without error — no sections to rebuild.
+		await manager._rebuild_and_maybe_resume()

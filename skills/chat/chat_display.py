@@ -743,21 +743,34 @@ class ChatDisplay(VerticalScroll):
                 for s in turns[tid]
             )
 
+            # Add user messages for this turn (whether or not there's
+            # an assistant response — the user may have sent a message
+            # that hasn't been responded to yet).
+            for sec in turns[tid]:
+                if sec["content_type"] == "user" and tid not in self._user_turn_ids:
+                    self.add_user_message(sec["content"])
+                    self._user_turn_ids.add(tid)
+
             # Ensure an assistant turn exists for this turn_id.
             if has_assistant and tid not in self._turn_map:
-                # Look for a user message in the same turn.
-                user_content = None
-                for sec in turns[tid]:
-                    if sec["content_type"] == "user":
-                        user_content = sec["content"]
-                        break
-                if user_content is not None and tid not in self._user_turn_ids:
-                    self.add_user_message(user_content)
-                    self._user_turn_ids.add(tid)
                 self.begin_assistant_turn(turn_id=tid)
 
             turn_widget = self._turn_map.get(tid)
             if turn_widget is None:
+                # No assistant turn for this turn_id — process user and
+                # system messages (already handled above), skip thinking/
+                # response/tool_call which require an assistant turn.
+                for sec in turns[tid]:
+                    ct = sec["content_type"]
+                    content = sec.get("content", "")
+                    sid = sec.get("section_id") or str(sec.get("id", ""))
+                    key = (tid, sid)
+                    if ct == "system" and key not in self._section_state:
+                        self.add_system_message(content)
+                    self._section_state[key] = {
+                        "content_type": ct,
+                        "content": content,
+                    }
                 continue
 
             for sec in turns[tid]:

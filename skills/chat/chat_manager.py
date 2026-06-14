@@ -303,18 +303,41 @@ class ChatManager(Widget):
         self._streaming_task = self.run_worker(self._poll_stream(stream_id))
 
     async def _rebuild_and_maybe_resume(self) -> None:
-        """Rebuild the display from persisted sections and resume polling."""
+        """Rebuild the display from persisted sections and resume polling.
+
+        Uses ``refresh_from_sections`` — the same method that drives the
+        display during streaming — so history loading follows the exact
+        same code path that is already proven to work.
+        """
         import logging
         _logger = logging.getLogger(__name__)
         _logger.info(
-            "_rebuild_and_maybe_resume: starting (sections=%d, chat_id=%s)",
-            len(self._sections), self._chat_id,
+            "_rebuild_and_maybe_resume: starting (chat_id=%s)",
+            self._chat_id,
         )
+
+        # Prefer DB sections (fresh, includes section_id) over in-memory
+        # sections (may lack section_id from older conversations).
+        sections = None
+        if self._db is not None and self._chat_id is not None:
+            try:
+                sections = self._db.load_sections(self._chat_id)
+            except Exception:
+                _logger.warning("Failed to load sections from DB, falling back to in-memory")
+
+        if sections is None:
+            # Fallback to in-memory sections (from ChatTabState).
+            sections = self._sections
+
+        if not sections:
+            _logger.info("_rebuild_and_maybe_resume: no sections to rebuild")
+            return
+
         try:
-            await self._rebuild_display_from_sections()
+            await self._chat_display.refresh_from_sections(sections, finalize=True)
             _logger.info(
-                "_rebuild_and_maybe_resume: completed successfully (sections=%d)",
-                len(self._sections),
+                "_rebuild_and_maybe_resume: completed (%d sections)",
+                len(sections),
             )
         except Exception:
             _logger.exception("Error rebuilding display from sections")
@@ -327,123 +350,13 @@ class ChatManager(Widget):
                     )
                 except Exception:
                     pass  # Best-effort — don't crash for a display error.
-        if self._state is not None and getattr(self._state, '_stream_id', None):
-            await self._resume_stream(self._state._stream_id)
-
-    async def _rebuild_display_from_sections(self) -> None:
-        """Reconstruct the chat display from persisted sections.
-
-        Groups sections by turn_id and replays them into the ChatDisplay
-        so the user sees their conversation restored after a workspace
-        recomposition (split / close).
-
-        Uses batch mode to avoid O(N^2) rebuild cost -- instead of
-        triggering a tree rebuild on every add operation, we enter batch
-        mode, replay all sections, finalize all turns in a single pass,
-        then exit batch mode to trigger a single tree rebuild.
-
-        This method is async because it needs to await Markdown.update()
-        calls to properly render section content.  It is scheduled as a
-        background worker from on_mount().
-        """
-        if not self._sections:
-            return
-
-        # Bail out if the widget was detached during the async gap.
-        if not self.is_mounted:
-            import logging
-            logging.getLogger(__name__).warning(
-                "_rebuild_display_from_sections: widget not mounted, aborting"
-            )
-            return
-
-        import logging
-        _logger = logging.getLogger(__name__)
-        _logger.info(
-            "_rebuild_display_from_sections: rebuilding %d sections",
-            len(self._sections),
-        )
-
-        import json as _json
-
-        # Group sections by turn_id, preserving order of first appearance.
-        turn_order: list[str] = []
-        turns: dict[str, list[dict]] = {}
-        for sec in self._sections:
-            tid = sec["turn_id"]
-            if tid not in turns:
-                turn_order.append(tid)
-                turns[tid] = []
-            turns[tid].append(sec)
-
-        # Enter batch mode -- suppress individual rebuilds and scrolls.
-        # We'll do a single rebuild at the end after all sections are added.
-        self._chat_display.begin_batch()
-
-        try:
-            for tid in turn_order:
-                sections = turns[tid]
-                assistant_started = False
-                for sec in sections:
-                    ct = sec["content_type"]
-                    content = sec["content"]
-
-                    if ct == "user":
-                        self._chat_display.add_user_message(content)
-                    elif ct == "system":
-                        self._chat_display.add_system_message(content)
-                    elif ct == "thinking":
-                        if not assistant_started:
-                            self._chat_display.begin_assistant_turn()
-                            assistant_started = True
-                        section_id = self._chat_display.add_section("thinking")
-                        await self._chat_display.update_section(section_id, content)
-                    elif ct == "response":
-                        if not assistant_started:
-                            self._chat_display.begin_assistant_turn()
-                            assistant_started = True
-                        section_id = self._chat_display.add_section("response")
-                        await self._chat_display.update_section(section_id, content)
-                    elif ct == "tool_call":
-                        if not assistant_started:
-                            self._chat_display.begin_assistant_turn()
-                            assistant_started = True
-                        # Add tool calls one at a time, in their original
-                        # order, so that branches appear in the same
-                        # sequence as they were created during streaming.
-                        try:
-                            tc_data = _json.loads(content)
-                            tc_id = self._chat_display.add_tool_call(
-                                tc_data["name"],
-                                tc_data["arguments"],
-                            )
-                            # If the persisted JSON includes a result, display it.
-                            if "result" in tc_data and tc_data["result"]:
-                                self._chat_display.add_tool_result(
-                                    tc_id, tc_data["result"]
-                                )
-                        except (_json.JSONDecodeError, KeyError):
-                            self._chat_display.add_tool_call(
-                                "unknown",
-                                {"raw": content},
-                            )
-
-            # Finalize all assistant turns in a single pass -- removes
-            # empty sections, updates labels, and swaps Static → Markdown.
-            self._chat_display.batch_finalize_turns()
-
-        finally:
-            # Exit batch mode -- single rebuild + scroll.
-            self._chat_display.end_batch()
 
         # Re-attach revert buttons to completed user message nodes that
         # have checkpoint tags from a previous session.
         self._attach_revert_buttons()
 
-        _logger.info(
-            "_rebuild_display_from_sections: completed (%d turns, display has %d children)",
-            len(turn_order), len(list(self._chat_display.children)),
-        )
+        if self._state is not None and getattr(self._state, '_stream_id', None):
+            await self._resume_stream(self._state._stream_id)
 
     async def _resume_stream(self, stream_id: str) -> None:
         """Re-subscribe to an active stream after workspace recomposition.
@@ -453,7 +366,7 @@ class ChatManager(Widget):
         the workspace was recomposed.
 
         The display has already been rebuilt from persisted sections by
-        ``_rebuild_display_from_sections()``.  This method re-subscribes
+        ``_rebuild_and_maybe_resume()``.  This method re-subscribes
         to the StreamManager stream and processes only NEW chunks that
         arrive after the rebuild.
 
