@@ -55,8 +55,8 @@ from skills.chat.tool_format import (
 
 _VALID_SECTIONS = frozenset({"thinking", "response", "system"})
 _SECTION_ICONS: dict[str, str] = {
-    "thinking": "  \U000f0df6 Thinking",
-    "response": "  \U000f0b79 Response",
+    "thinking": "  \U000f169f Thinking",
+    "response": "  \U000f06a9 Response",
     "system": "  \U000f0e38 System",
 }
 

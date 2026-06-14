@@ -52,7 +52,7 @@ def format_tool_call_branch_label(name: str, arguments: dict[str, Any]) -> str:
     call without expanding the branch.
     """
     args_str = _format_args(arguments)
-    return f"\U0001f527 `{name}({args_str})`"
+    return f"\U000f0b46 `{name}({args_str})`"
 
 
 def format_tool_call_branch_label_expanded(name: str) -> str:
@@ -65,7 +65,7 @@ def format_tool_call_branch_label_expanded(name: str) -> str:
     When the branch is expanded, the detail leaf is visible so
     the label only needs the tool name.
     """
-    return f"\U0001f527 {name}"
+    return f"\U000f0b46 {name}"
 
 
 def format_tool_call_detail(name: str, arguments: dict[str, Any]) -> str:
