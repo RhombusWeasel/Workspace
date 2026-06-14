@@ -580,6 +580,7 @@ class ChatManager(Widget):
 
         # User message in display and database.
         self._chat_display.add_user_message(user_text)
+        self._chat_display._user_turn_ids.add(turn_id)
         self._persist_section(turn_id, "user", user_text)
 
         # Assistant branch -- StreamManager will write sections here.
