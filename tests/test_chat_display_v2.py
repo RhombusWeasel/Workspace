@@ -41,6 +41,7 @@ from skills.chat.chat_display import (
     Section,
     ToolCallSection,
     SystemMessage,
+    SystemPromptSection,
 )
 
 
@@ -626,3 +627,110 @@ class TestMultiTurn:
             assert len(tool_sections) == 1
             response_sections = [s for s in turn.query(Section) if not isinstance(s, ToolCallSection)]
             assert len(response_sections) == 1
+
+
+# ---------------------------------------------------------------------------
+# K: CSS class assignment
+# ---------------------------------------------------------------------------
+
+
+class TestMessageCSSClasses:
+    """Tests for coloured left-border CSS classes on message widgets."""
+
+    @pytest.mark.asyncio
+    async def test_user_message_has_chat_user_class(self):
+        """UserMessage should have the chat-user CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.add_user_message("Hello")
+
+            user_msg = display.query_one(UserMessage)
+            assert user_msg.has_class("chat-user")
+
+    @pytest.mark.asyncio
+    async def test_assistant_turn_has_chat_response_class(self):
+        """AssistantTurn should have the chat-response CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+
+            turn = display.query_one(AssistantTurn)
+            assert turn.has_class("chat-response")
+
+    @pytest.mark.asyncio
+    async def test_thinking_section_has_chat_thinking_class(self):
+        """Thinking Section should have the chat-thinking CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+            display.add_section("thinking")
+
+            # Allow deferred mount.
+            await asyncio.sleep(0.05)
+
+            # Find the Section — it should have the chat-thinking class.
+            all_sections = display.query(Section)
+            # Filter out ToolCallSection subclasses.
+            sections = [s for s in all_sections if not isinstance(s, ToolCallSection)]
+            assert len(sections) == 1
+            assert sections[0].has_class("chat-thinking")
+
+    @pytest.mark.asyncio
+    async def test_response_section_has_chat_response_class(self):
+        """Response Section should have the chat-response CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+            display.add_section("response")
+
+            # Allow deferred mount.
+            await asyncio.sleep(0.05)
+
+            all_sections = display.query(Section)
+            sections = [s for s in all_sections if not isinstance(s, ToolCallSection)]
+            assert len(sections) == 1
+            assert sections[0].has_class("chat-response")
+
+    @pytest.mark.asyncio
+    async def test_tool_call_section_has_chat_tools_class(self):
+        """ToolCallSection should have the chat-tools CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+            display.add_tool_call("read_file", {"path": "/tmp/test"})
+
+            # Allow deferred mount.
+            await asyncio.sleep(0.05)
+
+            tool_section = display.query_one(ToolCallSection)
+            assert tool_section.has_class("chat-tools")
+
+    @pytest.mark.asyncio
+    async def test_system_message_has_chat_system_class(self):
+        """SystemMessage should have the chat-system CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.add_system_message("Chat cleared.")
+
+            sys_msg = display.query_one(SystemMessage)
+            assert sys_msg.has_class("chat-system")
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_has_chat_system_class(self):
+        """SystemPromptSection should have the chat-system CSS class."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.add_system_prompt("You are a helpful assistant.")
+
+            # Allow deferred mount.
+            await asyncio.sleep(0)
+
+            prompt_section = display.query_one(SystemPromptSection)
+            assert prompt_section.has_class("chat-system")
