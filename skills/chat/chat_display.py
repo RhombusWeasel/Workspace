@@ -645,6 +645,40 @@ class ChatDisplay(VerticalScroll):
                 return _truncate(text, 60)
         return ""
 
+    def _turn_preview_for(self, asst_id: str) -> str:
+        """Build a short preview string for a specific assistant turn.
+
+        Walks the batch widgets list to find sections belonging to the
+        given turn, then looks for a response section, thinking section,
+        or any non-empty section.
+
+        Returns up to 60 characters of the content.
+        """
+        # Collect section_ids that belong to this turn by walking
+        # the batch widgets list (which preserves turn → section order).
+        turn_section_ids: list[str] = []
+        current_asst: str | None = None
+        for widget in self._batch_widgets:
+            if isinstance(widget, AssistantTurn):
+                # Match by turn_id attribute ("asst-2") not DOM id ("asst-asst-2")
+                current_asst = widget.turn_id
+            elif isinstance(widget, (Section, ToolCallSection)) and current_asst == asst_id:
+                if isinstance(widget, Section):
+                    turn_section_ids.append(widget.section_id)
+
+        # Look for response, then thinking, then any non-empty section.
+        for section_type in ("response", "thinking"):
+            for sid in turn_section_ids:
+                if self._section_types.get(sid) == section_type:
+                    text = self._section_texts.get(sid, "")
+                    if text:
+                        return _truncate(text, 60)
+        for sid in turn_section_ids:
+            text = self._section_texts.get(sid, "")
+            if text:
+                return _truncate(text, 60)
+        return ""
+
     def _find_section(self, section_id: str) -> Section | None:
         """Find a Section widget by its section_id."""
         return self._section_map.get(section_id)
@@ -712,11 +746,12 @@ class ChatDisplay(VerticalScroll):
                     self.mount(widget)
                     current_turn = widget
                 else:
-                    # Section or ToolCallSection — mount inside the current turn.
+                    # Section or ToolCallSection — mount inside the current
+                    # turn's Contents container via _mount_into_collapsible,
+                    # which correctly routes widgets into the Collapsible's
+                    # Contents whether the parent has already composed or not.
                     if current_turn is not None:
-                        # Use compose_add_child so sections end up inside
-                        # the Collapsible's Contents container.
-                        current_turn.compose_add_child(widget)
+                        self._mount_into_collapsible(current_turn, widget)
                     else:
                         self.mount(widget)
         self._batch_widgets = []
@@ -800,6 +835,14 @@ class ChatDisplay(VerticalScroll):
             w for w in self._batch_widgets
             if not (isinstance(w, Section) and self._is_empty_section(w.section_id))
         ]
+
+        # Update AssistantTurn headers with a preview of their content.
+        for asst_id, turn in self._turn_map.items():
+            preview = self._turn_preview_for(asst_id)
+            if preview:
+                turn.set_header(
+                    f"\uf4ad  [green]Assistant:[/green] {preview}"
+                )
 
         # Mark active turn as done.
         self._active_asst_id = None
