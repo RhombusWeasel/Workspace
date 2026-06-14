@@ -8,7 +8,7 @@ when cancelled or dismissed.
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import VerticalScroll, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
@@ -41,7 +41,7 @@ class ConfirmModal(ModalScreen[bool | None]):
         with VerticalScroll(id="confirm-dialog"):
             yield Static(self._title, id="confirm-title", markup=False)
             yield Static(self._body, id="confirm-body", markup=False)
-            with VerticalScroll(id="confirm-buttons"):
+            with Horizontal(id="confirm-buttons"):
                 yield Button(self._confirm_label, variant="primary", id="btn-confirm")
                 yield Button("Cancel", variant="default", id="btn-cancel")
 
