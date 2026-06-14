@@ -1,4 +1,4 @@
-"""Chat display — a VerticalScroll + Collapsible conversation view with streaming Markdown sections.
+"""Chat display — a VerticalScroll-based conversation view with streaming Markdown sections.
 
 Each assistant turn is a **Vertical** container holding collapsible sections.
 Sections are added on demand via :meth:`add_section` as their content arrives
@@ -30,18 +30,16 @@ from markdown rendering and the swap cost isn't justified.
 The display auto-scrolls to the bottom when new content is added or
 updated, so the view follows along with streaming output.
 
-**Architecture** — This replaces the previous Tree-based implementation
-with VerticalScroll + Collapsible.  Each message is a self-contained
-widget mounted directly into the scroll container.  This makes all
-operations O(1): adding a message, adding a section, expanding/
-collapsing — no tree walks, no rebuilds, no prefix computation.
+**Architecture** — ChatDisplay extends VerticalScroll directly, making
+it inherently scrollable.  Each message is a self-contained widget
+mounted directly into the display.  This makes all operations O(1):
+adding a message, adding a section, expanding/collapsing — no tree
+walks, no rebuilds, no prefix computation.
 """
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widget import Widget
 from textual.widgets import Collapsible, Markdown, Static
 
 from skills.chat.tool_format import (
@@ -99,7 +97,7 @@ class UserMessage(Collapsible):
         yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
 
 
-class AssistantTurn(Vertical):
+class AssistantTurn(Collapsible):
     """A vertical container for all sections of one assistant turn.
 
     Contains a header label and one or more Section widgets.  Provides
@@ -257,8 +255,12 @@ class SystemPromptSection(Collapsible):
 # ---------------------------------------------------------------------------
 
 
-class ChatDisplay(Widget):
-    """Streaming conversation display using VerticalScroll + Collapsible.
+class ChatDisplay(VerticalScroll):
+    """Streaming conversation display — a VerticalScroll with Collapsible sections.
+
+    Extends VerticalScroll directly so that the display is inherently
+    scrollable — mouse wheel and keyboard scrolling work without needing
+    focus redirection to an inner scroll container.
 
     Provides a high-level API for building and updating a conversation:
 
@@ -281,10 +283,6 @@ class ChatDisplay(Widget):
 
     DEFAULT_CSS = """
     ChatDisplay {
-        height: 1fr;
-    }
-
-    ChatDisplay > VerticalScroll {
         height: 1fr;
     }
 
@@ -350,20 +348,8 @@ class ChatDisplay(Widget):
         # at a time.
         self._scroll_pending: bool = False
 
-    # ------------------------------------------------------------------
-    # Composition
-    # ------------------------------------------------------------------
-
-    def compose(self) -> ComposeResult:
-        yield VerticalScroll(id="chat-scroll")
-
-    # ------------------------------------------------------------------
-    # Scroll container access
-    # ------------------------------------------------------------------
-
-    def _scroll(self) -> VerticalScroll:
-        """Get the VerticalScroll container."""
-        return self.query_one(VerticalScroll)
+    # No compose() needed — ChatDisplay IS the VerticalScroll.
+    # Messages are mounted directly into self.
 
     # ------------------------------------------------------------------
     # Scrolling
@@ -372,8 +358,7 @@ class ChatDisplay(Widget):
     def _scroll_to_bottom(self) -> None:
         """Scroll the chat display to show the latest content."""
         try:
-            scroll = self._scroll()
-            scroll.scroll_end(animate=False)
+            self.scroll_end(animate=False)
         except Exception:
             pass
 
@@ -412,7 +397,7 @@ class ChatDisplay(Widget):
         if self._batch_mode:
             self._batch_widgets.append(user_msg)
         else:
-            self._scroll().mount(user_msg)
+            self.mount(user_msg)
 
         self._schedule_scroll()
         return msg_id
@@ -434,7 +419,7 @@ class ChatDisplay(Widget):
         if self._batch_mode:
             self._batch_widgets.append(turn)
         else:
-            self._scroll().mount(turn)
+            self.mount(turn)
 
         self._active_asst_id = asst_id
         self._turn_map[asst_id] = turn
@@ -581,7 +566,7 @@ class ChatDisplay(Widget):
         if self._batch_mode:
             self._batch_widgets.append(sys_msg)
         else:
-            self._scroll().mount(sys_msg)
+            self.mount(sys_msg)
 
         self._schedule_scroll()
         return msg_id
@@ -606,7 +591,7 @@ class ChatDisplay(Widget):
         if self._batch_mode:
             self._batch_widgets.append(prompt_section)
         else:
-            self._scroll().mount(prompt_section)
+            self.mount(prompt_section)
 
         self._schedule_scroll()
         return msg_id
@@ -617,9 +602,8 @@ class ChatDisplay(Widget):
 
     def clear(self) -> None:
         """Remove all messages from the display and reset internal state."""
-        scroll = self._scroll()
-        # Remove all children from the scroll container.
-        for child in list(scroll.children):
+        # Remove all children from this scroll container.
+        for child in list(self.children):
             child.remove()
 
         self._turn_count = 0
@@ -695,11 +679,27 @@ class ChatDisplay(Widget):
         """
         self._batch_mode = False
 
-        # Mount all deferred widgets in a single batch.
-        scroll = self._scroll()
+        # Mount deferred widgets, respecting parent-child relationships.
+        # Top-level widgets (UserMessage, SystemMessage, SystemPromptSection,
+        # AssistantTurn) are mounted directly into self.
+        # Section and ToolCallSection widgets are mounted inside their
+        # parent AssistantTurn — we track the most recent AssistantTurn
+        # as we iterate through the batch.
         if self._batch_widgets:
+            current_turn: AssistantTurn | None = None
             for widget in self._batch_widgets:
-                scroll.mount(widget)
+                if isinstance(widget, (UserMessage, SystemMessage, SystemPromptSection)):
+                    self.mount(widget)
+                    current_turn = None
+                elif isinstance(widget, AssistantTurn):
+                    self.mount(widget)
+                    current_turn = widget
+                else:
+                    # Section or ToolCallSection — mount inside the current turn.
+                    if current_turn is not None:
+                        current_turn.mount(widget)
+                    else:
+                        self.mount(widget)
         self._batch_widgets = []
 
         # Apply expand/collapse config.

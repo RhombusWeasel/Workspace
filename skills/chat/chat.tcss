@@ -8,10 +8,7 @@ ChatManager > Vertical {
 
 ChatDisplay {
     height: 1fr;
-}
-
-ChatDisplay Tree {
-    height: 1fr;
+    overflow-y: scroll;
 }
 
 /* --------------------------------------------------------------- */
