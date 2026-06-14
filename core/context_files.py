@@ -32,34 +32,24 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _MISSING_USER_INSTRUCTION = (
-    "Check for a file in ~/.agents/user.md this is a place for you to store "
-    "information about the user, you should always read this file first.  "
-    "If it doesn't exist then you should create it and try to gather some "
-    "simple information about the user to begin with like their name and "
-    "any syntax preferences they may have.\n"
-    "This file exists to allow you to share information about the user "
-    "between sessions to personalize the experience and allow for more "
-    "meaningful responses."
+    "WARNING: ~/.agents/user.md does not exist."
+    "This file exists to allow you to share information about the user between sessions to personalize the experience and allow for more meaningful responses."
+    "Ask the user some 'getting to know you' questions to get an idea of who you are working with and their preferences."
+    "The data added to this file will appear here in future sessions."
 )
 
 _MISSING_DESIGN_INSTRUCTION = (
-    "You should always check for any design documentation files in "
-    ".agents/design.md or README.md files to try and understand the project "
-    "you are working on.\n"
-    "If there is no .agents/design.md file then you should create it and "
-    "document your understanding of the project there as you learn more.\n"
-    "Keep the .agents/design.md document up to date, it should contain a "
-    "brief summary of the project as a whole, it's structure and any "
-    "patterns used.  This file should contain only the information required "
-    "for quick getting started information to speed up induction for a new task."
+    "WARNING: .agents/design.md does not exist."
+    "This file exists to store a brief summary of the project, its structure and patterns to speed up induction for a new task."
+    "Explore the codebase and document your understanding of the project there as you learn more."
+    "Keep this file up to date as the project evolves, the data added to this file will appear here in future sessions."
 )
 
 _MISSING_TASKS_INSTRUCTION = (
-    "You should also check for the existence of a tasks file like "
-    ".agents/tasks.md and ensure the task list is understood and kept up to "
-    "date.\n"
-    "If there is no task list you should create .agents/tasks.md and "
-    "maintain it to track your and the users progress."
+    "WARNING: .agents/tasks.md does not exist."
+    "This file exists to track your and the user's progress on tasks for this project."
+    "Create a task list and maintain it as work progresses."
+    "Keeping this file up to date ensures nothing falls through the cracks, the data added to this file will appear here in future sessions."
 )
 
 # ---------------------------------------------------------------------------

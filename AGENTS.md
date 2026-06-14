@@ -1,30 +1,25 @@
-#Instructions for Workspace Agents:
+# Instructions for Workspace Agents:
 
-Your task is to assist in the development of this project following the workflow and principles outlined below.
+Your primary responsibilities are listed below:
+ - ~/.agents/user.md This file exists to allow you to share information about the user between sessions to personalize the experience and allow for more meaningful responses.  Keep it up to date at all times as it is provided automatically in your system prompts.
+ - .agents/design.md is a place for you to store information about the current repo you are working in.  This information is also provided in system prompts so should be kept up to date as a priority to ensure accuracy.
+ - .agents/tasks.md is a place to track all of the tasks we have completed recently/have planned.  This information is also provided in system prompts so should be kept up to date as a priority to ensure accuracy.  It should contain filenames for the detailed plan documents stored in .agents/plans/.
+ - Assist the user with their specific tasks using all of the skills and tools at your disposal.
 
-Check for a file in ~/.agents/user.md this is a place for you to store information about the user, you should always read this file first.  
-If it doesn't exist then you should create it and try to gather some simple information about the user to begin with like their name and any syntax preferences they may have.
-This file exists to allow you to share information about the user between sessions to personalize the experience and allow for more meaningful responses.
-
-You should always check for any design documentation files in the current working directory, .agents/design.md or README.md files to try and understand the project you are working on.
+You should always check for any design documentation files in the current working directory, design_document.md or README.md files to try and understand the project you are working on.
 An early `ls -l | grep design` can save a lot of time reading other files trying to understand something that may be documented.
-If there is no .agents/design.md file then you should create it and document your understanding of the project there as you learn more.
-Keep the .agents/design.md document up to date, it should contain a breif summary of the project as a whole, it's structure and any patterns used.  
-This file should contain only the information required for quick getting started information to speed up induction for a new task.
 
-You should also check for the existance of a tasks file like a tasks.md or a .agents/tasks.md file and ensure the task list is understood and kept up to date.
-Again if there is no task list you should create .agents/tasks.md and maintain it to track your and the users progress.
+# Workflow for a change:
 
-We are using python with uv as our package manager/venv provider.  Please make sure all tests and library additions are run through uv.
-
-Workflow for a change:
-
-1. Read the design documentation and tasks to ascertain the changes required and present them to the user for confirmation.
+1. Search for design documentation and tasks to ascertain the changes required and present them to the user for confirmation.
 2. Once the user has confirmed/clarified then add any modifications/updates to the task document so we can track our changes.
+3. Create a plan, write a file to .agents/plans and add the filename to the task list so we can easily track it. Once the plan is complete then confirm with the user and ask any clarifying questions.  Any changes the user requests should be updated in the plan document before proceeding.
 3. Make a branch for our changes so we can easily revert if we decide to change something after testing a feature.
 4. Write the tests for the change.
 5. Apply the change.
 6. Ask the user to check and test the change.  Do not try and check the change yourself as the user may notice something you/they had not considered.
 
+# Skills
 Below is an XML representation of the skills you have available, you can call the activate_skill tool at any time to get more detailed information about the skill and it's usage.
 Skills are prefered over console commands where able as they can have additional access to various services etc.
+You have the ability to create your own tools for whatever purpose is required by the user.  Use the activate_skill tool on 'workspace_docs' to get full details on how to expand your functionality.
