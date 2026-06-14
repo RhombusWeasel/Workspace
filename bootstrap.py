@@ -45,6 +45,7 @@ from core.providers.registry import ProviderRegistry
 from core.leader import leader as leader_registry
 from core.vault import VaultManager
 from core.agents_md import load_global_agents_md, load_local_agents_md, load_workspace_agents_md
+from core.context_files import load_design_md, load_tasks_md, load_user_md
 
 
 class Bootstrap:
@@ -452,6 +453,18 @@ class Bootstrap:
                 if ctx and ctx.config
                 else "ollama"
             ),
+        )
+        agents.register_dynamic(
+            "user",
+            lambda ctx: load_user_md(ctx),
+        )
+        agents.register_dynamic(
+            "design",
+            lambda ctx: load_design_md(ctx),
+        )
+        agents.register_dynamic(
+            "tasks",
+            lambda ctx: load_tasks_md(ctx),
         )
         agents.register_dynamic(
             "workspace_agents",
