@@ -132,15 +132,24 @@ class ChatManager(Widget):
 
         # If state was restored, rebuild the visual display and resume
         # polling any active stream.
+        import logging
+        _logger = logging.getLogger(__name__)
         if self._state is not None and self._sections:
-            import logging
-            logging.getLogger(__name__).info(
-                "on_mount: rebuilding display from %d sections", len(self._sections)
+            _logger.info(
+                "on_mount: scheduling rebuild from %d sections (chat_id=%s)",
+                len(self._sections), self._chat_id,
             )
             self.run_worker(self._rebuild_and_maybe_resume())
         elif self._state is not None and getattr(self._state, "_stream_id", None):
+            _logger.info(
+                "on_mount: resuming stream %s", self._state._stream_id,
+            )
             self.run_worker(self._resume_stream(self._state._stream_id))
-        elif self._state is None or not self._sections:
+        else:
+            _logger.info(
+                "on_mount: new/empty chat (state=%s, sections=%d)",
+                self._state is not None, len(self._sections),
+            )
             self._maybe_show_system_prompt()
 
     def _resume_stream(self, stream_id: str) -> None:
@@ -295,11 +304,29 @@ class ChatManager(Widget):
 
     async def _rebuild_and_maybe_resume(self) -> None:
         """Rebuild the display from persisted sections and resume polling."""
+        import logging
+        _logger = logging.getLogger(__name__)
+        _logger.info(
+            "_rebuild_and_maybe_resume: starting (sections=%d, chat_id=%s)",
+            len(self._sections), self._chat_id,
+        )
         try:
             await self._rebuild_display_from_sections()
+            _logger.info(
+                "_rebuild_and_maybe_resume: completed successfully (sections=%d)",
+                len(self._sections),
+            )
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Error rebuilding display from sections")
+            _logger.exception("Error rebuilding display from sections")
+            # Show user-visible feedback so empty display isn't silently confusing.
+            if self.is_mounted and not self._chat_display._detached:
+                try:
+                    self._chat_display.add_system_message(
+                        "⚠ Failed to load conversation history. "
+                        "Check the logs for details."
+                    )
+                except Exception:
+                    pass  # Best-effort — don't crash for a display error.
         if self._state is not None and getattr(self._state, '_stream_id', None):
             await self._resume_stream(self._state._stream_id)
 
@@ -324,7 +351,18 @@ class ChatManager(Widget):
 
         # Bail out if the widget was detached during the async gap.
         if not self.is_mounted:
+            import logging
+            logging.getLogger(__name__).warning(
+                "_rebuild_display_from_sections: widget not mounted, aborting"
+            )
             return
+
+        import logging
+        _logger = logging.getLogger(__name__)
+        _logger.info(
+            "_rebuild_display_from_sections: rebuilding %d sections",
+            len(self._sections),
+        )
 
         import json as _json
 
@@ -401,6 +439,11 @@ class ChatManager(Widget):
         # Re-attach revert buttons to completed user message nodes that
         # have checkpoint tags from a previous session.
         self._attach_revert_buttons()
+
+        _logger.info(
+            "_rebuild_display_from_sections: completed (%d turns, display has %d children)",
+            len(turn_order), len(list(self._chat_display.children)),
+        )
 
     async def _resume_stream(self, stream_id: str) -> None:
         """Re-subscribe to an active stream after workspace recomposition.
