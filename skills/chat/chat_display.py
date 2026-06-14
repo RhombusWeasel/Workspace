@@ -649,6 +649,12 @@ class ChatDisplay(Widget):
         Also clears section tracking dicts (``_section_widgets``,
         ``_section_texts``, ``_section_types``) that were needed during
         the batch rebuild but are no longer needed after finalization.
+
+        After the rebuild, applies the ``open_thinking`` and
+        ``open_tools`` config to collapse sections/branches that
+        should start collapsed.  During streaming these are handled
+        by individual ``add_section``/``add_tool_call`` calls, but
+        in batch mode those calls are suppressed.
         """
         self._batch_mode = False
         self._rebuild_pending = False
@@ -659,7 +665,40 @@ class ChatDisplay(Widget):
         # Immediate rebuild — not throttled, since this is the final
         # rebuild that renders the entire conversation.
         self._immediate_rebuild()
+        # Apply expand/collapse config.  During streaming, add_section()
+        # and add_tool_call() handle this individually, but in batch mode
+        # those per-node expand/collapse calls are suppressed.  After
+        # restore_expand_state() expands everything, we need to collapse
+        # thinking sections and tool call branches per config.
+        self._apply_expand_config()
         self._scroll_to_bottom()
+
+    def _apply_expand_config(self) -> None:
+        """Apply open_thinking and open_tools config after a batch rebuild.
+
+        During streaming, :meth:`add_section` and :meth:`add_tool_call`
+        call ``collapse_node()`` or ``expand_node()`` on the Tree to set
+        the initial expand state.  In batch mode, those calls are
+        suppressed (the tree isn't built yet), so after the rebuild we
+        need to apply the config by collapsing the appropriate nodes.
+
+        This must be called after ``restore_expand_state()`` has expanded
+        all branch nodes, so that the config overrides the default
+        (expanded) state.
+        """
+        tree = self.query_one(Tree)
+        if not self._open_thinking:
+            # Collapse all thinking sections.
+            for node_id, node in self._node_map.items():
+                if (node.data and node.data.get("section") == "thinking"
+                        and node.children):
+                    tree.collapse_node(node_id)
+        if not self._open_tools:
+            # Collapse all tool call branches.
+            for node_id, node in self._node_map.items():
+                if (node.data and node.data.get("tool_call")
+                        and node.children):
+                    tree.collapse_node(node_id)
 
     def batch_finalize_turns(self) -> None:
         """Finalize all completed assistant turns in batch mode.
