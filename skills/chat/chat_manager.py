@@ -148,20 +148,21 @@ class ChatManager(Widget):
                 self.app.context.working_directory
             )
 
-        # If state was restored, rebuild the visual display asynchronously.
-        # The rebuild needs to await Markdown.update() calls, so it runs
-        # as a background worker.
+        # If state was restored, rebuild the visual display and optionally
+        # re-subscribe to an active stream.  Both run as a single worker
+        # so that the rebuild completes before the stream resume starts.
         if self._state is not None and self._sections:
-            self.run_worker(self._rebuild_display_from_sections())
+            self.run_worker(self._rebuild_and_maybe_resume())
+        elif self._state is not None and getattr(self._state, '_stream_id', None):
+            # No sections to rebuild (empty conversation) but stream is active.
+            # This shouldn't normally happen, but handle it gracefully.
+            self.run_worker(self._resume_stream(self._state._stream_id))
         elif self._state is None or not self._sections:
             # Fresh chat tab — show system prompt if configured.
             self._maybe_show_system_prompt()
 
-        # Re-subscribe to an active stream if the state carries a stream ID.
-        # This happens after workspace recomposition — the stream continued
-        # running in StreamManager while the widget tree was rebuilt.
-        if self._state is not None and getattr(self._state, '_stream_id', None):
-            self.run_worker(self._resume_stream(self._state._stream_id))
+        # Legacy: if state has stream_id but no sections, still try to resume.
+        # This is handled by the second elif above.
 
     def on_unmount(self) -> None:
         """Detach display when the widget is removed from the DOM.
@@ -287,6 +288,19 @@ class ChatManager(Widget):
             self._state._turn_checkpoint_tags = self._turn_checkpoint_tags
             # Persist the stream ID so the new widget can re-subscribe.
             self._state._stream_id = self._stream_id
+
+    async def _rebuild_and_maybe_resume(self) -> None:
+        """Rebuild the display and then re-subscribe to an active stream.
+
+        This runs as a single background worker so that the rebuild
+        completes before the stream resume starts.  If both ran
+        concurrently, the resume could try to add display elements
+        before the rebuild finishes, causing conflicts.
+        """
+        await self._rebuild_display_from_sections()
+        # After the rebuild completes, re-subscribe to the stream if active.
+        if self._state is not None and getattr(self._state, '_stream_id', None):
+            await self._resume_stream(self._state._stream_id)
 
     async def _rebuild_display_from_sections(self) -> None:
         """Reconstruct the chat display from persisted sections.
