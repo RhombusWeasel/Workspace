@@ -890,8 +890,6 @@ class ChatDisplay(VerticalScroll):
         """
         self._batch_mode = False
 
-        mounted_count = 0
-
         # Mount deferred widgets, respecting parent-child relationships.
         # Top-level widgets (UserMessage, SystemMessage, SystemPromptSection,
         # AssistantTurn) are mounted directly into self.
@@ -907,11 +905,9 @@ class ChatDisplay(VerticalScroll):
                 if isinstance(widget, (UserMessage, SystemMessage, SystemPromptSection)):
                     self.mount(widget)
                     current_turn = None
-                    mounted_count += 1
                 elif isinstance(widget, AssistantTurn):
                     self.mount(widget)
                     current_turn = widget
-                    mounted_count += 1
                 else:
                     # Section or ToolCallSection -- mount inside the current
                     # turn's Contents container via _mount_into_collapsible,
@@ -921,7 +917,6 @@ class ChatDisplay(VerticalScroll):
                         self._mount_into_collapsible(current_turn, widget)
                     else:
                         self.mount(widget)
-                    mounted_count += 1
 
         # Apply deferred tool results -- these were queued during batch
         # mode when the ToolCallSection widgets were not yet in the DOM.
@@ -941,12 +936,6 @@ class ChatDisplay(VerticalScroll):
 
         # Apply expand/collapse config.
         self._apply_expand_config()
-
-        import logging
-        logging.getLogger(__name__).debug(
-            "end_batch: mounted %d batch widgets, display now has %d children",
-            mounted_count, len(list(self.children)),
-        )
 
         # Clear section tracking -- after batch finalize, these are
         # no longer needed (the widgets are already in the DOM).

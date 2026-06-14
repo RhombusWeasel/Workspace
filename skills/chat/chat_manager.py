@@ -132,24 +132,11 @@ class ChatManager(Widget):
 
         # If state was restored, rebuild the visual display and resume
         # polling any active stream.
-        import logging
-        _logger = logging.getLogger(__name__)
         if self._state is not None and self._sections:
-            _logger.info(
-                "on_mount: scheduling rebuild from %d sections (chat_id=%s)",
-                len(self._sections), self._chat_id,
-            )
             self.run_worker(self._rebuild_and_maybe_resume())
         elif self._state is not None and getattr(self._state, "_stream_id", None):
-            _logger.info(
-                "on_mount: resuming stream %s", self._state._stream_id,
-            )
             self.run_worker(self._resume_stream(self._state._stream_id))
         else:
-            _logger.info(
-                "on_mount: new/empty chat (state=%s, sections=%d)",
-                self._state is not None, len(self._sections),
-            )
             self._maybe_show_system_prompt()
 
     def _resume_stream(self, stream_id: str) -> None:
@@ -309,13 +296,6 @@ class ChatManager(Widget):
         display during streaming — so history loading follows the exact
         same code path that is already proven to work.
         """
-        import logging
-        _logger = logging.getLogger(__name__)
-        _logger.info(
-            "_rebuild_and_maybe_resume: starting (chat_id=%s)",
-            self._chat_id,
-        )
-
         # Prefer DB sections (fresh, includes section_id) over in-memory
         # sections (may lack section_id from older conversations).
         sections = None
@@ -323,24 +303,18 @@ class ChatManager(Widget):
             try:
                 sections = self._db.load_sections(self._chat_id)
             except Exception:
-                _logger.warning("Failed to load sections from DB, falling back to in-memory")
+                pass  # Fall back to in-memory sections.
 
         if sections is None:
             # Fallback to in-memory sections (from ChatTabState).
             sections = self._sections
 
         if not sections:
-            _logger.info("_rebuild_and_maybe_resume: no sections to rebuild")
             return
 
         try:
             await self._chat_display.refresh_from_sections(sections, finalize=True)
-            _logger.info(
-                "_rebuild_and_maybe_resume: completed (%d sections)",
-                len(sections),
-            )
         except Exception:
-            _logger.exception("Error rebuilding display from sections")
             # Show user-visible feedback so empty display isn't silently confusing.
             if self.is_mounted and not self._chat_display._detached:
                 try:
