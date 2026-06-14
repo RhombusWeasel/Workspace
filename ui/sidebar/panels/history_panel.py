@@ -245,6 +245,8 @@ class HistoryPanel(Container):
         try:
             sections = ctx.database.load_sections(chat_id)
         except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Error loading sections for chat %s", chat_id)
             return
 
         if not sections:
@@ -296,6 +298,8 @@ class HistoryPanel(Container):
             container = app.query_one(f"#{container_id}")
             tabs = container.query_one(WorkspaceTabs)
         except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Error finding workspace tabs")
             return
 
         # Use a unique tab ID based on the chat_id so each past
