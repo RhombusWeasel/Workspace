@@ -10,7 +10,9 @@ This variant adds a :class:`_RowGutter` widget — a narrow vertical strip
 that repeats the ancestor portion of the prefix alongside the content.
 The gutter sits in the same Horizontal container as the content widget.
 The parent :class:`GutteredTreeRow` watches the content widget's height
-via :class:`~textual.events.Resize` and keeps the gutter in sync.
+and keeps the gutter in sync using a **debounced** resize handler that
+coalesces rapid layout changes (e.g. during streaming) into a single
+update per frame.
 
 Usage
 -----
@@ -45,8 +47,7 @@ class _RowGutter(Static):
 
     The gutter is ``height: auto`` — it does **not** stretch to fill
     available space.  Instead, the parent :class:`GutteredTreeRow`
-    monitors the content widget's :class:`~textual.events.Resize` events
-    and calls :meth:`update_height` to keep the gutter in sync.
+    calls :meth:`update_height` to keep the gutter in sync.
 
     An empty gutter string (root-level nodes) is rendered as a single
     space per line so that the Horizontal layout keeps the gutter slot
@@ -67,7 +68,8 @@ class _RowGutter(Static):
     def __init__(self, gutter_text: str):
         self._gutter_text = gutter_text
         self._line_count: int = 1
-        super().__init__(self._build_gutter(1))
+        self._current_content: str = self._build_gutter(1)
+        super().__init__(self._current_content)
 
     # ------------------------------------------------------------------
     # Public API
@@ -78,7 +80,8 @@ class _RowGutter(Static):
         a rebuild) and re-render."""
         if gutter_text != self._gutter_text:
             self._gutter_text = gutter_text
-            self.update(self._build_gutter(self._line_count))
+            self._current_content = self._build_gutter(self._line_count)
+            self.update(self._current_content)
 
     @property
     def gutter_text(self) -> str:
@@ -90,12 +93,17 @@ class _RowGutter(Static):
         Called by the parent :class:`GutteredTreeRow` when the content
         widget resizes.  The gutter's own height is set explicitly and
         its content is rebuilt to fill exactly that many visual lines.
+
+        Skips the update if the height hasn't changed — this avoids
+        redundant DOM mutations during streaming when resize events
+        fire faster than the content actually grows.
         """
         if height < 1:
             height = 1
         if height != self._line_count:
             self._line_count = height
-            self.update(self._build_gutter(height))
+            self._current_content = self._build_gutter(height)
+            self.update(self._current_content)
 
     # ------------------------------------------------------------------
     # Internals
@@ -231,20 +239,53 @@ class GutteredTreeRow(TreeRow):
         )
         return label
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._resize_timer: object | None = None
+        self._last_content_height: int = 0
+
     def on_resize(self, event) -> None:
-        """When this row resizes, check if the content widget changed
-        height and update the gutter to match."""
+        """When this row resizes, schedule a debounced gutter update.
+
+        During streaming, resize events fire rapidly as content grows.
+        Instead of updating the gutter on every resize, we debounce by
+        cancelling any pending update and scheduling a new one ~1 frame
+        later.  This coalesces many resize events into a single gutter
+        update, reducing DOM mutations from potentially dozens per second
+        down to at most one per frame (~60 FPS).
+
+        A height-change guard also skips the update entirely if the
+        content widget's height hasn't actually changed since the last
+        gutter update.
+        """
         if not hasattr(self, "_gutter") or self._gutter is None:
             return
         if self.node.content is None:
             return
-        # The content widget's region height tells us how many lines
-        # the gutter should span.
+        # Quick check: if content height hasn't changed, skip entirely.
         try:
-            content_height = self.node.content.region.size.height
+            content_height = int(self.node.content.region.size.height)
         except Exception:
             return
-        if content_height and content_height > 0:
+        if content_height == self._last_content_height:
+            return
+        # Cancel any pending debounced update.
+        if self._resize_timer is not None:
+            self._resize_timer.cancel()
+        # Schedule the gutter update for ~1 frame later.
+        self._resize_timer = self.set_timer(1 / 60, self._apply_gutter_resize)
+
+    def _apply_gutter_resize(self) -> None:
+        """Apply the deferred gutter height update after debounce."""
+        self._resize_timer = None
+        if self._gutter is None or self.node.content is None:
+            return
+        try:
+            content_height = int(self.node.content.region.size.height)
+        except Exception:
+            return
+        if content_height > 0:
+            self._last_content_height = content_height
             self._gutter.update_height(content_height)
 
     def set_expanded(self, expanded: bool) -> None:
