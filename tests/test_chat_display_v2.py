@@ -96,7 +96,7 @@ class TestUserMessage:
             display.add_user_message("Hello, **world**!")
 
             # Allow Collapsible children to compose.
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.05)
 
             user_msg = display.query_one(UserMessage)
             # The Markdown widget inside should have the text.
@@ -144,6 +144,9 @@ class TestAssistantTurnLifecycle:
             display = app.chat_display
             display.begin_assistant_turn()
             section_id = display.add_section("response")
+
+            # Allow the section to mount (compose_add_child is deferred).
+            await asyncio.sleep(0.05)
 
             turn = display.query_one(AssistantTurn)
             sections = turn.query(Section)
@@ -196,6 +199,9 @@ class TestFinalizeSwap:
             await display.update_section(section_id, "Hello **world**!")
             await display.finalize_turn()
 
+            # Allow mount to complete (swap is async).
+            await asyncio.sleep(0.05)
+
             # After finalize, the section's content widget should be Markdown.
             section_node = display._find_section(section_id)
             assert section_node is not None
@@ -213,11 +219,11 @@ class TestFinalizeSwap:
             await display.update_section(section_id, "Hmm...")
             await display.finalize_turn()
 
+            # Allow mount to complete.
+            await asyncio.sleep(0.05)
+
             # Thinking sections should remain as Static — find the Section
             # in the DOM and check its content widget.
-            section_node = display._find_section(section_id)
-            # After finalize, section_map is cleared, so look for it in the DOM.
-            await asyncio.sleep(0)
             all_sections = display.query(Section)
             # Should have at least one Section with a Static child.
             static_count = 0
@@ -238,6 +244,9 @@ class TestFinalizeSwap:
             response_id = display.add_section("response")
             await display.update_section(response_id, "Answer!")
             await display.finalize_turn()
+
+            # Allow mount to complete.
+            await asyncio.sleep(0.05)
 
             # The empty thinking section should be removed from the turn.
             turn = display._find_assistant_turn(asst_id)
@@ -265,6 +274,9 @@ class TestToolCall:
             display.begin_assistant_turn()
             tc_id = display.add_tool_call("read_file", {"path": "/tmp/test"})
 
+            # Allow tool call section to mount.
+            await asyncio.sleep(0.05)
+
             turn = display.query_one(AssistantTurn)
             tool_sections = turn.query(ToolCallSection)
             assert len(tool_sections) == 1
@@ -280,7 +292,7 @@ class TestToolCall:
             display.add_tool_call("read_file", {"path": "/tmp/test"})
 
             # Allow Collapsible children to compose.
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.05)
 
             turn = display.query_one(AssistantTurn)
             tool_section = turn.query_one(ToolCallSection)
@@ -296,6 +308,9 @@ class TestToolCall:
             display.begin_assistant_turn()
             display.add_tool_call("read_file", {"path": "/tmp/test"})
 
+            # Allow tool call section to mount.
+            await asyncio.sleep(0.05)
+
             turn = display.query_one(AssistantTurn)
             tool_section = turn.query_one(ToolCallSection)
             assert tool_section.collapsed is True
@@ -309,6 +324,9 @@ class TestToolCall:
 
             display.begin_assistant_turn()
             display.add_tool_call("read_file", {"path": "/tmp/test"})
+
+            # Allow tool call section to mount.
+            await asyncio.sleep(0.05)
 
             turn = display.query_one(AssistantTurn)
             tool_section = turn.query_one(ToolCallSection)
@@ -598,6 +616,9 @@ class TestMultiTurn:
             s1 = display.add_section("response")
             await display.update_section(s1, "Here's the content.")
             await display.finalize_turn()
+
+            # Allow deferred mounts to complete.
+            await asyncio.sleep(0.05)
 
             turn = display.query_one(AssistantTurn)
             # Turn should have a ToolCallSection and a Section.

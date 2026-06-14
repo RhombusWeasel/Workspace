@@ -39,7 +39,7 @@ walks, no rebuilds, no prefix computation.
 
 from __future__ import annotations
 
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.widgets import Collapsible, Markdown, Static
 
 from skills.chat.tool_format import (
@@ -85,23 +85,24 @@ class UserMessage(Collapsible):
         self.message_id = message_id
         self.full_text = text
         preview = _truncate(text, 60)
+        # Pass the Markdown content as a child to Collapsible so that
+        # Collapsible.compose() creates both CollapsibleTitle and Contents.
+        content = Markdown(text, id=f"md-msg-{message_id}")
         super().__init__(
+            content,
             title=f"\uf007  [cyan]User:[/cyan] {preview}",
+            collapsed=False,
             id=f"msg-{message_id}",
             **kwargs,
         )
-        # User messages start expanded.
-        self.collapsed = False
-
-    def compose(self) -> ComposeResult:
-        yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
 
 
 class AssistantTurn(Collapsible):
     """A vertical container for all sections of one assistant turn.
 
-    Contains a header label and one or more Section widgets.  Provides
-    a :meth:`set_header` method to update the collapsed-state preview.
+    Uses the Collapsible's built-in title for the header, which is
+    a CollapsibleTitle that can be clicked to toggle expand/collapse.
+    Sections are mounted into the Collapsible's Contents container.
     """
 
     DEFAULT_CSS = """
@@ -113,21 +114,16 @@ class AssistantTurn(Collapsible):
 
     def __init__(self, turn_id: str, **kwargs):
         self.turn_id = turn_id
-        super().__init__(id=f"asst-{turn_id}", **kwargs)
-        self._header: Static | None = None
-
-    def compose(self) -> ComposeResult:
-        self._header = Static(
-            "\uf4ad  [green]Assistant[/green]",
-            classes="assistant-header",
-            id=f"header-{self.turn_id}",
+        super().__init__(
+            title="  \uf4ad  [green]Assistant[/green]",
+            collapsed=False,
+            id=f"asst-{turn_id}",
+            **kwargs,
         )
-        yield self._header
 
     def set_header(self, text: str) -> None:
         """Update the header label text."""
-        if self._header is not None:
-            self._header.update(text)
+        self.title = text
 
 
 class Section(Collapsible):
@@ -136,6 +132,9 @@ class Section(Collapsible):
     Contains a content widget (Static during streaming, Markdown after
     finalize for response/tools sections).  The ``section_id`` attribute
     links back to the ChatDisplay's tracking dicts.
+
+    The content widget is passed as a child to Collapsible so that
+    Collapsible.compose() creates both CollapsibleTitle and Contents.
     """
 
     DEFAULT_CSS = """
@@ -157,20 +156,21 @@ class Section(Collapsible):
         self.section_id = section_id
         self._content_widget = content
         super().__init__(
+            content,
             title=title,
             collapsed=start_collapsed,
             id=f"sec-{section_id}",
             **kwargs,
         )
 
-    def compose(self) -> ComposeResult:
-        yield self._content_widget
-
 
 class ToolCallSection(Collapsible):
     """A collapsible section for a tool call within an assistant turn.
 
     Shows the tool name in the title and Markdown detail content.
+
+    The detail Markdown is passed as a child to Collapsible so that
+    Collapsible.compose() creates both CollapsibleTitle and Contents.
     """
 
     DEFAULT_CSS = """
@@ -193,16 +193,16 @@ class ToolCallSection(Collapsible):
         self.section_id = section_id
         self._title_collapsed = title
         self._title_expanded = title_expanded
-        self._detail_text = detail
+        # Pass detail content as a child so Collapsible.compose() creates
+        # both CollapsibleTitle and Contents.
+        content = Markdown(detail, id=f"md-tc-{section_id}")
         super().__init__(
+            content,
             title=title,
             collapsed=start_collapsed,
             id=f"tc-{section_id}",
             **kwargs,
         )
-
-    def compose(self) -> ComposeResult:
-        yield Markdown(self._detail_text, id=f"md-tc-{self.section_id}")
 
 
 class SystemMessage(Collapsible):
@@ -216,15 +216,14 @@ class SystemMessage(Collapsible):
     ):
         self.message_id = message_id
         self.full_text = text
+        content = Markdown(text, id=f"md-msg-{message_id}")
         super().__init__(
+            content,
             title="  \U000f0e38 [dim]System[/dim]",
+            collapsed=False,
             id=f"msg-{message_id}",
             **kwargs,
         )
-        self.collapsed = False
-
-    def compose(self) -> ComposeResult:
-        yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
 
 
 class SystemPromptSection(Collapsible):
@@ -238,16 +237,14 @@ class SystemPromptSection(Collapsible):
     ):
         self.message_id = message_id
         self.full_text = text
+        content = Markdown(text, id=f"md-msg-{message_id}")
         super().__init__(
+            content,
             title="  \U000f0e38 System Prompt",
+            collapsed=True,
             id=f"msg-{message_id}",
             **kwargs,
         )
-        # System prompt starts collapsed.
-        self.collapsed = True
-
-    def compose(self) -> ComposeResult:
-        yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -480,12 +477,14 @@ class ChatDisplay(VerticalScroll):
         self._section_map[section_id] = section
 
         # Mount inside the current AssistantTurn.
+        # Route through _mount_into_collapsible to ensure sections
+        # end up inside the Collapsible's Contents container.
         turn = self._turn_map.get(self._active_asst_id)
         if turn is not None:
             if self._batch_mode:
                 self._batch_widgets.append(section)
             else:
-                turn.mount(section)
+                self._mount_into_collapsible(turn, section)
 
         self._schedule_scroll()
         return section_id
@@ -654,6 +653,21 @@ class ChatDisplay(VerticalScroll):
         """Find an AssistantTurn widget by its turn_id."""
         return self._turn_map.get(turn_id)
 
+    def _mount_into_collapsible(self, collapsible: Collapsible, widget: Widget) -> None:
+        """Mount a widget into a Collapsible's Contents container.
+
+        If the Collapsible has already composed (Contents exists), mount
+        directly into Contents. Otherwise, use compose_add_child so that
+        Collapsible.compose() will place the widget inside Contents.
+        """
+        try:
+            contents = collapsible.query_one(Collapsible.Contents)
+            contents.mount(widget)
+        except Exception:
+            # Collapsible not yet composed — add to _contents_list so
+            # compose() will yield it inside Contents.
+            collapsible.compose_add_child(widget)
+
     # ------------------------------------------------------------------
     # Batch mode
     # ------------------------------------------------------------------
@@ -683,8 +697,11 @@ class ChatDisplay(VerticalScroll):
         # Top-level widgets (UserMessage, SystemMessage, SystemPromptSection,
         # AssistantTurn) are mounted directly into self.
         # Section and ToolCallSection widgets are mounted inside their
-        # parent AssistantTurn — we track the most recent AssistantTurn
-        # as we iterate through the batch.
+        # parent AssistantTurn's Contents container.
+        #
+        # For AssistantTurn children, we use compose_add_child so that
+        # when the Collapsible composes, sections are placed inside the
+        # Contents container rather than as siblings of the title.
         if self._batch_widgets:
             current_turn: AssistantTurn | None = None
             for widget in self._batch_widgets:
@@ -697,7 +714,9 @@ class ChatDisplay(VerticalScroll):
                 else:
                     # Section or ToolCallSection — mount inside the current turn.
                     if current_turn is not None:
-                        current_turn.mount(widget)
+                        # Use compose_add_child so sections end up inside
+                        # the Collapsible's Contents container.
+                        current_turn.compose_add_child(widget)
                     else:
                         self.mount(widget)
         self._batch_widgets = []
@@ -764,6 +783,15 @@ class ChatDisplay(VerticalScroll):
             new_widget = Markdown(text, id=f"{widget.id}-rendered")
             section._content_widget = new_widget
 
+            # Also update the Collapsible's _contents_list so that when
+            # compose() runs, it yields the new Markdown widget instead of
+            # the old Static widget.
+            try:
+                idx = section._contents_list.index(widget)
+                section._contents_list[idx] = new_widget
+            except ValueError:
+                section._contents_list.append(new_widget)
+
             # Update tracking.
             self._section_widgets[section_id] = new_widget
 
@@ -815,12 +843,14 @@ class ChatDisplay(VerticalScroll):
         )
 
         # Mount inside the current AssistantTurn.
+        # Route through _mount_into_collapsible to ensure sections
+        # end up inside the Collapsible's Contents container.
         turn = self._turn_map.get(self._active_asst_id)
         if turn is not None:
             if self._batch_mode:
                 self._batch_widgets.append(tool_section)
             else:
-                turn.mount(tool_section)
+                self._mount_into_collapsible(turn, tool_section)
 
         self._schedule_scroll()
         return tc_id
@@ -871,12 +901,27 @@ class ChatDisplay(VerticalScroll):
         # Find the Section Collapsible and swap the content.
         section = self._section_map.get(section_id)
         if section is not None:
-            # Remove old widget, mount new one inside the Section.
+            # If the Section has already composed (Contents exists),
+            # remove the old widget and mount the new one into Contents.
+            # Otherwise, update _contents_list directly so compose()
+            # will yield the new Markdown widget.
             try:
+                contents = section.query_one(Collapsible.Contents)
+                # Section has composed — swap in DOM.
                 old_widget.remove()
-                await section.mount(new_widget)
+                await contents.mount(new_widget)
             except Exception:
-                pass  # Best-effort — non-critical visual improvement
+                # Section not yet composed — update _contents_list directly.
+                try:
+                    idx = section._contents_list.index(old_widget)
+                    section._contents_list[idx] = new_widget
+                except ValueError:
+                    section._contents_list.append(new_widget)
+                # Also try to remove the old widget if it's in the DOM.
+                try:
+                    old_widget.remove()
+                except Exception:
+                    pass
 
             # Update the section's content widget reference.
             section._content_widget = new_widget
