@@ -55,6 +55,7 @@ ChatDisplay .streaming-content {
 
 ChatDisplay .chat-user {
     border-left: heavy $primary;
+    border-top: none;
     padding-left: 1;
 }
 
