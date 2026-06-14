@@ -395,13 +395,14 @@ class ChatManager(Widget):
         the workspace was recomposed.
 
         The display has already been rebuilt from persisted sections by
-        ``_rebuild_display_from_sections()``.  This method starts a
-        new local processing loop that receives chunks from the
-        StreamManager and updates the fresh display.
+        ``_rebuild_display_from_sections()``.  This method re-subscribes
+        to the StreamManager stream and processes only NEW chunks that
+        arrive after the rebuild.
 
-        Since all previously-persisted content is already on the display
-        from the rebuild, we begin a fresh assistant turn and process
-        only NEW chunks from the stream.
+        All previously-persisted content is already on the display, so
+        we skip the buffered chunks (they correspond to already-
+        persisted sections) and only process chunks arriving after
+        subscription.
         """
         ctx = self._get_context()
         if ctx is None or ctx.stream_manager is None:
@@ -421,24 +422,11 @@ class ChatManager(Widget):
         self._chat_input.set_streaming(True)
         self._streaming = True
 
-        # Begin a new assistant turn on the display for the resumed stream.
-        # The previous turn's sections were already rendered by
-        # _rebuild_display_from_sections, so we start fresh.
-        self._chat_display.begin_assistant_turn()
-        self.refresh(layout=True)
-        await asyncio.sleep(0)
-
-        # Process chunks from the StreamManager.
-        # We skip chunks that are already persisted in _sections.
-        # Since we don't know exactly which chunks map to which sections,
-        # we drain the entire buffer but only process chunks that arrive
-        # AFTER our subscription point.
-        #
-        # The StreamManager continues to buffer new chunks and calls
-        # our callback for each one.  We use _process_stream_chunks
-        # which is the same chunk-processing loop used by _handle_submit.
+        # Process chunks from the StreamManager — resume mode means
+        # we skip all buffered chunks (already displayed via rebuild)
+        # and only process new chunks arriving after subscription.
         self._streaming_task = self.run_worker(
-            self._process_stream_chunks(stream_id)
+            self._process_stream_chunks(stream_id, resume=True)
         )
 
     # ------------------------------------------------------------------
@@ -687,22 +675,43 @@ class ChatManager(Widget):
             # Process directly from the agent.
             await self._process_stream_direct(turn_id, user_text)
 
-    async def _process_stream_chunks(self, stream_id: str) -> None:
+    async def _process_stream_chunks(
+        self,
+        stream_id: str,
+        *,
+        resume: bool = False,
+    ) -> None:
         """Process chunks from a StreamManager stream.
 
         Subscribes to the stream identified by *stream_id* and processes
         each chunk, updating the display and persisting sections.
 
-        This method is used both for new streams (started by
-        ``_handle_submit``) and for resumed streams (after workspace
-        recomposition via ``_resume_stream``).
+        When *resume* is True (after workspace recomposition), the display
+        has already been rebuilt from persisted sections.  In this mode we:
+
+        1. Drain the subscription buffer to skip all already-processed
+           chunks (they're already on the display from the rebuild).
+        2. Only process NEW chunks arriving after the drain.
+        3. Use the turn ID from the last persisted section so new
+           content continues the existing turn.
+
+        If the stream has already finished during the recomposition gap,
+        we finalize the turn immediately.
         """
         ctx = self._get_context()
         if ctx is None or ctx.stream_manager is None:
             return
 
         sm = ctx.stream_manager
-        turn_id = uuid.uuid4().hex
+
+        # For resumed streams, use the last section's turn_id so new
+        # content continues the existing turn.  For fresh streams, create
+        # a new turn_id.
+        if resume and self._sections:
+            turn_id = self._sections[-1].get("turn_id", uuid.uuid4().hex)
+        else:
+            turn_id = uuid.uuid4().hex
+
         watcher: StreamSection | None = None
         pending_tool_results: dict[str, Any] = {}
         # Queue for receiving chunks from the subscription callback.
@@ -723,11 +732,41 @@ class ChatManager(Widget):
             if self._state is not None:
                 self._state._stream_id = None
             self._chat_input.set_streaming(False)
-            await self._chat_display.finalize_turn()
+            if not resume:
+                await self._chat_display.finalize_turn()
             self._chat_input.focus()
             return
 
         self._subscription = subscription
+
+        # When resuming, drain and discard all buffered chunks — they
+        # correspond to content already persisted and displayed via
+        # _rebuild_display_from_sections.  We only process NEW chunks.
+        if resume:
+            buffered = subscription.drain()
+            # The stream may have completed during the recomposition gap.
+            # Check for usage info in the last chunks.
+            if subscription.is_done:
+                # Stream completed — all content is already persisted.
+                # Extract any usage info from the buffered chunks.
+                for chunk in buffered:
+                    if chunk.usage and self._agent is not None:
+                        model_name = getattr(self._agent, "_model", "")
+                        if self._chat_input.is_mounted:
+                            self._chat_input.update_context_progress(
+                                model_name,
+                                chunk.usage.total_tokens,
+                                chunk.usage.context_length,
+                            )
+                self._streaming = False
+                self._stream_id = None
+                if self._state is not None:
+                    self._state._stream_id = None
+                self._chat_input.set_streaming(False)
+                await self._chat_display.finalize_turn()
+                self._chat_input.focus()
+                self._attach_revert_buttons()
+                return
 
         try:
             while True:
