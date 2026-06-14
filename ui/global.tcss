@@ -14,5 +14,5 @@ Tooltip {
 }
 
 ToastRack {
-    align: right top;
+    dock: top;
 }
