@@ -734,3 +734,101 @@ class TestMessageCSSClasses:
 
             prompt_section = display.query_one(SystemPromptSection)
             assert prompt_section.has_class("chat-system")
+
+
+# ---------------------------------------------------------------------------
+# L: Tool result display
+# ---------------------------------------------------------------------------
+
+
+class TestToolResult:
+    """Tests for add_tool_result updating ToolCallSection with result."""
+
+    @pytest.mark.asyncio
+    async def test_add_tool_result_updates_markdown(self):
+        """add_tool_result should append result to the ToolCallSection markdown."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+            tc_id = display.add_tool_call("read_file", {"path": "/tmp/test"})
+
+            # Allow tool call section to mount.
+            await asyncio.sleep(0.05)
+
+            # Add the result.
+            display.add_tool_result(tc_id, "file contents here")
+
+            # Check the ToolCallSection has the result flag set.
+            tool_section = display.query_one(ToolCallSection)
+            assert tool_section._has_result is True
+
+    @pytest.mark.asyncio
+    async def test_add_tool_result_updates_label(self):
+        """add_tool_result should update the collapsed label with checkmark."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+            tc_id = display.add_tool_call("read_file", {"path": "/tmp/test"})
+
+            await asyncio.sleep(0.05)
+
+            display.add_tool_result(tc_id, "file contents here")
+
+            tool_section = display.query_one(ToolCallSection)
+            # The title should now contain a checkmark.
+            assert "\u2714" in tool_section.title
+
+    @pytest.mark.asyncio
+    async def test_add_tool_result_idempotent(self):
+        """Calling add_tool_result twice should not duplicate the result."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+            tc_id = display.add_tool_call("read_file", {"path": "/tmp/test"})
+
+            await asyncio.sleep(0.05)
+
+            display.add_tool_result(tc_id, "first result")
+            display.add_tool_result(tc_id, "second result")
+
+            tool_section = display.query_one(ToolCallSection)
+            # _has_result should still be True (not double-processed).
+            assert tool_section._has_result is True
+
+    @pytest.mark.asyncio
+    async def test_add_tool_result_nonexistent_tc(self):
+        """add_tool_result with a bad tc_id should be a no-op."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+            display.begin_assistant_turn()
+
+            # Should not raise.
+            display.add_tool_result("tc-999", "some result")
+
+    @pytest.mark.asyncio
+    async def test_tool_call_with_result_in_batch_mode(self):
+        """Tool call with result should display correctly in batch mode."""
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+
+            display.begin_batch()
+            display.add_user_message("Read the file")
+            display.begin_assistant_turn()
+            tc_id = display.add_tool_call("read_file", {"path": "/tmp/test"})
+            s1 = display.add_section("response")
+            await display.update_section(s1, "Here's what I found.")
+            display.add_tool_result(tc_id, "file contents here")
+            display.batch_finalize_turns()
+            display.end_batch()
+
+            await asyncio.sleep(0.1)
+
+            # Check the ToolCallSection has the result.
+            tool_section = display.query_one(ToolCallSection)
+            assert tool_section._has_result is True
+            assert "\u2714" in tool_section.title

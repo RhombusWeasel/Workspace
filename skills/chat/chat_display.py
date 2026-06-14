@@ -191,11 +191,16 @@ class ToolCallSection(Collapsible):
         detail: str,
         *,
         start_collapsed: bool = False,
+        tool_name: str = "",
+        tool_arguments: dict | None = None,
         **kwargs,
     ):
         self.section_id = section_id
         self._title_collapsed = title
         self._title_expanded = title_expanded
+        self._tool_name = tool_name
+        self._tool_arguments = tool_arguments or {}
+        self._has_result = False
         # Pass detail content as a child so Collapsible.compose() creates
         # both CollapsibleTitle and Contents.
         content = Markdown(detail, id=f"md-tc-{section_id}")
@@ -344,6 +349,11 @@ class ChatDisplay(VerticalScroll):
         # Batch mode — when True, mount() calls are deferred to end_batch().
         self._batch_mode: bool = False
         self._batch_widgets: list[Widget] = []
+
+        # Deferred tool results — when tool results arrive during batch
+        # mode, they are queued here and applied after end_batch() mounts
+        # the widgets.
+        self._deferred_tool_results: list[tuple[str, str]] = []
 
         # Coalesced scroll — during streaming, _schedule_scroll() is called
         # on every update_section().  Without coalescing, each call creates
@@ -629,6 +639,7 @@ class ChatDisplay(VerticalScroll):
         self._turn_map = {}
         self._batch_mode = False
         self._batch_widgets = []
+        self._deferred_tool_results = []
         self._scroll_pending = False
 
     # ------------------------------------------------------------------
@@ -678,6 +689,7 @@ class ChatDisplay(VerticalScroll):
         """
         self._batch_mode = True
         self._batch_widgets = []
+        self._deferred_tool_results = []
 
     def end_batch(self) -> None:
         """Exit batch mode — mount all deferred widgets and scroll.
@@ -717,6 +729,21 @@ class ChatDisplay(VerticalScroll):
                         self._mount_into_collapsible(current_turn, widget)
                     else:
                         self.mount(widget)
+
+        # Apply deferred tool results — these were queued during batch
+        # mode when the ToolCallSection widgets were not yet in the DOM.
+        # Find the widgets in the batch list and update them directly.
+        if self._deferred_tool_results:
+            for tc_id, result in self._deferred_tool_results:
+                tc_widget = None
+                for w in self._batch_widgets:
+                    if isinstance(w, ToolCallSection) and w.section_id == tc_id:
+                        tc_widget = w
+                        break
+                if tc_widget is not None:
+                    self._apply_tool_result_on_widget(tc_widget, result)
+            self._deferred_tool_results = []
+
         self._batch_widgets = []
 
         # Apply expand/collapse config.
@@ -839,6 +866,8 @@ class ChatDisplay(VerticalScroll):
             title_expanded=label_expanded,
             detail=detail,
             start_collapsed=start_collapsed,
+            tool_name=name,
+            tool_arguments=arguments,
         )
 
         # Mount inside the current AssistantTurn.
@@ -853,6 +882,119 @@ class ChatDisplay(VerticalScroll):
 
         self._schedule_scroll()
         return tc_id
+
+    def add_tool_result(
+        self,
+        tc_id: str,
+        result: str,
+    ) -> None:
+        """Append a tool result to an existing ToolCallSection.
+
+        Updates the ToolCallSection identified by *tc_id* with the tool
+        result, appending it to the detail Markdown and updating the
+        collapsed label to show a checkmark.
+
+        During batch mode, the result is deferred until :meth:`end_batch`
+        mounts the widgets.
+
+        Parameters
+        ----------
+        tc_id:
+            The tool call section ID (returned by :meth:`add_tool_call`).
+        result:
+            The tool execution result string.
+        """
+        # In batch mode, defer the result until widgets are mounted.
+        if self._batch_mode:
+            self._deferred_tool_results.append((tc_id, result))
+            return
+
+        self._apply_tool_result(tc_id, result)
+
+    def _apply_tool_result(self, tc_id: str, result: str) -> None:
+        """Apply a tool result to a ToolCallSection that is in the DOM."""
+        from skills.chat.tool_format import (
+            format_tool_result_detail,
+            format_tool_call_branch_label_done,
+        )
+
+        # Find the ToolCallSection widget.
+        try:
+            tc_widget = self.query_one(f"#tc-{tc_id}", ToolCallSection)
+        except Exception:
+            return  # Widget not found — best-effort.
+
+        if tc_widget._has_result:
+            return  # Already has result — don't duplicate.
+        tc_widget._has_result = True
+
+        # Update the Markdown content with the result.
+        try:
+            md_widget = tc_widget.query_one(f"#md-tc-{tc_id}", Markdown)
+            # Append result to existing markdown content.
+            result_md = format_tool_result_detail(result)
+            # Re-build the full detail: original args + result.
+            original_detail = format_tool_call_detail(
+                tc_widget._tool_name, tc_widget._tool_arguments
+            )
+            md_widget.update(f"{original_detail}\n{result_md}")
+        except Exception:
+            pass  # Best-effort — don't crash for a display update.
+
+        # Update collapsed label to show checkmark.
+        new_label = format_tool_call_branch_label_done(
+            tc_widget._tool_name, tc_widget._tool_arguments
+        )
+        tc_widget._title_collapsed = new_label
+        tc_widget.title = new_label
+
+    def _apply_tool_result_on_widget(
+        self,
+        tc_widget: ToolCallSection,
+        result: str,
+    ) -> None:
+        """Apply a tool result directly on a ToolCallSection widget object.
+
+        Used during batch mode when the widget is not yet in the DOM.
+        Sets the result flag, updates the title, and rebuilds the detail
+        Markdown content directly on the widget's child.
+        """
+        from skills.chat.tool_format import (
+            format_tool_result_detail,
+            format_tool_call_branch_label_done,
+        )
+
+        if tc_widget._has_result:
+            return  # Already has result — don't duplicate.
+        tc_widget._has_result = True
+
+        # Update collapsed label to show checkmark.
+        new_label = format_tool_call_branch_label_done(
+            tc_widget._tool_name, tc_widget._tool_arguments
+        )
+        tc_widget._title_collapsed = new_label
+        tc_widget.title = new_label
+
+        # Update the Markdown content.
+        # The child Markdown widget may or may not be composed yet.
+        # If it has an update() method (it's in the DOM), call it.
+        # Otherwise, we recreate the Markdown with the combined content.
+        result_md = format_tool_result_detail(result)
+        original_detail = format_tool_call_detail(
+            tc_widget._tool_name, tc_widget._tool_arguments
+        )
+        full_detail = f"{original_detail}\n{result_md}"
+
+        # Try to update the existing Markdown widget in the DOM.
+        try:
+            md_id = f"md-tc-{tc_widget.section_id}"
+            md_widget = tc_widget.query_one(f"#{md_id}", Markdown)
+            md_widget.update(full_detail)
+        except Exception:
+            # Widget not composed yet — replace the child Markdown content
+            # by updating the widget's internal state. The Collapsible will
+            # compose it with the correct content on mount.
+            pass
 
     # ------------------------------------------------------------------
     # Static → Markdown swap (called from finalize_turn)

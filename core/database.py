@@ -348,7 +348,16 @@ class DatabaseManager:
                     asst = self._ensure_assistant(history, tid)
                     tc_list = asst.setdefault("tool_calls", [])
                     try:
-                        tc_list.append(json.loads(s["content"]))
+                        tc_data = json.loads(s["content"])
+                        tc_list.append(tc_data)
+                        # If the tool call JSON includes a result, emit a
+                        # tool-role message so the LLM sees the output.
+                        if "result" in tc_data and tc_data["result"] is not None:
+                            history.append({
+                                "role": "tool",
+                                "content": tc_data["result"],
+                                "name": tc_data.get("name", ""),
+                            })
                     except (json.JSONDecodeError, TypeError):
                         pass  # Skip malformed entries
 
@@ -404,6 +413,42 @@ class DatabaseManager:
             (chat_id, min_id),
         )
         self._provider.conn.commit()
+
+    def update_tool_result(
+        self,
+        chat_id: str,
+        turn_id: str,
+        tool_name: str,
+        updated_json: str,
+    ) -> None:
+        """Update a tool_call section row to include the result.
+
+        Finds the first ``tool_call`` row matching *chat_id*, *turn_id*,
+        and *tool_name* and updates its ``content`` column with
+        *updated_json* (which should include the ``result`` key).
+
+        If no matching row is found, this is a no-op.
+        """
+        import json as _json
+
+        # Find the matching tool_call row by parsing the JSON content.
+        rows = self._provider.execute(
+            "SELECT id, content FROM messages "
+            "WHERE chat_id = ? AND turn_id = ? AND content_type = 'tool_call'",
+            (chat_id, turn_id),
+        )
+        for row in rows:
+            try:
+                tc_data = _json.loads(row["content"])
+                if tc_data.get("name") == tool_name:
+                    self._provider.execute(
+                        "UPDATE messages SET content = ? WHERE id = ?",
+                        (updated_json, row["id"]),
+                    )
+                    self._provider.conn.commit()
+                    return
+            except (_json.JSONDecodeError, KeyError):
+                continue
 
     # ------------------------------------------------------------------
     # Agent CRUD (deprecated — use AgentManager from core.agent_registry)

@@ -55,6 +55,11 @@ class StreamChunk:
     """Reasoning / chain-of-thought emitted by the model (DeepSeek-R1, Qwen, etc.)."""
     tool_calls: list[ToolCall] | None = None
     """Tool calls emitted in this chunk (typically on the final ``done`` chunk)."""
+    tool_results: dict[str, str] | None = None
+    """Tool execution results — maps tool call ID to result string.
+
+    Yielded by the agent after executing tool calls so the UI can display
+    the output alongside the call arguments."""
 
 
 @dataclass
