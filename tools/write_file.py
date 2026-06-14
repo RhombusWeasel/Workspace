@@ -2,6 +2,12 @@
 
 Registered at import time via ``@register_tool()``.  Async because it
 pushes a :class:`~ui.widgets.confirm_modal.ConfirmModal`.
+
+The ``directory`` parameter controls which root paths are resolved
+against:
+
+- ``"project"`` (default) — the workspace working directory.
+- ``"global"`` — ``~/.agents/``, allowing agents to create global skills.
 """
 
 from __future__ import annotations
@@ -10,6 +16,11 @@ import os
 from typing import TYPE_CHECKING
 
 from core.tools import register_tool
+from tools._path_utils import (
+    validate_directory,
+    resolve_tool_path,
+    check_path_boundary,
+)
 
 if TYPE_CHECKING:
     from context import AppContext
@@ -19,8 +30,8 @@ if TYPE_CHECKING:
     name="write_file",
     tags=["files"],
     description=(
-        "Write content to a file.  Paths outside the working directory "
-        "are rejected.  The user is shown a diff and must confirm before "
+        "Write content to a file. Paths outside the allowed directory "
+        "are rejected. The user is shown a diff and must confirm before "
         "the write happens."
     ),
     parameters={
@@ -30,18 +41,31 @@ if TYPE_CHECKING:
                 "type": "string",
                 "description": (
                     "Absolute or relative path for the new file. "
-                    "Must resolve inside the working directory."
+                    "Must resolve inside the allowed directory."
                 ),
             },
             "content": {
                 "type": "string",
                 "description": "The exact text content to write to the file.",
             },
+            "directory": {
+                "type": "string",
+                "description": (
+                    "Which directory to resolve the path in: "
+                    "'project' (default) for the working directory, "
+                    "'global' for ~/.agents/ to manage global skills."
+                ),
+            },
         },
         "required": ["path", "content"],
     },
 )
-async def write_file(path: str, content: str, ctx: "AppContext | None" = None) -> str:
+async def write_file(
+    path: str,
+    content: str,
+    directory: str = "project",
+    ctx: "AppContext | None" = None,
+) -> str:
     """Write *content* to *path* after user confirmation.
 
     Shows a confirmation modal with the proposed file content.  The
@@ -53,20 +77,18 @@ async def write_file(path: str, content: str, ctx: "AppContext | None" = None) -
     if ctx is None:
         return "Error: no context available (working directory unknown)."
 
-    wd = os.path.realpath(ctx.working_directory)
+    # Validate directory scope.
+    err = validate_directory(directory)
+    if err:
+        return f"Error: {err}"
 
-    # Resolve path.
-    if os.path.isabs(path):
-        resolved = os.path.realpath(path)
-    else:
-        resolved = os.path.realpath(os.path.join(wd, path))
+    # Resolve path and boundary root.
+    resolved, root = resolve_tool_path(path, directory, ctx)
 
     # Boundary check — fails fast before any app interaction.
-    if not resolved.startswith(wd + os.sep) and resolved != wd:
-        return (
-            f"Access denied: '{path}' resolves outside the working directory "
-            f"({wd})."
-        )
+    err = check_path_boundary(resolved, root, path)
+    if err:
+        return err
 
     # Build a preview.
     existing = ""

@@ -3,12 +3,17 @@
 Provides ``resolve_tool_path`` and ``resolve_tool_cwd`` so that the
 ``directory`` parameter (``"project"`` / ``"global"``) is handled
 consistently across run_command, write_file, edit_file, and read_file.
+
+Uses ``core.paths.agents_dir()`` for the global root so that the
+definition of ``~/.agents/`` lives in one place.
 """
 
 from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
+
+from core.paths import agents_dir as _agents_dir
 
 if TYPE_CHECKING:
     from context import AppContext
@@ -41,7 +46,7 @@ def resolve_tool_path(
     * ``directory='global'`` — resolves against ``~/.agents/``.
     """
     if directory == "global":
-        root = os.path.realpath(os.path.expanduser("~/.agents"))
+        root = os.path.realpath(_agents_dir())
     else:
         wd = ctx.working_directory if ctx else os.getcwd()
         root = os.path.realpath(wd)
@@ -68,6 +73,6 @@ def check_path_boundary(resolved: str, root: str, display_path: str) -> str | No
 def resolve_tool_cwd(directory: str, ctx: "AppContext | None") -> str:
     """Return the cwd to use for a command, based on *directory* scope."""
     if directory == "global":
-        return os.path.realpath(os.path.expanduser("~/.agents"))
+        return os.path.realpath(_agents_dir())
     else:
         return ctx.working_directory if ctx else os.getcwd()

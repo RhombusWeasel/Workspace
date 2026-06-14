@@ -1,4 +1,4 @@
-"""Read file tool — reads a file's contents, restricted to the working directory.
+"""Read file tool — reads a file's contents, restricted to the allowed directory.
 
 Registered at import time via ``@register_tool()``.
 
@@ -6,6 +6,12 @@ Supports ``offset`` and ``limit`` parameters for reading large files in
 chunks.  When the file exceeds ``_MAX_OUTPUT_LINES`` lines and no limit
 is specified, the output is truncated with instructions to continue
 reading with offset/limit.
+
+The ``directory`` parameter controls which root paths are resolved
+against:
+
+- ``"project"`` (default) — the workspace working directory.
+- ``"global"`` — ``~/.agents/``, allowing agents to read global skills.
 """
 
 from __future__ import annotations
@@ -14,6 +20,11 @@ import os
 from typing import TYPE_CHECKING
 
 from core.tools import register_tool
+from tools._path_utils import (
+    validate_directory,
+    resolve_tool_path,
+    check_path_boundary,
+)
 
 if TYPE_CHECKING:
     from context import AppContext
@@ -26,7 +37,7 @@ _MAX_OUTPUT_LINES = 500  # Max lines returned when limit is not specified
     name="read_file",
     tags=["files"],
     description=(
-        "Read the contents of a file. Paths outside the working directory are rejected. "
+        "Read the contents of a file. Paths outside the allowed directory are rejected. "
         "For large files, use offset and limit to read in chunks — "
         "offset is the 1-indexed line number to start from, "
         "limit is the maximum number of lines to return. "
@@ -40,7 +51,7 @@ _MAX_OUTPUT_LINES = 500  # Max lines returned when limit is not specified
                 "type": "string",
                 "description": (
                     "Absolute or relative path to the file. "
-                    "Must resolve to a path inside the working directory."
+                    "Must resolve to a path inside the allowed directory."
                 ),
             },
             "offset": {
@@ -59,6 +70,14 @@ _MAX_OUTPUT_LINES = 500  # Max lines returned when limit is not specified
                     "if it exceeds the output line limit."
                 ),
             },
+            "directory": {
+                "type": "string",
+                "description": (
+                    "Which directory to resolve the path in: "
+                    "'project' (default) for the working directory, "
+                    "'global' for ~/.agents/ to access global skills."
+                ),
+            },
         },
         "required": ["path"],
     },
@@ -67,14 +86,16 @@ def read_file(
     path: str,
     offset: int | None = None,
     limit: int | None = None,
+    directory: str = "project",
     ctx: "AppContext | None" = None,
 ) -> str:
     """Read and return the contents of *path*, optionally starting at
     *offset* (1-indexed line number) and returning at most *limit* lines.
 
-    *path* is resolved relative to the working directory (from *ctx*).
-    Absolute paths are accepted only if they resolve inside the working
-    directory.  Symlinks are resolved before the boundary check.
+    *path* is resolved relative to the allowed directory (from *ctx*
+    and the *directory* parameter).  Absolute paths are accepted only
+    if they resolve inside the allowed directory.  Symlinks are resolved
+    before the boundary check.
 
     When *limit* is not specified and the file exceeds
     ``_MAX_OUTPUT_LINES`` lines, the output is truncated with a summary
@@ -88,21 +109,18 @@ def read_file(
     if limit is not None and limit < 1:
         return f"Invalid limit: {limit}. Limit must be >= 1."
 
-    wd = ctx.working_directory if ctx else os.getcwd()
-    wd = os.path.realpath(wd)
+    # Validate directory scope.
+    err = validate_directory(directory)
+    if err:
+        return f"Error: {err}"
 
-    # Resolve the requested path.
-    if os.path.isabs(path):
-        resolved = os.path.realpath(path)
-    else:
-        resolved = os.path.realpath(os.path.join(wd, path))
+    # Resolve path and boundary root.
+    resolved, root = resolve_tool_path(path, directory, ctx)
 
-    # Boundary check: resolved path must start with wd + separator.
-    if not resolved.startswith(wd + os.sep) and resolved != wd:
-        return (
-            f"Access denied: '{path}' resolves outside the working directory "
-            f"({wd})."
-        )
+    # Boundary check: resolved path must start with root + separator.
+    err = check_path_boundary(resolved, root, path)
+    if err:
+        return err
 
     # Must be a regular file.
     if not os.path.isfile(resolved):

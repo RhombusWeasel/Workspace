@@ -8,6 +8,12 @@ tool finds ``search`` in the file and replaces it with ``replace``.
 Edits are applied in order, so each subsequent edit operates on the
 result of the prior one.
 
+The ``directory`` parameter controls which root paths are resolved
+against:
+
+- ``"project"`` (default) — the workspace working directory.
+- ``"global"`` — ``~/.agents/``, allowing agents to edit global skills.
+
 Uniqueness check
 ~~~~~~~~~~~~~~~~
 If a ``search`` string appears more than once in the file (at the time
@@ -23,6 +29,11 @@ import os
 from typing import TYPE_CHECKING
 
 from core.tools import register_tool
+from tools._path_utils import (
+    validate_directory,
+    resolve_tool_path,
+    check_path_boundary,
+)
 
 if TYPE_CHECKING:
     from context import AppContext
@@ -131,7 +142,7 @@ def _plural_edits(n: int) -> str:
         "Each edit specifies a 'search' string (must be unique in the file) "
         "and a 'replace' string.  Edits are applied in order.  "
         "The user is shown a diff and must confirm before changes are saved. "
-        "Paths outside the working directory are rejected."
+        "Paths outside the allowed directory are rejected."
     ),
     parameters={
         "type": "object",
@@ -140,7 +151,7 @@ def _plural_edits(n: int) -> str:
                 "type": "string",
                 "description": (
                     "Absolute or relative path to the file to edit. "
-                    "Must resolve inside the working directory."
+                    "Must resolve inside the allowed directory."
                 ),
             },
             "edits": {
@@ -171,6 +182,14 @@ def _plural_edits(n: int) -> str:
                     "refine your search string."
                 ),
             },
+            "directory": {
+                "type": "string",
+                "description": (
+                    "Which directory to resolve the path in: "
+                    "'project' (default) for the working directory, "
+                    "'global' for ~/.agents/ to manage global skills."
+                ),
+            },
         },
         "required": ["path", "edits"],
     },
@@ -178,6 +197,7 @@ def _plural_edits(n: int) -> str:
 async def edit_file(
     path: str,
     edits: list[dict],
+    directory: str = "project",
     ctx: "AppContext | None" = None,
 ) -> str:
     """Apply targeted search/replace edits to *path* after user confirmation.
@@ -193,20 +213,18 @@ async def edit_file(
     if ctx is None:
         return "Error: no context available (working directory unknown)."
 
-    wd = os.path.realpath(ctx.working_directory)
+    # Validate directory scope.
+    err = validate_directory(directory)
+    if err:
+        return f"Error: {err}"
 
-    # Resolve path.
-    if os.path.isabs(path):
-        resolved = os.path.realpath(path)
-    else:
-        resolved = os.path.realpath(os.path.join(wd, path))
+    # Resolve path and boundary root.
+    resolved, root = resolve_tool_path(path, directory, ctx)
 
     # Boundary check.
-    if not resolved.startswith(wd + os.sep) and resolved != wd:
-        return (
-            f"Access denied: '{path}' resolves outside the working directory "
-            f"({wd})."
-        )
+    err = check_path_boundary(resolved, root, path)
+    if err:
+        return err
 
     # Must be an existing regular file.
     if not os.path.isfile(resolved):
