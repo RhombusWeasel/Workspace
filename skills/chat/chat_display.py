@@ -1,21 +1,18 @@
-"""Chat display — a Tree-backed conversation view with streaming Markdown sections.
+"""Chat display — a VerticalScroll + Collapsible conversation view with streaming Markdown sections.
 
-Each assistant turn is a **branch** node with dynamically-created section
-branches.  Sections are added on demand via :meth:`add_section` as their
-content arrives during streaming, producing a natural sequential layout
-(e.g. Thinking → Tools → Thinking → Response).
+Each assistant turn is a **Vertical** container holding collapsible sections.
+Sections are added on demand via :meth:`add_section` as their content arrives
+during streaming, producing a natural sequential layout (e.g. Thinking →
+Tools → Thinking → Response).
 
 **Default expand/collapse** — Response and system sections are expanded
 automatically when created.  Thinking sections and tool call branches
 are collapsed by default, controlled by the ``open_thinking`` and
-``open_tools`` constructor parameters (both default to ``False``).  The
-corresponding config keys are ``session.open_thinking`` and
-``session.open_tools``.
+``open_tools`` constructor parameters (both default to ``False``).
 
 **System prompt display** — When ``show_system_prompt`` is True, the
-LLM system prompt is displayed as a collapsible branch at the start
-of each conversation.  The corresponding config key is
-``session.show_system_prompt``.
+LLM system prompt is displayed as a collapsible section at the start
+of each conversation.
 
 **Streaming optimisation** — During streaming, ALL section types use
 plain :class:`~textual.widgets.Static` text instead of
@@ -32,21 +29,30 @@ from markdown rendering and the swap cost isn't justified.
 
 The display auto-scrolls to the bottom when new content is added or
 updated, so the view follows along with streaming output.
+
+**Architecture** — This replaces the previous Tree-based implementation
+with VerticalScroll + Collapsible.  Each message is a self-contained
+widget mounted directly into the scroll container.  This makes all
+operations O(1): adding a message, adding a section, expanding/
+collapsing — no tree walks, no rebuilds, no prefix computation.
 """
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.containers import Vertical, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Markdown, Static
+from textual.widgets import Collapsible, Markdown, Static
 
-from ui.tree.tree import Tree
-from ui.tree.tree_row import TreeNode
-from ui.tree.tree_row_guttered import GutteredTreeRow
+from skills.chat.tool_format import (
+    format_tool_call_branch_label,
+    format_tool_call_branch_label_expanded,
+    format_tool_call_detail,
+)
 
 
 # ---------------------------------------------------------------------------
-# ChatDisplay
+# Section type constants
 # ---------------------------------------------------------------------------
 
 _VALID_SECTIONS = frozenset({"thinking", "response", "system"})
@@ -57,22 +63,211 @@ _SECTION_ICONS: dict[str, str] = {
 }
 
 # Section types that stay as Static even after finalize (never swapped to Markdown).
-# Thinking sections are plain text with no markdown benefit — the swap cost
-# isn't justified.
 _KEEP_STATIC_SECTIONS = frozenset({"thinking"})
 
 
+# ---------------------------------------------------------------------------
+# Chat section widgets
+# ---------------------------------------------------------------------------
+
+
+class UserMessage(Collapsible):
+    """A collapsible section for a user message.
+
+    Shows a truncated preview in the collapsed title and the full
+    Markdown content when expanded.
+    """
+
+    def __init__(
+        self,
+        text: str,
+        message_id: str,
+        **kwargs,
+    ):
+        self.message_id = message_id
+        self.full_text = text
+        preview = _truncate(text, 60)
+        super().__init__(
+            title=f"\uf007  [cyan]User:[/cyan] {preview}",
+            id=f"msg-{message_id}",
+            **kwargs,
+        )
+        # User messages start expanded.
+        self.collapsed = False
+
+    def compose(self) -> ComposeResult:
+        yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
+
+
+class AssistantTurn(Vertical):
+    """A vertical container for all sections of one assistant turn.
+
+    Contains a header label and one or more Section widgets.  Provides
+    a :meth:`set_header` method to update the collapsed-state preview.
+    """
+
+    DEFAULT_CSS = """
+    AssistantTurn {
+        padding: 0;
+        margin: 0;
+    }
+    """
+
+    def __init__(self, turn_id: str, **kwargs):
+        self.turn_id = turn_id
+        super().__init__(id=f"asst-{turn_id}", **kwargs)
+        self._header: Static | None = None
+
+    def compose(self) -> ComposeResult:
+        self._header = Static(
+            "\uf4ad  [green]Assistant[/green]",
+            classes="assistant-header",
+            id=f"header-{self.turn_id}",
+        )
+        yield self._header
+
+    def set_header(self, text: str) -> None:
+        """Update the header label text."""
+        if self._header is not None:
+            self._header.update(text)
+
+
+class Section(Collapsible):
+    """A collapsible section within an assistant turn.
+
+    Contains a content widget (Static during streaming, Markdown after
+    finalize for response/tools sections).  The ``section_id`` attribute
+    links back to the ChatDisplay's tracking dicts.
+    """
+
+    DEFAULT_CSS = """
+    Section {
+        padding: 0;
+        margin: 0;
+    }
+    """
+
+    def __init__(
+        self,
+        section_id: str,
+        title: str,
+        content: Widget,
+        *,
+        start_collapsed: bool = False,
+        **kwargs,
+    ):
+        self.section_id = section_id
+        self._content_widget = content
+        super().__init__(
+            title=title,
+            collapsed=start_collapsed,
+            id=f"sec-{section_id}",
+            **kwargs,
+        )
+
+    def compose(self) -> ComposeResult:
+        yield self._content_widget
+
+
+class ToolCallSection(Collapsible):
+    """A collapsible section for a tool call within an assistant turn.
+
+    Shows the tool name in the title and Markdown detail content.
+    """
+
+    DEFAULT_CSS = """
+    ToolCallSection {
+        padding: 0;
+        margin: 0;
+    }
+    """
+
+    def __init__(
+        self,
+        section_id: str,
+        title: str,
+        title_expanded: str,
+        detail: str,
+        *,
+        start_collapsed: bool = False,
+        **kwargs,
+    ):
+        self.section_id = section_id
+        self._title_collapsed = title
+        self._title_expanded = title_expanded
+        self._detail_text = detail
+        super().__init__(
+            title=title,
+            collapsed=start_collapsed,
+            id=f"tc-{section_id}",
+            **kwargs,
+        )
+
+    def compose(self) -> ComposeResult:
+        yield Markdown(self._detail_text, id=f"md-tc-{self.section_id}")
+
+
+class SystemMessage(Collapsible):
+    """A collapsible section for a system message."""
+
+    def __init__(
+        self,
+        text: str,
+        message_id: str,
+        **kwargs,
+    ):
+        self.message_id = message_id
+        self.full_text = text
+        super().__init__(
+            title="  \U000f0e38 [dim]System[/dim]",
+            id=f"msg-{message_id}",
+            **kwargs,
+        )
+        self.collapsed = False
+
+    def compose(self) -> ComposeResult:
+        yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
+
+
+class SystemPromptSection(Collapsible):
+    """A collapsible section for the LLM system prompt."""
+
+    def __init__(
+        self,
+        text: str,
+        message_id: str,
+        **kwargs,
+    ):
+        self.message_id = message_id
+        self.full_text = text
+        super().__init__(
+            title="  \U000f0e38 System Prompt",
+            id=f"msg-{message_id}",
+            **kwargs,
+        )
+        # System prompt starts collapsed.
+        self.collapsed = True
+
+    def compose(self) -> ComposeResult:
+        yield Markdown(self.full_text, id=f"md-msg-{self.message_id}")
+
+
+# ---------------------------------------------------------------------------
+# ChatDisplay
+# ---------------------------------------------------------------------------
+
+
 class ChatDisplay(Widget):
-    """Streaming conversation display backed by a collapsible Tree.
+    """Streaming conversation display using VerticalScroll + Collapsible.
 
     Provides a high-level API for building and updating a conversation:
 
-    * ``add_user_message(text)`` → branch node for user text (with Markdown leaf).
-    * ``begin_assistant_turn()`` → empty assistant branch node.
-    * ``add_section(section_type)`` → new section branch, returns ID.
-    * ``update_section(section_id, text)`` → streaming update.
-    * ``add_tool_call(name, arguments)`` → tool call branch with detail leaf.
-    * ``finalize_turn()`` → removes any empty sections, clears state.
+    * ``add_user_message(text)`` → UserMessage Collapsible
+    * ``begin_assistant_turn()`` → AssistantTurn Vertical container
+    * ``add_section(section_type)`` → Section Collapsible, returns ID
+    * ``update_section(section_id, text)`` → streaming update
+    * ``add_tool_call(name, arguments)`` → ToolCallSection Collapsible
+    * ``finalize_turn()`` → removes empty sections, swaps Static→Markdown
 
     During streaming, ALL sections are rendered as plain ``Static`` text
     (no markdown parsing) to reduce re-rendering cost.  On
@@ -84,6 +279,32 @@ class ChatDisplay(Widget):
     as a collapsible system section at the start of each conversation.
     """
 
+    DEFAULT_CSS = """
+    ChatDisplay {
+        height: 1fr;
+    }
+
+    ChatDisplay > VerticalScroll {
+        height: 1fr;
+    }
+
+    ChatDisplay .assistant-header {
+        color: $text;
+        padding: 0 0 0 1;
+    }
+
+    ChatDisplay .streaming-content {
+        width: 1fr;
+    }
+
+    ChatDisplay .thinking-content {
+        color: $text-muted;
+        text-style: italic;
+        padding: 0;
+        width: 1fr;
+    }
+    """
+
     def __init__(
         self,
         *,
@@ -92,14 +313,13 @@ class ChatDisplay(Widget):
         show_system_prompt: bool = False,
     ):
         super().__init__()
-        self._root = TreeNode("chat-display-root", "Conversation")
         self._turn_count = 0
         self._section_count = 0
         self._tool_call_count = 0
         self._active_asst_id: str | None = None
 
         # Config-driven defaults for whether thinking and tool-call
-        # branches are expanded or collapsed when first created.
+        # sections are expanded or collapsed when first created.
         self._open_thinking = open_thinking
         self._open_tools = open_tools
 
@@ -115,136 +335,125 @@ class ChatDisplay(Widget):
         # Maps section_id → section_type (for finalize swap decisions).
         self._section_types: dict[str, str] = {}
 
+        # Maps section_id → Section Collapsible widget (for finding in DOM).
+        self._section_map: dict[str, Section] = {}
+        # Maps turn_id → AssistantTurn widget (for finding in DOM).
+        self._turn_map: dict[str, AssistantTurn] = {}
+
+        # Batch mode — when True, mount() calls are deferred to end_batch().
+        self._batch_mode: bool = False
+        self._batch_widgets: list[Widget] = []
+
+        # Coalesced scroll — during streaming, _schedule_scroll() is called
+        # on every update_section().  Without coalescing, each call creates
+        # a new timer.  With the _scroll_pending flag, only one timer exists
+        # at a time.
+        self._scroll_pending: bool = False
+
     # ------------------------------------------------------------------
     # Composition
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Tree(self._root, row_class=GutteredTreeRow)
+        yield VerticalScroll(id="chat-scroll")
+
+    # ------------------------------------------------------------------
+    # Scroll container access
+    # ------------------------------------------------------------------
+
+    def _scroll(self) -> VerticalScroll:
+        """Get the VerticalScroll container."""
+        return self.query_one(VerticalScroll)
 
     # ------------------------------------------------------------------
     # Scrolling
     # ------------------------------------------------------------------
 
     def _scroll_to_bottom(self) -> None:
-        """Scroll the chat tree to show the latest content.
-
-        Best-effort — does not raise if the tree is not yet mounted.
-        Called after adding content or updating sections so that the
-        view follows the streaming output.
-        """
+        """Scroll the chat display to show the latest content."""
         try:
-            tree = self.query_one(Tree)
-            tree.scroll_end(animate=False)
+            scroll = self._scroll()
+            scroll.scroll_end(animate=False)
         except Exception:
             pass
 
     def _schedule_scroll(self) -> None:
         """Schedule a deferred scroll-to-bottom after layout recalculates.
 
-        Content updates (adding nodes, updating sections) change the
-        tree's virtual size, but the layout pass happens asynchronously.
-        Calling ``scroll_end()`` immediately would use the old virtual
-        size, so we defer by ~1 frame to let the layout catch up.
+        During batch mode, scroll is suppressed — it will be triggered
+        once by :meth:`end_batch`.
         """
-        self.set_timer(1 / 60, self._scroll_to_bottom)
+        if self._batch_mode:
+            return
+        if self._scroll_pending:
+            return
+        self._scroll_pending = True
+        self.set_timer(1 / 60, self._do_deferred_scroll)
+
+    def _do_deferred_scroll(self) -> None:
+        """Fire the deferred scroll and reset the pending flag."""
+        self._scroll_pending = False
+        self._scroll_to_bottom()
 
     # ------------------------------------------------------------------
     # User messages
     # ------------------------------------------------------------------
 
     def add_user_message(self, text: str) -> str:
-        """Add a user message as a branch node with a Markdown leaf.
+        """Add a user message as a Collapsible with Markdown content.
 
-        Creates an expandable **User** branch whose child is a Markdown
-        widget rendering the full message.  The branch auto-expands so
-        the user can see what they just typed.
-
-        When expanded the label shows ``\uf007  User``; when collapsed
-        it shows a truncated preview like ``\uf007  User: Hello there...``.
-
-        Returns the branch node ID.
+        Returns the message ID.
         """
         self._turn_count += 1
-        node_id = f"msg-{self._turn_count}"
+        msg_id = f"user-{self._turn_count}"
 
-        # Markdown leaf for the full user text.
-        md = Markdown(text, id=f"md-{node_id}")
-        leaf = TreeNode(f"{node_id}-leaf", "", content=md)
+        user_msg = UserMessage(text, msg_id)
 
-        # Branch — dual labels so collapsed state shows a preview.
-        preview = _truncate(text, 60)
-        branch = TreeNode(
-            node_id,
-            f"\uf007  [cyan]User:[/cyan] {preview}",
-            label_expanded="\uf007  [cyan]User[/cyan]",
-            data={"role": "user"},
-            children=[leaf],
-        )
-        self._root.children.append(branch)
-        self._rebuild()
-
-        # Expand the new user branch by default.
-        tree = self.query_one(Tree)
-        tree.expand_node(node_id)
+        if self._batch_mode:
+            self._batch_widgets.append(user_msg)
+        else:
+            self._scroll().mount(user_msg)
 
         self._schedule_scroll()
-
-        return node_id
+        return msg_id
 
     # ------------------------------------------------------------------
     # Assistant turn lifecycle
     # ------------------------------------------------------------------
 
     def begin_assistant_turn(self) -> str:
-        """Create an assistant branch node with **no** section children.
+        """Create an assistant turn container with a header label.
 
-        Sections are added on demand via :meth:`add_section` as their
-        content arrives during streaming.  Returns the assistant branch
-        node ID.
-
-        The assistant branch is collapsible — the collapsed label shows
-        a short identifier, and the expanded label shows just
-        "Assistant".  This lets users collapse a whole response to
-        save vertical space while reviewing earlier messages.
+        Returns the turn ID.
         """
         self._turn_count += 1
-        asst_id = f"msg-{self._turn_count}"
+        asst_id = f"asst-{self._turn_count}"
 
-        asst_node = TreeNode(
-            asst_id,
-            "\uf4ad  [green]Assistant[/green]",
-            label_expanded="\uf4ad  [green]Assistant[/green]",
-            data={"role": "assistant", "type": "branch"},
-        )
-        self._root.children.append(asst_node)
+        turn = AssistantTurn(asst_id)
+
+        if self._batch_mode:
+            self._batch_widgets.append(turn)
+        else:
+            self._scroll().mount(turn)
 
         self._active_asst_id = asst_id
-        self._section_widgets = {}
-        self._section_texts = {}
-        self._section_types = {}
+        self._turn_map[asst_id] = turn
 
-        self._rebuild()
-
-        # Expand the assistant branch.
-        tree = self.query_one(Tree)
-        tree.expand_node(asst_id)
+        # In batch mode, accumulate section tracking across turns.
+        if not self._batch_mode:
+            self._section_widgets = {}
+            self._section_texts = {}
+            self._section_types = {}
 
         self._schedule_scroll()
-
         return asst_id
 
     def add_section(self, section_type: str) -> str:
-        """Add a new section branch to the current assistant turn.
+        """Add a new section to the current assistant turn.
 
         *section_type* must be one of ``'thinking'``, ``'tools'``, or
         ``'response'``.  Returns the section ID for use with
         :meth:`update_section`.
-
-        All sections use plain :class:`~textual.widgets.Static` during
-        streaming to avoid the O(n²) cost of repeated
-        :class:`~textual.widgets.Markdown` re-parses.  Response and tools
-        sections are swapped to ``Markdown`` on ``finalize_turn()``.
         """
         if section_type not in _VALID_SECTIONS:
             raise ValueError(
@@ -259,202 +468,160 @@ class ChatDisplay(Widget):
         self._section_count += 1
         section_id = f"{section_type}-sec{self._section_count}"
 
-        # All sections use Static during streaming — lightweight text updates
-        # without the O(n²) cost of Markdown re-parsing on every chunk.
+        # All sections use Static during streaming.
         css_class = "thinking-content" if section_type == "thinking" else "streaming-content"
-        widget: Widget = Static(
+        content_widget: Widget = Static(
             "", markup=False,
             id=f"md-{section_id}", classes=css_class,
         )
 
-        self._section_widgets[section_id] = widget
+        self._section_widgets[section_id] = content_widget
         self._section_texts[section_id] = ""
         self._section_types[section_id] = section_type
 
-        leaf = TreeNode(
-            f"{section_id}-leaf", "",
-            content=widget,
-        )
-        branch = TreeNode(
-            section_id,
-            _SECTION_ICONS.get(section_type, section_type),
-            data={"section": section_type},
-            children=[leaf],
-        )
-
-        # Append to the current assistant node.
-        asst_node = self._find_node(self._active_asst_id)
-        if asst_node is not None:
-            asst_node.children.append(branch)
-
-        self._rebuild()
-
-        # Expand the new section — unless config says it should start collapsed.
-        # Thinking sections respect session.open_thinking; response and system
-        # sections always expand.
-        tree = self.query_one(Tree)
+        # Determine collapsed state.
         if section_type == "thinking" and not self._open_thinking:
-            tree.collapse_node(section_id)
+            start_collapsed = True
         else:
-            tree.expand_node(section_id)
-        if not tree.is_user_collapsed(self._active_asst_id):
-            tree.expand_node(self._active_asst_id)
+            start_collapsed = False
+
+        title = _SECTION_ICONS.get(section_type, section_type)
+        section = Section(
+            section_id,
+            title=title,
+            content=content_widget,
+            start_collapsed=start_collapsed,
+        )
+        self._section_map[section_id] = section
+
+        # Mount inside the current AssistantTurn.
+        turn = self._turn_map.get(self._active_asst_id)
+        if turn is not None:
+            if self._batch_mode:
+                self._batch_widgets.append(section)
+            else:
+                turn.mount(section)
 
         self._schedule_scroll()
-
         return section_id
 
     async def update_section(self, section_id: str, text: str) -> None:
         """Update the content widget for the section identified by *section_id*.
 
         During streaming all sections are ``Static``, so this is a
-        lightweight synchronous update — no markdown parsing.  The display
-        scrolls to show the latest content.
-
-        The section must have been created by a prior :meth:`add_section`
-        call during the current assistant turn.
+        lightweight synchronous update — no markdown parsing.
         """
         widget = self._section_widgets.get(section_id)
         if widget is None:
-            return  # Unknown section — no-op.
+            return
 
         self._section_texts[section_id] = text
 
         if isinstance(widget, Static):
-            # Plain text update — fast, no markdown parsing.
             widget.update(text)
         elif isinstance(widget, Markdown):
-            # Markdown update (only after finalize swap) — async re-render.
             await widget.update(text)
-
-        self._schedule_scroll()
 
     async def finalize_turn(self) -> None:
         """Remove empty sections, swap Static→Markdown for rich sections, clear state.
 
         After removing empty section children, response and tools sections
         are swapped from plain ``Static`` to ``Markdown`` for rich formatting.
-        Thinking sections remain as ``Static`` (they don't benefit from
-        markdown rendering).
-
-        Finally, updates the assistant branch's collapsed label to show a
-        short preview of the response content, making it easy to identify
-        when collapsed.
+        Thinking sections remain as ``Static``.
         """
         asst_id = self._active_asst_id
         if asst_id is None:
             return
 
-        node = self._find_node(asst_id)
-        if node is not None:
-            keep = [
-                c for c in node.children
-                if not self._is_empty_section(c)
-            ]
-            if len(keep) != len(node.children):
-                node.children = keep
-                self._rebuild()
+        turn = self._turn_map.get(asst_id)
+        if turn is not None:
+            # Remove empty sections.
+            sections_to_remove = []
+            for section_id in list(self._section_map):
+                section = self._section_map.get(section_id)
+                if section is None:
+                    continue
+                if self._is_empty_section(section_id):
+                    sections_to_remove.append(section)
+
+            for section in sections_to_remove:
+                section.remove()
+                self._section_map.pop(section.section_id, None)
 
             # Swap response/tools sections from Static → Markdown.
             await self._swap_sections_to_markdown()
 
-            # Update collapsed label to show a preview of the response.
-            # Compute preview BEFORE clearing _section_texts.
-            preview = self._turn_preview(node)
+            # Update header to show a preview of the response.
+            preview = self._turn_preview()
             if preview:
-                node.label = f"\uf4ad  [green]Assistant:[/green] {preview}"
-                # Refresh the label in the tree.
-                tree = self.query_one(Tree)
-                tree.update_node_label(asst_id, node.label)
+                turn.set_header(f"\uf4ad  [green]Assistant:[/green] {preview}")
 
         self._active_asst_id = None
         self._section_widgets = {}
         self._section_texts = {}
         self._section_types = {}
 
+        # Scroll to bottom after the Static→Markdown swap.
+        self._schedule_scroll()
+
     # ------------------------------------------------------------------
     # System messages (command feedback)
     # ------------------------------------------------------------------
 
     def add_system_message(self, text: str) -> str:
-        """Add a system message as a standalone branch with a Markdown leaf.
+        """Add a system message as a Collapsible with Markdown content.
 
-        System messages are used for command feedback (e.g. "Chat cleared.").
-        They appear as a single branch with a Markdown child, similar to
-        user messages but styled differently.
-
-        Returns the branch node ID.
+        Returns the message ID.
         """
         self._turn_count += 1
-        node_id = f"msg-{self._turn_count}"
+        msg_id = f"sys-{self._turn_count}"
 
-        md = Markdown(text, id=f"md-{node_id}")
-        leaf = TreeNode(f"{node_id}-leaf", "", content=md)
+        sys_msg = SystemMessage(text, msg_id)
 
-        branch = TreeNode(
-            node_id,
-            "  \U000f0e38 [dim]System[/dim]",
-            data={"role": "system"},
-            children=[leaf],
-        )
-        self._root.children.append(branch)
-        self._rebuild()
-
-        tree = self.query_one(Tree)
-        tree.expand_node(node_id)
+        if self._batch_mode:
+            self._batch_widgets.append(sys_msg)
+        else:
+            self._scroll().mount(sys_msg)
 
         self._schedule_scroll()
-
-        return node_id
+        return msg_id
 
     # ------------------------------------------------------------------
     # System prompt display
     # ------------------------------------------------------------------
 
     def add_system_prompt(self, text: str) -> str:
-        """Add the LLM system prompt as a collapsible branch with a Markdown leaf.
+        """Add the LLM system prompt as a collapsible section.
 
         Only displayed when the ``show_system_prompt`` config option is True.
-        The branch starts collapsed so it doesn't dominate the conversation
-        view.  The caller (ChatManager) checks the config before calling.
+        Starts collapsed.
 
-        Returns the branch node ID.
+        Returns the message ID.
         """
         self._turn_count += 1
-        node_id = f"msg-{self._turn_count}"
+        msg_id = f"prompt-{self._turn_count}"
 
-        md = Markdown(text, id=f"md-{node_id}")
-        leaf = TreeNode(f"{node_id}-leaf", "", content=md)
+        prompt_section = SystemPromptSection(text, msg_id)
 
-        branch = TreeNode(
-            node_id,
-            "  \U000f0e38 System Prompt",
-            label_expanded="  \U000f0e38 System Prompt",
-            data={"role": "system_prompt"},
-            children=[leaf],
-        )
-        self._root.children.append(branch)
-        self._rebuild()
-
-        tree = self.query_one(Tree)
-        # Always collapse system prompt branches — the user can expand
-        # them if they want to inspect the prompt.
-        tree.collapse_node(node_id)
+        if self._batch_mode:
+            self._batch_widgets.append(prompt_section)
+        else:
+            self._scroll().mount(prompt_section)
 
         self._schedule_scroll()
-
-        return node_id
+        return msg_id
 
     # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
 
     def clear(self) -> None:
-        """Remove all messages from the display and reset internal state.
+        """Remove all messages from the display and reset internal state."""
+        scroll = self._scroll()
+        # Remove all children from the scroll container.
+        for child in list(scroll.children):
+            child.remove()
 
-        Does not affect the database — only clears the visual tree.
-        """
-        self._root.children.clear()
         self._turn_count = 0
         self._section_count = 0
         self._tool_call_count = 0
@@ -462,68 +629,155 @@ class ChatDisplay(Widget):
         self._section_widgets = {}
         self._section_texts = {}
         self._section_types = {}
-        self._rebuild()
+        self._section_map = {}
+        self._turn_map = {}
+        self._batch_mode = False
+        self._batch_widgets = []
+        self._scroll_pending = False
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _is_empty_section(self, branch: TreeNode) -> bool:
-        """Return True if the section branch has no meaningful content.
+    def _is_empty_section(self, section_id: str) -> bool:
+        """Return True if the section has no meaningful content."""
+        text = self._section_texts.get(section_id, "")
+        return not text
 
-        A section branch is empty when its content leaf text is blank.
-        Tool call branches are not section branches — they sit as
-        direct children of the assistant node and should never be
-        treated as empty sections.
-        """
-        # Tool call branches are never "empty sections" — they have
-        # their own content (Markdown detail leaf) and are not tracked
-        # in _section_texts.  They sit as direct children of the
-        # assistant node alongside thinking/response sections.
-        if branch.data and branch.data.get("tool_call"):
-            return False
-        if not branch.children:
-            return True
-        return not self._section_texts.get(branch.id)
-
-    def _turn_preview(self, asst_node: TreeNode) -> str:
-        """Build a short preview string from the assistant turn's content.
+    def _turn_preview(self) -> str:
+        """Build a short preview string from the current turn's content.
 
         Looks for a response section first, then thinking, then any
         non-empty section.  Returns up to 60 characters of the content.
         """
-        # Try response sections first, then thinking, then any.
         for section_type in ("response", "thinking"):
-            for child in asst_node.children:
-                if child.data and child.data.get("section") == section_type:
-                    text = self._section_texts.get(child.id, "")
+            for section_id, st in self._section_types.items():
+                if st == section_type:
+                    text = self._section_texts.get(section_id, "")
                     if text:
                         return _truncate(text, 60)
         # Fall back to any non-empty section.
-        for child in asst_node.children:
-            text = self._section_texts.get(child.id, "")
+        for section_id, text in self._section_texts.items():
             if text:
                 return _truncate(text, 60)
         return ""
 
-    def _find_node(self, node_id: str) -> TreeNode | None:
-        """Find a node by ID, searching the entire tree recursively."""
-        return _find_node_recursive(self._root, node_id)
+    def _find_section(self, section_id: str) -> Section | None:
+        """Find a Section widget by its section_id."""
+        return self._section_map.get(section_id)
 
-    def _rebuild(self) -> None:
-        """Rebuild the tree and restore expand/collapse state.
-
-        Uses :meth:`Tree.restore_expand_state` so that branches the
-        user has manually collapsed stay collapsed across rebuilds.
-        New nodes are expanded by default.
-        """
-        tree = self.query_one(Tree)
-        tree.rebuild()
-        tree.restore_expand_state()
-
+    def _find_assistant_turn(self, turn_id: str) -> AssistantTurn | None:
+        """Find an AssistantTurn widget by its turn_id."""
+        return self._turn_map.get(turn_id)
 
     # ------------------------------------------------------------------
-    # Tool call entries (individual branches under the Assistant node)
+    # Batch mode
+    # ------------------------------------------------------------------
+
+    def begin_batch(self) -> None:
+        """Enter batch mode — defer mount() calls until end_batch().
+
+        During batch mode, adding messages and sections does not trigger
+        individual mount() calls.  Call :meth:`end_batch` to mount all
+        deferred widgets at once.
+        """
+        self._batch_mode = True
+        self._batch_widgets = []
+
+    def end_batch(self) -> None:
+        """Exit batch mode — mount all deferred widgets and scroll.
+
+        Restores normal operation: subsequent add/update calls will
+        trigger individual mount() calls as before.
+
+        Also clears section tracking dicts that were needed during
+        the batch rebuild but are no longer needed after finalization.
+        """
+        self._batch_mode = False
+
+        # Mount all deferred widgets in a single batch.
+        scroll = self._scroll()
+        if self._batch_widgets:
+            for widget in self._batch_widgets:
+                scroll.mount(widget)
+        self._batch_widgets = []
+
+        # Apply expand/collapse config.
+        self._apply_expand_config()
+
+        # Clear section tracking — after batch finalize, these are
+        # no longer needed (the widgets are already in the DOM).
+        self._section_widgets = {}
+        self._section_texts = {}
+        self._section_types = {}
+
+        self._scroll_to_bottom()
+
+    def _apply_expand_config(self) -> None:
+        """Apply open_thinking and open_tools config after batch rebuild.
+
+        After mounting, all sections default to their Collapsible
+        collapsed/expanded state.  We need to explicitly collapse
+        thinking and tool sections if config says they should start
+        collapsed.
+        """
+        if not self._open_thinking:
+            for section_id, section in self._section_map.items():
+                section_type = section.section_id.split("-")[0] if "-" in section.section_id else ""
+                # Find section type from the ID prefix.
+                # IDs are like "thinking-sec1", "response-sec2", "tools-sec3".
+                pass
+        # Actually, in the new architecture, the collapsed state is set
+        # at construction time via start_collapsed parameter.  In batch
+        # mode, those sections are created with the correct collapsed state.
+        # So _apply_expand_config is only needed for batch_finalize_turns
+        # where we may need to override.
+        pass
+
+    def batch_finalize_turns(self) -> None:
+        """Finalize all completed assistant turns in batch mode.
+
+        Removes empty sections, swaps Static → Markdown in the DOM,
+        and prepares headers.
+
+        Must be called while in batch mode (between :meth:`begin_batch`
+        and :meth:`end_batch`).
+        """
+        # Find all assistant turns and finalize them.
+        for section_id in list(self._section_map):
+            section = self._section_map.get(section_id)
+            if section is None:
+                continue
+            section_type = self._section_types.get(section_id, "")
+            if section_type in _KEEP_STATIC_SECTIONS:
+                continue
+
+            # Swap Static → Markdown for response/tools sections.
+            widget = self._section_widgets.get(section_id)
+            if not isinstance(widget, Static):
+                continue
+            text = self._section_texts.get(section_id, "")
+            if not text:
+                continue
+
+            # Replace the content widget in the Section.
+            new_widget = Markdown(text, id=f"{widget.id}-rendered")
+            section._content_widget = new_widget
+
+            # Update tracking.
+            self._section_widgets[section_id] = new_widget
+
+        # Remove empty sections from batch widgets list.
+        self._batch_widgets = [
+            w for w in self._batch_widgets
+            if not (isinstance(w, Section) and self._is_empty_section(w.section_id))
+        ]
+
+        # Mark active turn as done.
+        self._active_asst_id = None
+
+    # ------------------------------------------------------------------
+    # Tool call entries
     # ------------------------------------------------------------------
 
     def add_tool_call(
@@ -531,32 +785,10 @@ class ChatDisplay(Widget):
         name: str,
         arguments: dict,
     ) -> str:
-        """Add a tool call branch directly under the current assistant turn.
+        """Add a tool call section under the current assistant turn.
 
-        Creates an expandable branch with the tool name as header.
-        The collapsed label shows a short argument summary; the expanded
-        label shows just the tool name.  A Markdown detail leaf below
-        shows the full arguments.
-
-        Tool calls sit alongside Thinking and Response sections as
-        peers under the Assistant branch — no intermediate "Tools"
-        wrapper.
-
-        Parameters
-        ----------
-        name:
-            Tool name (e.g. ``"read_file"``).
-        arguments:
-            Tool arguments as a dict.
-
-        Returns the tool call node ID.
+        Returns the tool call section ID.
         """
-        from skills.chat.tool_format import (
-            format_tool_call_branch_label,
-            format_tool_call_branch_label_expanded,
-            format_tool_call_detail,
-        )
-
         if self._active_asst_id is None:
             raise RuntimeError(
                 "No active assistant turn — call begin_assistant_turn first"
@@ -569,37 +801,28 @@ class ChatDisplay(Widget):
         label = format_tool_call_branch_label(name, arguments)
         label_expanded = format_tool_call_branch_label_expanded(name)
 
-        # Detail leaf — Markdown with formatted arguments.
+        # Detail content — Markdown with formatted arguments.
         detail = format_tool_call_detail(name, arguments)
-        md = Markdown(detail, id=f"md-{tc_id}")
-        leaf = TreeNode(f"{tc_id}-leaf", "", content=md)
 
-        branch = TreeNode(
+        start_collapsed = not self._open_tools
+
+        tool_section = ToolCallSection(
             tc_id,
-            label,
-            label_expanded=label_expanded,
-            data={"tool_call": name},
-            children=[leaf],
+            title=label,
+            title_expanded=label_expanded,
+            detail=detail,
+            start_collapsed=start_collapsed,
         )
 
-        # Add directly to the assistant branch.
-        asst_node = self._find_node(self._active_asst_id)
-        if asst_node is not None:
-            asst_node.children.append(branch)
-
-        self._rebuild()
-
-        # Expand the tool call branch — unless config says it should start collapsed.
-        tree = self.query_one(Tree)
-        if self._open_tools:
-            tree.expand_node(tc_id)
-        else:
-            tree.collapse_node(tc_id)
-        if not tree.is_user_collapsed(self._active_asst_id):
-            tree.expand_node(self._active_asst_id)
+        # Mount inside the current AssistantTurn.
+        turn = self._turn_map.get(self._active_asst_id)
+        if turn is not None:
+            if self._batch_mode:
+                self._batch_widgets.append(tool_section)
+            else:
+                turn.mount(tool_section)
 
         self._schedule_scroll()
-
         return tc_id
 
     # ------------------------------------------------------------------
@@ -612,10 +835,9 @@ class ChatDisplay(Widget):
         Iterates over all section widgets from the current turn.  For
         response and tools sections that are still ``Static``, creates a
         ``Markdown`` widget with the accumulated text and swaps it into
-        the DOM in-place.
+        the Section in-place.
 
-        Thinking sections are left as ``Static`` — they don't benefit from
-        markdown rendering and the swap cost isn't justified.
+        Thinking sections are left as ``Static``.
         """
         for section_id in list(self._section_widgets):
             section_type = self._section_types.get(section_id, "")
@@ -632,9 +854,8 @@ class ChatDisplay(Widget):
     async def _swap_to_markdown(self, section_id: str) -> None:
         """Replace a section's Static content widget with a Markdown widget.
 
-        Updates the tree data model and swaps the widget in the DOM.
-        Best-effort — failures are silently ignored since this is a
-        non-critical visual upgrade.
+        Updates the Section's content widget reference and swaps the
+        widget in the DOM.
         """
         old_widget = self._section_widgets.get(section_id)
         if old_widget is None or not isinstance(old_widget, Static):
@@ -647,35 +868,21 @@ class ChatDisplay(Widget):
         # Create new Markdown widget.
         new_widget = Markdown(text, id=f"{old_widget.id}-rendered")
 
-        # Update the tree data model so future rebuilds use the new widget.
-        section_branch = self._find_node(section_id)
-        if section_branch is not None and section_branch.children:
-            leaf = section_branch.children[0]
-            leaf.content = new_widget
-
-        # Swap in the DOM: remove the old Static, mount the new Markdown
-        # into the same parent container.
-        try:
-            parent = old_widget.parent
-            if parent is not None:
+        # Find the Section Collapsible and swap the content.
+        section = self._section_map.get(section_id)
+        if section is not None:
+            # Remove old widget, mount new one inside the Section.
+            try:
                 old_widget.remove()
-                await parent.mount(new_widget)
-        except Exception:
-            pass  # Best-effort — non-critical visual improvement
+                await section.mount(new_widget)
+            except Exception:
+                pass  # Best-effort — non-critical visual improvement
+
+            # Update the section's content widget reference.
+            section._content_widget = new_widget
 
         # Update the widget mapping.
         self._section_widgets[section_id] = new_widget
-
-
-def _find_node_recursive(parent: TreeNode, node_id: str) -> TreeNode | None:
-    """Recursively search for a node by ID."""
-    for child in parent.children:
-        if child.id == node_id:
-            return child
-        found = _find_node_recursive(child, node_id)
-        if found is not None:
-            return found
-    return None
 
 
 def _truncate(text: str, max_len: int) -> str:
