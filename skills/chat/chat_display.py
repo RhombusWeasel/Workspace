@@ -72,7 +72,7 @@ _KEEP_STATIC_SECTIONS = frozenset({"thinking"})
 class UserMessage(Collapsible):
     """A collapsible section for a user message.
 
-    Shows a truncated preview in the collapsed title and the full
+    Shows the full
     Markdown content when expanded.
     """
 
@@ -84,13 +84,12 @@ class UserMessage(Collapsible):
     ):
         self.message_id = message_id
         self.full_text = text
-        preview = _truncate(text, 60)
         # Pass the Markdown content as a child to Collapsible so that
         # Collapsible.compose() creates both CollapsibleTitle and Contents.
         content = Markdown(text, id=f"md-msg-{message_id}")
         super().__init__(
             content,
-            title=f"\uf007  [cyan]User:[/cyan] {preview}",
+            title="  \uf007  [cyan]User[/cyan]",
             collapsed=False,
             id=f"msg-{message_id}",
             **kwargs,
@@ -115,7 +114,7 @@ class AssistantTurn(Collapsible):
     def __init__(self, turn_id: str, **kwargs):
         self.turn_id = turn_id
         super().__init__(
-            title="  \uf4ad  [green]Assistant[/green]",
+            title="  \U000f06a9  [green]Assistant[/green]",
             collapsed=False,
             id=f"asst-{turn_id}",
             **kwargs,
@@ -535,10 +534,7 @@ class ChatDisplay(VerticalScroll):
             # Swap response/tools sections from Static → Markdown.
             await self._swap_sections_to_markdown()
 
-            # Update header to show a preview of the response.
-            preview = self._turn_preview()
-            if preview:
-                turn.set_header(f"\uf4ad  [green]Assistant:[/green] {preview}")
+
 
         self._active_asst_id = None
         self._section_widgets = {}
@@ -627,57 +623,7 @@ class ChatDisplay(VerticalScroll):
         text = self._section_texts.get(section_id, "")
         return not text
 
-    def _turn_preview(self) -> str:
-        """Build a short preview string from the current turn's content.
 
-        Looks for a response section first, then thinking, then any
-        non-empty section.  Returns up to 60 characters of the content.
-        """
-        for section_type in ("response", "thinking"):
-            for section_id, st in self._section_types.items():
-                if st == section_type:
-                    text = self._section_texts.get(section_id, "")
-                    if text:
-                        return _truncate(text, 60)
-        # Fall back to any non-empty section.
-        for section_id, text in self._section_texts.items():
-            if text:
-                return _truncate(text, 60)
-        return ""
-
-    def _turn_preview_for(self, asst_id: str) -> str:
-        """Build a short preview string for a specific assistant turn.
-
-        Walks the batch widgets list to find sections belonging to the
-        given turn, then looks for a response section, thinking section,
-        or any non-empty section.
-
-        Returns up to 60 characters of the content.
-        """
-        # Collect section_ids that belong to this turn by walking
-        # the batch widgets list (which preserves turn → section order).
-        turn_section_ids: list[str] = []
-        current_asst: str | None = None
-        for widget in self._batch_widgets:
-            if isinstance(widget, AssistantTurn):
-                # Match by turn_id attribute ("asst-2") not DOM id ("asst-asst-2")
-                current_asst = widget.turn_id
-            elif isinstance(widget, (Section, ToolCallSection)) and current_asst == asst_id:
-                if isinstance(widget, Section):
-                    turn_section_ids.append(widget.section_id)
-
-        # Look for response, then thinking, then any non-empty section.
-        for section_type in ("response", "thinking"):
-            for sid in turn_section_ids:
-                if self._section_types.get(sid) == section_type:
-                    text = self._section_texts.get(sid, "")
-                    if text:
-                        return _truncate(text, 60)
-        for sid in turn_section_ids:
-            text = self._section_texts.get(sid, "")
-            if text:
-                return _truncate(text, 60)
-        return ""
 
     def _find_section(self, section_id: str) -> Section | None:
         """Find a Section widget by its section_id."""
@@ -836,13 +782,6 @@ class ChatDisplay(VerticalScroll):
             if not (isinstance(w, Section) and self._is_empty_section(w.section_id))
         ]
 
-        # Update AssistantTurn headers with a preview of their content.
-        for asst_id, turn in self._turn_map.items():
-            preview = self._turn_preview_for(asst_id)
-            if preview:
-                turn.set_header(
-                    f"\uf4ad  [green]Assistant:[/green] {preview}"
-                )
 
         # Mark active turn as done.
         self._active_asst_id = None
@@ -972,8 +911,3 @@ class ChatDisplay(VerticalScroll):
         # Update the widget mapping.
         self._section_widgets[section_id] = new_widget
 
-
-def _truncate(text: str, max_len: int) -> str:
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 3] + "..."
