@@ -427,6 +427,11 @@ class ChatDisplay(Widget):
         self._section_texts = {}
         self._section_types = {}
 
+        # Scroll to bottom after the Static→Markdown swap.  The swap
+        # changes the content height (Markdown is taller than Static),
+        # so we need to re-scroll to show the full response.
+        self._schedule_scroll()
+
     # ------------------------------------------------------------------
     # System messages (command feedback)
     # ------------------------------------------------------------------

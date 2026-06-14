@@ -535,3 +535,40 @@ class TestStreamingEfficiency:
             assert display._rebuild_pending is False
             assert display._scroll_pending is False
             assert len(display._root.children) == 0
+
+    @pytest.mark.asyncio
+    async def test_finalize_turn_scrolls_after_markdown_swap(self):
+        """finalize_turn() should trigger a scroll after the Static→Markdown swap.
+
+        The Markdown widget is taller than the Static it replaces, so we
+        need to scroll again after the swap to show the full content.
+        """
+        app = _ChatApp()
+        async with app.run_test(size=(80, 40)):
+            display = app.chat_display
+
+            display.add_user_message("Hello")
+            display.begin_assistant_turn()
+            section_id = display.add_section("response")
+            await display.update_section(section_id, "Hello world")
+
+            # Clear any pending scroll from structural additions.
+            display._scroll_pending = False
+
+            # Track scroll timer creation.
+            scroll_count = {"count": 0}
+            original_schedule_scroll = display._schedule_scroll
+
+            def counting_schedule_scroll():
+                scroll_count["count"] += 1
+                return original_schedule_scroll()
+
+            display._schedule_scroll = counting_schedule_scroll
+
+            # finalize_turn swaps Static→Markdown and should scroll.
+            await display.finalize_turn()
+
+            assert scroll_count["count"] >= 1, (
+                f"finalize_turn should trigger scroll after Markdown swap, "
+                f"got {scroll_count['count']}"
+            )
