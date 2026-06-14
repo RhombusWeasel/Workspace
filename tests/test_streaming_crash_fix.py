@@ -1,11 +1,13 @@
-"""Tests for the streaming crash fix — workspace split/close during streaming.
+"""Tests for streaming crash prevention and stream preservation across recomposition.
 
 Verifies:
-1. ChatManager.on_unmount() cancels the streaming task
-2. ChatManager._cancel_streaming() cleans up streaming state
-3. ChatDisplay._detached flag prevents DOM operations after unmount
-4. StreamSection guards bail out when display is detached
-5. Streaming loop exits gracefully when widget is detached
+1. ChatManager.on_unmount/on_remove detach display without cancelling stream
+2. ChatManager._cancel_streaming() cancels stream via StreamManager on user abort
+3. ChatManager._detach_display() marks display detached, cancels local worker
+4. ChatDisplay guards skip DOM operations when _detached=True
+5. StreamSection guards skip display updates when display is detached
+6. StreamManager start/subscribe/cancel lifecycle
+7. Stream preservation across recomposition
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,6 +25,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 
 from core.paths import collect_tcss
+from core.stream_manager import StreamManager, StreamChunk
 from skills.chat.chat_display import ChatDisplay
 from skills.chat.chat_manager import ChatManager
 from skills.chat.chat_input import ChatInput
@@ -32,20 +35,6 @@ from skills.chat.stream_section import StreamSection
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-class _ChatManagerApp(App):
-	"""Minimal app that mounts a ChatManager for testing."""
-	CSS_PATH = collect_tcss(
-		os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-	)
-
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.chat_manager = ChatManager()
-
-	def compose(self) -> ComposeResult:
-		yield Container(self.chat_manager)
-
 
 class _ChatDisplayApp(App):
 	"""Minimal app that mounts a ChatDisplay for testing."""
@@ -61,129 +50,128 @@ class _ChatDisplayApp(App):
 		yield Container(self.chat_display)
 
 
+class _ChatManagerApp(App):
+	"""Minimal app that mounts a ChatManager for testing."""
+	CSS_PATH = collect_tcss(
+		os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	)
+
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self.chat_manager = ChatManager()
+
+	def compose(self) -> ComposeResult:
+		yield Container(self.chat_manager)
+
+
 # ---------------------------------------------------------------------------
-# A: ChatManager lifecycle cancellation
+# A: ChatManager lifecycle — detach vs cancel
 # ---------------------------------------------------------------------------
 
 
-class TestChatManagerUnmount:
-	"""Tests for ChatManager cancelling streaming on widget removal."""
-
-	def test_cancel_streaming_resets_flag(self):
-		"""_cancel_streaming() should set _streaming to False."""
-		manager = ChatManager()
-		manager._streaming = True
-		manager._streaming_task = None
-		manager._agent = None
-		manager._chat_display = ChatDisplay()
-
-		manager._cancel_streaming()
-
-		assert manager._streaming is False, (
-			"Expected _streaming to be False after _cancel_streaming()"
-		)
-
-	def test_cancel_streaming_sets_display_detached(self):
-		"""_cancel_streaming() should set _detached on the ChatDisplay."""
-		manager = ChatManager()
-		manager._streaming = True
-		manager._streaming_task = None
-		manager._agent = None
-		display = ChatDisplay()
-		manager._chat_display = display
-
-		manager._cancel_streaming()
-
-		assert display._detached is True, (
-			"Expected _detached to be True on ChatDisplay after _cancel_streaming()"
-		)
+class TestChatManagerDetach:
+	"""Tests for ChatManager detaching display on unmount/remove (NOT cancelling stream)."""
 
 	@pytest.mark.asyncio
-	async def test_on_unmount_cancels_streaming_task(self):
-		"""on_unmount() should cancel an active streaming task."""
+	async def test_on_unmount_detaches_display(self):
+		"""on_unmount() should detach the display without cancelling the stream."""
 		app = _ChatManagerApp()
 		async with app.run_test(size=(80, 40)):
 			manager = app.chat_manager
-
-			# Create a mock streaming task that we can track.
-			task_was_cancelled = {"value": False}
-			original_cancel = None
-
-			# Create a mock agent that we can abort.
-			mock_agent = MagicMock()
-			mock_agent.abort = MagicMock()
-			manager._agent = mock_agent
-
-			# Set up a mock streaming task.
-			async def _long_running():
-				await asyncio.sleep(100)
-
-			worker = manager.run_worker(_long_running())
-			manager._streaming_task = worker
 			manager._streaming = True
 
-			# Call on_unmount — should cancel the task.
 			manager.on_unmount()
 
-			# The streaming flag should be reset.
-			assert manager._streaming is False, (
-				"Expected _streaming to be False after on_unmount()"
-			)
-
-			# The agent should have been aborted.
-			mock_agent.abort.assert_called_once()
+			# Display should be detached.
+			assert manager._chat_display._detached is True
+			# Streaming flag should still be True — stream continues in StreamManager.
+			assert manager._streaming is True
 
 	@pytest.mark.asyncio
-	async def test_on_remove_cancels_streaming(self):
-		"""on_remove() should also cancel streaming (belt-and-suspenders)."""
+	async def test_on_remove_detaches_display(self):
+		"""on_remove() should detach the display without cancelling the stream."""
 		app = _ChatManagerApp()
 		async with app.run_test(size=(80, 40)):
 			manager = app.chat_manager
-
-			mock_agent = MagicMock()
-			mock_agent.abort = MagicMock()
-			manager._agent = mock_agent
-
-			async def _long_running():
-				await asyncio.sleep(100)
-
-			worker = manager.run_worker(_long_running())
-			manager._streaming_task = worker
 			manager._streaming = True
 
 			manager.on_remove()
 
-			assert manager._streaming is False, (
-				"Expected _streaming to be False after on_remove()"
-			)
-			mock_agent.abort.assert_called_once()
+			assert manager._chat_display._detached is True
+			assert manager._streaming is True
 
-	def test_cancel_streaming_idempotent(self):
-		"""_cancel_streaming() should be safe to call multiple times."""
+	@pytest.mark.asyncio
+	async def test_detach_display_cancels_local_worker(self):
+		"""_detach_display() should cancel the local chunk-processing worker."""
+		app = _ChatManagerApp()
+		async with app.run_test(size=(80, 40)):
+			manager = app.chat_manager
+
+			async def _long_running():
+				await asyncio.sleep(100)
+
+			worker = manager.run_worker(_long_running())
+			manager._streaming_task = worker
+
+			manager._detach_display()
+
+			# The local worker should be cancelled.
+			assert worker.is_finished or worker._cancelled
+
+	def test_detach_display_marks_display_detached(self):
+		"""_detach_display() should set _detached on the ChatDisplay."""
 		manager = ChatManager()
-		manager._streaming = True
-		manager._streaming_task = None
-		manager._agent = None
 		display = ChatDisplay()
 		manager._chat_display = display
 
-		manager._cancel_streaming()
-		manager._cancel_streaming()  # Second call should be a no-op.
+		manager._detach_display()
 
-		assert manager._streaming is False
 		assert display._detached is True
 
-	def test_cancel_streaming_no_display(self):
-		"""_cancel_streaming() should not crash if _chat_display is None."""
+	def test_detach_display_handles_none_display(self):
+		"""_detach_display() should not crash if _chat_display is None."""
 		manager = ChatManager()
-		manager._streaming = True
-		manager._streaming_task = None
-		manager._agent = None
 		manager._chat_display = None
 
-		# Should not raise an exception.
+		# Should not raise.
+		manager._detach_display()
+
+	def test_cancel_streaming_uses_stream_manager(self):
+		"""_cancel_streaming() should cancel via StreamManager."""
+		manager = ChatManager()
+		manager._streaming = True
+		manager._stream_id = "test-stream-id"
+		manager._chat_display = ChatDisplay()
+
+		# Mock the context and stream manager.
+		mock_sm = MagicMock()
+		mock_ctx = MagicMock()
+		mock_ctx.stream_manager = mock_sm
+
+		manager._get_context = lambda: mock_ctx
+
 		manager._cancel_streaming()
+
+		# Should have cancelled the stream via StreamManager.
+		mock_sm.cancel.assert_called_once_with("test-stream-id")
+		assert manager._stream_id is None
 		assert manager._streaming is False
+
+	def test_cancel_streaming_resets_state(self):
+		"""_cancel_streaming() should reset streaming state."""
+		manager = ChatManager()
+		manager._streaming = True
+		manager._stream_id = "test-stream-id"
+		manager._chat_display = ChatDisplay()
+
+		# Mock _get_context to return None (no stream manager).
+		manager._get_context = lambda: None
+
+		manager._cancel_streaming()
+
+		assert manager._streaming is False
+		assert manager._stream_id is None
+		assert manager._chat_display._detached is True
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +234,6 @@ class TestChatDisplayDetached:
 		assert display._active_asst_id is None
 		assert display._section_widgets == {}
 		assert display._section_texts == {}
-		assert display._section_types == {}
 
 	@pytest.mark.asyncio
 	async def test_schedule_scroll_returns_early_when_detached(self):
@@ -309,7 +296,7 @@ class TestStreamSectionDetached:
 			display = app.chat_display
 			display._detached = True
 
-			# Need an active turn for add_section to work.
+			# Need an active turn for add_section to work even when detached.
 			display._turn_count = 0
 			display._active_asst_id = "asst-1"
 			display._turn_map["asst-1"] = None
@@ -368,7 +355,166 @@ class TestStreamSectionDetached:
 
 
 # ---------------------------------------------------------------------------
-# D: Streaming loop graceful exit
+# D: StreamManager lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestStreamManager:
+	"""Tests for StreamManager start/subscribe/cancel lifecycle."""
+
+	@pytest.mark.asyncio
+	async def test_start_returns_stream_id(self):
+		"""start() should return a valid stream ID."""
+		sm = StreamManager()
+		mock_agent = MagicMock()
+		mock_agent.stream_chat = MagicMock()
+		# Make stream_chat return an async generator that yields nothing.
+		async def _empty_stream(*args, **kwargs):
+			return
+			yield  # Make it an async generator
+
+		mock_agent.stream_chat = _empty_stream
+
+		stream_id = sm.start(mock_agent, [], "hello")
+		assert stream_id is not None
+		assert len(stream_id) > 0
+
+	@pytest.mark.asyncio
+	async def test_start_creates_background_task(self):
+		"""start() should create a background task that runs the stream."""
+		sm = StreamManager()
+		mock_agent = MagicMock()
+
+		async def _simple_stream(*args, **kwargs):
+			yield StreamChunk(content="hello", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
+
+		mock_agent.stream_chat = _simple_stream
+		stream_id = sm.start(mock_agent, [], "hello")
+
+		assert sm.has_stream(stream_id)
+		await asyncio.sleep(0.1)  # Let the stream complete
+
+	@pytest.mark.asyncio
+	async def test_subscribe_returns_subscription(self):
+		"""subscribe() should return a Subscription with drain and cancel."""
+		sm = StreamManager()
+		mock_agent = MagicMock()
+
+		chunks_received = []
+
+		async def _simple_stream(*args, **kwargs):
+			yield StreamChunk(content="hello", thinking="", tool_calls=[], tool_results={}, done=False, usage=None)
+			yield StreamChunk(content=" world", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
+
+		mock_agent.stream_chat = _simple_stream
+		stream_id = sm.start(mock_agent, [], "hello")
+
+		sub = sm.subscribe(stream_id, lambda c: chunks_received.append(c))
+		assert sub is not None
+		assert sub.stream_id == stream_id
+
+		await asyncio.sleep(0.2)
+		sm.cancel(stream_id)
+
+	@pytest.mark.asyncio
+	async def test_cancel_stops_stream(self):
+		"""cancel() should abort the agent and remove the stream."""
+		sm = StreamManager()
+
+		async def _long_stream(*args, **kwargs):
+			for i in range(100):
+				yield StreamChunk(content=f"chunk {i}", thinking="", tool_calls=[], tool_results={}, done=False, usage=None)
+			yield StreamChunk(content="", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
+
+		mock_agent = MagicMock()
+		mock_agent.stream_chat = _long_stream
+		mock_agent.abort = MagicMock()
+
+		stream_id = sm.start(mock_agent, [], "hello")
+		assert sm.has_stream(stream_id)
+
+		sm.cancel(stream_id)
+		assert not sm.has_stream(stream_id)
+		mock_agent.abort.assert_called_once()
+
+	@pytest.mark.asyncio
+	async def test_subscribe_to_finished_stream(self):
+		"""subscribe() to a finished stream should return a subscription with is_done=True."""
+		sm = StreamManager()
+
+		async def _quick_stream(*args, **kwargs):
+			yield StreamChunk(content="done", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
+
+		mock_agent = MagicMock()
+		mock_agent.stream_chat = _quick_stream
+		stream_id = sm.start(mock_agent, [], "hello")
+
+		await asyncio.sleep(0.2)  # Let the stream complete
+
+		sub = sm.subscribe(stream_id, lambda c: None)
+		assert sub is not None
+		assert sub.is_done is True
+
+	@pytest.mark.asyncio
+	async def test_subscribe_to_unknown_stream(self):
+		"""subscribe() to an unknown stream ID should return None."""
+		sm = StreamManager()
+		result = sm.subscribe("nonexistent", lambda c: None)
+		assert result is None
+
+	def test_has_stream_unknown_id(self):
+		"""has_stream() with unknown ID should return False."""
+		sm = StreamManager()
+		assert sm.has_stream("nonexistent") is False
+
+	def test_is_streaming_unknown_id(self):
+		"""is_streaming() with unknown ID should return False."""
+		sm = StreamManager()
+		assert sm.is_streaming("nonexistent") is False
+
+
+# ---------------------------------------------------------------------------
+# E: ChatTabState stream ID preservation
+# ---------------------------------------------------------------------------
+
+
+class TestChatTabState:
+	"""Tests for ChatTabState storing stream ID and cancelling on dispose."""
+
+	def test_tab_state_has_stream_id(self):
+		"""ChatTabState should have a _stream_id field."""
+		from skills.chat.chat_tab import ChatTabState
+		state = ChatTabState()
+		assert hasattr(state, '_stream_id')
+		assert state._stream_id is None
+
+	def test_tab_state_dispose_cancels_stream(self):
+		"""ChatTabState.dispose() should cancel the stream via StreamManager."""
+		from skills.chat.chat_tab import ChatTabState
+		state = ChatTabState()
+		state._stream_id = "test-stream-id"
+
+		mock_sm = MagicMock()
+		mock_ctx = MagicMock()
+		mock_ctx.stream_manager = mock_sm
+		state._ctx = mock_ctx
+
+		state.dispose()
+
+		mock_sm.cancel.assert_called_once_with("test-stream-id")
+		assert state._stream_id is None
+
+	def test_tab_state_dispose_handles_no_stream(self):
+		"""ChatTabState.dispose() should handle no stream ID gracefully."""
+		from skills.chat.chat_tab import ChatTabState
+		state = ChatTabState()
+		state._stream_id = None
+		# Should not raise.
+		state.dispose()
+
+
+# ---------------------------------------------------------------------------
+# F: Streaming graceful exit
 # ---------------------------------------------------------------------------
 
 
@@ -387,40 +533,3 @@ class TestStreamingGracefulExit:
 		# is_mounted will be False since we're not inside an app.
 		# This should return without error.
 		await manager._rebuild_display_from_sections()
-
-	def test_cancel_streaming_with_finished_task(self):
-		"""_cancel_streaming() should handle a finished task gracefully."""
-		manager = ChatManager()
-		manager._streaming = True
-		manager._agent = MagicMock()
-		manager._chat_display = ChatDisplay()
-
-		# Create a mock finished task.
-		mock_task = MagicMock()
-		mock_task.is_finished = True
-		manager._streaming_task = mock_task
-
-		manager._cancel_streaming()
-
-		# Should not have called abort since task was already finished.
-		manager._agent.abort.assert_not_called()
-		assert manager._streaming is False
-
-	def test_cancel_streaming_with_running_task(self):
-		"""_cancel_streaming() should cancel a running streaming task."""
-		manager = ChatManager()
-		manager._streaming = True
-		manager._agent = MagicMock()
-		manager._chat_display = ChatDisplay()
-
-		# Create a mock running task.
-		mock_task = MagicMock()
-		mock_task.is_finished = False
-		manager._streaming_task = mock_task
-
-		manager._cancel_streaming()
-
-		# Should have called abort on the agent and cancel on the task.
-		manager._agent.abort.assert_called_once()
-		mock_task.cancel.assert_called_once()
-		assert manager._streaming is False

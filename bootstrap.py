@@ -44,6 +44,7 @@ from core.agent_registry import AgentManager
 from core.providers.registry import ProviderRegistry
 from core.leader import leader as leader_registry
 from core.vault import VaultManager
+from core.stream_manager import StreamManager
 from core.agents_md import load_global_agents_md, load_local_agents_md, load_workspace_agents_md
 from core.context_files import load_design_md, load_tasks_md, load_user_md
 
@@ -78,6 +79,7 @@ class Bootstrap:
         vault = self._init_vault()
         providers = self._init_provider_registry(config, vault)
         agents = self._init_agent_registry(database)
+        stream_manager = StreamManager()
         self._register_agent_providers(agents, skills, providers)
         self._init_leader()
         css_paths = self._collect_css()
@@ -104,6 +106,7 @@ class Bootstrap:
             skills=skills,
             database=database,
             agents=agents,
+            stream_manager=stream_manager,
             prompts=agents,  # deprecated alias
             vault=vault,
             providers=providers,

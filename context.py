@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from core.providers.registry import ProviderRegistry
     from core.agent_registry import AgentManager
     from core.skills import SkillManager
+    from core.stream_manager import StreamManager
     from core.vault import VaultManager
 
 
@@ -96,6 +97,15 @@ class AppContext:
             except (ValueError, KeyError):
                 return None
         return None
+
+    # Stream manager
+    stream_manager: StreamManager | None = None
+    """Stream manager — owns LLM stream lifecycles independently of widgets.
+
+    Set by bootstrap to a :class:`~core.stream_manager.StreamManager`
+    instance.  ChatManager subscribes to streams by UUID so that
+    active streams survive workspace recomposition.
+    """
 
     # Deprecated field aliases for migration
     prompts: Any = None
