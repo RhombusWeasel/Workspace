@@ -361,6 +361,12 @@ class ChatDisplay(VerticalScroll):
         # at a time.
         self._scroll_pending: bool = False
 
+        # Detached flag — set to True when the widget is removed from the
+        # DOM (e.g. during workspace recomposition).  Streaming updates
+        # check this flag and bail out early to avoid updating a widget
+        # that no longer exists.
+        self._detached: bool = False
+
     # No compose() needed — ChatDisplay IS the VerticalScroll.
     # Messages are mounted directly into self.
 
@@ -370,6 +376,8 @@ class ChatDisplay(VerticalScroll):
 
     def _scroll_to_bottom(self) -> None:
         """Scroll the chat display to show the latest content."""
+        if self._detached or not self.is_mounted:
+            return
         try:
             self.scroll_end(animate=False)
         except Exception:
@@ -381,6 +389,8 @@ class ChatDisplay(VerticalScroll):
         During batch mode, scroll is suppressed — it will be triggered
         once by :meth:`end_batch`.
         """
+        if self._detached or not self.is_mounted:
+            return
         if self._batch_mode:
             return
         if self._scroll_pending:
@@ -402,6 +412,9 @@ class ChatDisplay(VerticalScroll):
 
         Returns the message ID.
         """
+        if self._detached or not self.is_mounted:
+            return f"user-detached-{self._turn_count}"
+
         self._turn_count += 1
         msg_id = f"user-{self._turn_count}"
 
@@ -424,6 +437,13 @@ class ChatDisplay(VerticalScroll):
 
         Returns the turn ID.
         """
+        if self._detached or not self.is_mounted:
+            self._turn_count += 1
+            asst_id = f"asst-{self._turn_count}"
+            self._active_asst_id = asst_id
+            self._turn_map[asst_id] = None  # type: ignore
+            return asst_id
+
         self._turn_count += 1
         asst_id = f"asst-{self._turn_count}"
 
@@ -462,6 +482,14 @@ class ChatDisplay(VerticalScroll):
             raise RuntimeError(
                 "No active assistant turn — call begin_assistant_turn first"
             )
+
+        # If detached, track section state but skip DOM operations.
+        if self._detached or not self.is_mounted:
+            self._section_count += 1
+            section_id = f"{section_type}-sec{self._section_count}"
+            self._section_texts[section_id] = ""
+            self._section_types[section_id] = section_type
+            return section_id
 
         self._section_count += 1
         section_id = f"{section_type}-sec{self._section_count}"
@@ -521,6 +549,10 @@ class ChatDisplay(VerticalScroll):
         During streaming all sections are ``Static``, so this is a
         lightweight synchronous update — no markdown parsing.
         """
+        # Bail out if the display has been detached from the DOM.
+        if self._detached or not self.is_mounted:
+            return
+
         widget = self._section_widgets.get(section_id)
         if widget is None:
             return
@@ -539,6 +571,14 @@ class ChatDisplay(VerticalScroll):
         are swapped from plain ``Static`` to ``Markdown`` for rich formatting.
         Thinking sections remain as ``Static``.
         """
+        # If detached, just clear tracking state without DOM operations.
+        if self._detached or not self.is_mounted:
+            self._active_asst_id = None
+            self._section_widgets = {}
+            self._section_texts = {}
+            self._section_types = {}
+            return
+
         asst_id = self._active_asst_id
         if asst_id is None:
             return
@@ -851,6 +891,10 @@ class ChatDisplay(VerticalScroll):
         self._tool_call_count += 1
         tc_id = f"tc-{self._tool_call_count}"
 
+        # If detached, skip DOM operations but track state.
+        if self._detached or not self.is_mounted:
+            return tc_id
+
         # Collapsed: name + short args.  Expanded: just the name.
         label = format_tool_call_branch_label(name, arguments)
         label_expanded = format_tool_call_branch_label_expanded(name)
@@ -904,6 +948,10 @@ class ChatDisplay(VerticalScroll):
         result:
             The tool execution result string.
         """
+        # If detached, skip DOM operations.
+        if self._detached or not self.is_mounted:
+            return
+
         # In batch mode, defer the result until widgets are mounted.
         if self._batch_mode:
             self._deferred_tool_results.append((tc_id, result))

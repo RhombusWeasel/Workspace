@@ -80,6 +80,11 @@ class StreamSection:
         """
         self._text += text
         self._dirty = True
+        # If the display has been detached, skip the update entirely.
+        if self._display._detached or not self._display.is_mounted:
+            self._dirty = False
+            self._last_flush = asyncio.get_running_loop().time()
+            return
         now = asyncio.get_running_loop().time()
         if now - self._last_flush >= self._flush_interval:
             await self._do_flush()
@@ -96,6 +101,10 @@ class StreamSection:
         self._cancel_pending_flush()
         self._text = text
         self._dirty = False
+        # If the display has been detached, skip the update.
+        if self._display._detached or not self._display.is_mounted:
+            self._last_flush = asyncio.get_running_loop().time()
+            return
         self._last_flush = asyncio.get_running_loop().time()
         await self._display.update_section(self.section_id, self._text)
 
@@ -128,13 +137,18 @@ class StreamSection:
             await self._do_flush()
         except asyncio.CancelledError:
             pass
+        except Exception:
+            # Display may have been detached during the sleep — ignore.
+            pass
 
     async def _do_flush(self) -> None:
         """Perform the actual display update if content is dirty."""
         if self._dirty:
             self._dirty = False
             self._last_flush = asyncio.get_running_loop().time()
-            await self._display.update_section(self.section_id, self._text)
+            # If the display has been detached, skip the update.
+            if not self._display._detached and self._display.is_mounted:
+                await self._display.update_section(self.section_id, self._text)
         self._flush_task = None
 
     def _cancel_pending_flush(self) -> None:

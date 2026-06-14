@@ -136,6 +136,40 @@ class ChatManager(Widget):
             # Fresh chat tab — show system prompt if configured.
             self._maybe_show_system_prompt()
 
+    def on_unmount(self) -> None:
+        """Cancel streaming when the widget is removed from the DOM.
+
+        Called when the workspace is recomposed (split/close) or when
+        the chat tab is closed.  Cancels any active streaming task so
+        it doesn't try to update widgets that no longer exist.
+        """
+        self._cancel_streaming()
+
+    def on_remove(self) -> None:
+        """Cancel streaming when the widget is removed (belt-and-suspenders).
+
+        Textual may call on_remove() in some cases where on_unmount()
+        is not called.  Both handlers call _cancel_streaming().
+        """
+        self._cancel_streaming()
+
+    def _cancel_streaming(self) -> None:
+        """Cancel any active streaming task and clean up streaming state.
+
+        Safe to call multiple times — subsequent calls are no-ops.
+        Aborts the agent, cancels the worker task, and resets the
+        streaming flag.  Does NOT touch the display — the widget may
+        already be detached.
+        """
+        if self._streaming_task is not None and not self._streaming_task.is_finished:
+            if self._agent is not None:
+                self._agent.abort()
+            self._streaming_task.cancel()
+        self._streaming = False
+        # Mark the display as detached so any in-flight updates bail out.
+        if self._chat_display is not None:
+            self._chat_display._detached = True
+
     def focus(self) -> None:
         """Focus the chat input.
 
@@ -199,6 +233,10 @@ class ChatManager(Widget):
         background worker from on_mount().
         """
         if not self._sections:
+            return
+
+        # Bail out if the widget was detached during the async gap.
+        if not self.is_mounted:
             return
 
         import json as _json
@@ -512,6 +550,11 @@ class ChatManager(Widget):
                 user_text,
                 tools=self._tools,
             ):
+                # Bail out early if the widget has been removed from the DOM
+                # (e.g. workspace split/close during streaming).
+                if not self.is_mounted or self._chat_display._detached:
+                    break
+
                 # --- Thinking ---
                 if chunk.thinking:
                     if watcher is None or watcher.section_type != "thinking":
@@ -579,11 +622,12 @@ class ChatManager(Widget):
                 # --- Token usage (on done chunk) ---
                 if chunk.done and chunk.usage:
                     model_name = getattr(self._agent, "_model", "")
-                    self._chat_input.update_context_progress(
-                        model_name,
-                        chunk.usage.total_tokens,
-                        chunk.usage.context_length,
-                    )
+                    if self._chat_input.is_mounted:
+                        self._chat_input.update_context_progress(
+                            model_name,
+                            chunk.usage.total_tokens,
+                            chunk.usage.context_length,
+                        )
 
                 # --- Scroll on stream completion ---
                 if chunk.done:
@@ -591,32 +635,48 @@ class ChatManager(Widget):
 
         except asyncio.CancelledError:
             # Aborted — persist whatever we have so far.
-            if watcher is not None:
-                replacement = await watcher.mark_aborted()
-                self._persist_section(
-                    turn_id, watcher.section_type, watcher.text
-                )
-                if replacement is not None:
-                    await replacement.flush()
-                    watcher = replacement
+            # Only update the display if we're still mounted.
+            if self.is_mounted and not self._chat_display._detached:
+                if watcher is not None:
+                    replacement = await watcher.mark_aborted()
                     self._persist_section(
                         turn_id, watcher.section_type, watcher.text
                     )
+                    if replacement is not None:
+                        await replacement.flush()
+                        watcher = replacement
+                        self._persist_section(
+                            turn_id, watcher.section_type, watcher.text
+                        )
+                else:
+                    watcher = StreamSection(self._chat_display, "response")
+                    await watcher.replace("*[aborted]*")
+                    self._persist_section(turn_id, "response", watcher.text)
             else:
-                watcher = StreamSection(self._chat_display, "response")
-                await watcher.replace("*[aborted]*")
-                self._persist_section(turn_id, "response", watcher.text)
+                # Widget detached during streaming — just persist what we have.
+                if watcher is not None:
+                    self._persist_section(
+                        turn_id, watcher.section_type, watcher.text
+                    )
 
         except Exception as exc:
-            if watcher is None or watcher.section_type != "response":
+            # Only update the display if we're still mounted.
+            if self.is_mounted and not self._chat_display._detached:
+                if watcher is None or watcher.section_type != "response":
+                    if watcher is not None:
+                        await watcher.flush()
+                        self._persist_section(
+                            turn_id, watcher.section_type, watcher.text
+                        )
+                    watcher = StreamSection(self._chat_display, "response")
+                await watcher.replace(f"Error: {exc}")
+                self._persist_section(turn_id, watcher.section_type, watcher.text)
+            else:
+                # Widget detached — persist what we have without display updates.
                 if watcher is not None:
-                    await watcher.flush()
                     self._persist_section(
                         turn_id, watcher.section_type, watcher.text
                     )
-                watcher = StreamSection(self._chat_display, "response")
-            await watcher.replace(f"Error: {exc}")
-            self._persist_section(turn_id, watcher.section_type, watcher.text)
 
         else:
             # Normal completion — persist the final section.
@@ -630,11 +690,12 @@ class ChatManager(Widget):
         # consistent with what was persisted.
         self._rebuild_history()
 
-        # Exit streaming mode.
-        self._chat_input.set_streaming(False)
+        # Exit streaming mode — only update UI if still mounted.
         self._streaming = False
-        await self._chat_display.finalize_turn()
-        self._chat_input.focus()
+        if self.is_mounted and not self._chat_display._detached:
+            self._chat_input.set_streaming(False)
+            await self._chat_display.finalize_turn()
+            self._chat_input.focus()
 
         # After the turn is finalized, attach revert buttons to completed
         # user message branches that have checkpoint tags.
