@@ -50,6 +50,35 @@ ChatDisplay .streaming-content {
 }
 
 /* --------------------------------------------------------------- */
+/* Chat message type borders — coloured left border per message type */
+/* --------------------------------------------------------------- */
+
+ChatDisplay .chat-user {
+    border-left: heavy $primary;
+    padding-left: 1;
+}
+
+ChatDisplay .chat-response {
+    border-left: heavy $success;
+    padding-left: 1;
+}
+
+ChatDisplay .chat-thinking {
+    border-left: heavy $warning;
+    padding-left: 1;
+}
+
+ChatDisplay .chat-tools {
+    border-left: heavy $accent;
+    padding-left: 1;
+}
+
+ChatDisplay .chat-system {
+    border-left: heavy grey;
+    padding-left: 1;
+}
+
+/* --------------------------------------------------------------- */
 /* Command Palette — popup inside ChatInput above the text bar       */
 /* --------------------------------------------------------------- */
 

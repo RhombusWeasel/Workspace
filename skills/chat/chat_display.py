@@ -92,6 +92,7 @@ class UserMessage(Collapsible):
             title="  \uf007  [cyan]User[/cyan]",
             collapsed=False,
             id=f"msg-{message_id}",
+            classes="chat-user",
             **kwargs,
         )
 
@@ -117,6 +118,7 @@ class AssistantTurn(Collapsible):
             title="  \U000f06a9  [green]Assistant[/green]",
             collapsed=False,
             id=f"asst-{turn_id}",
+            classes="chat-response",
             **kwargs,
         )
 
@@ -150,6 +152,7 @@ class Section(Collapsible):
         content: Widget,
         *,
         start_collapsed: bool = False,
+        css_class: str = "",
         **kwargs,
     ):
         self.section_id = section_id
@@ -159,6 +162,7 @@ class Section(Collapsible):
             title=title,
             collapsed=start_collapsed,
             id=f"sec-{section_id}",
+            classes=css_class,
             **kwargs,
         )
 
@@ -200,6 +204,7 @@ class ToolCallSection(Collapsible):
             title=title,
             collapsed=start_collapsed,
             id=f"tc-{section_id}",
+            classes="chat-tools",
             **kwargs,
         )
 
@@ -221,6 +226,7 @@ class SystemMessage(Collapsible):
             title="  \U000f0e38 [dim]System[/dim]",
             collapsed=False,
             id=f"msg-{message_id}",
+            classes="chat-system",
             **kwargs,
         )
 
@@ -242,6 +248,7 @@ class SystemPromptSection(Collapsible):
             title="  \U000f0e38 System Prompt",
             collapsed=True,
             id=f"msg-{message_id}",
+            classes="chat-system",
             **kwargs,
         )
 
@@ -467,11 +474,21 @@ class ChatDisplay(VerticalScroll):
             start_collapsed = False
 
         title = _SECTION_ICONS.get(section_type, section_type)
+
+        # Map section type to a CSS class for left-border styling.
+        _SECTION_CSS_CLASSES: dict[str, str] = {
+            "thinking": "chat-thinking",
+            "response": "chat-response",
+            "system": "chat-system",
+        }
+        css_class = _SECTION_CSS_CLASSES.get(section_type, "")
+
         section = Section(
             section_id,
             title=title,
             content=content_widget,
             start_collapsed=start_collapsed,
+            css_class=css_class,
         )
         self._section_map[section_id] = section
 
