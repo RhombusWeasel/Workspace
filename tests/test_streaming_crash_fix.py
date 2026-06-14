@@ -26,6 +26,7 @@ from textual.containers import Container
 
 from core.paths import collect_tcss
 from core.stream_manager import StreamManager, StreamChunk
+from core.providers.base import ToolCall
 from skills.chat.chat_display import ChatDisplay
 from skills.chat.chat_manager import ChatManager
 from skills.chat.chat_input import ChatInput
@@ -395,26 +396,137 @@ class TestStreamManager:
 		await asyncio.sleep(0.1)  # Let the stream complete
 
 	@pytest.mark.asyncio
-	async def test_subscribe_returns_subscription(self):
-		"""subscribe() should return a Subscription with drain and cancel."""
+	async def test_stream_writes_response_to_db(self):
+		"""start() should write accumulated response text to the database."""
 		sm = StreamManager()
 		mock_agent = MagicMock()
 
-		chunks_received = []
-
 		async def _simple_stream(*args, **kwargs):
-			yield StreamChunk(content="hello", thinking="", tool_calls=[], tool_results={}, done=False, usage=None)
-			yield StreamChunk(content=" world", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
+			yield StreamChunk(content="hello ", thinking="", tool_calls=[], tool_results={}, done=False, usage=None)
+			yield StreamChunk(content="world", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
 
 		mock_agent.stream_chat = _simple_stream
-		stream_id = sm.start(mock_agent, [], "hello")
 
-		sub = sm.subscribe(stream_id, lambda c: chunks_received.append(c))
-		assert sub is not None
-		assert sub.stream_id == stream_id
+		from core.database import DatabaseManager
+		db = DatabaseManager(":memory:")
+		chat_id = db.create_chat()
+		turn_id = "turn-123"
 
-		await asyncio.sleep(0.2)
-		sm.cancel(stream_id)
+		stream_id = sm.start(
+			mock_agent, [], "hello",
+			db=db, chat_id=chat_id, turn_id=turn_id,
+		)
+		assert sm.has_stream(stream_id)
+
+		await asyncio.sleep(0.3)  # Let the stream complete and flush
+
+		sections = db.load_sections(chat_id)
+		response_rows = [s for s in sections if s["content_type"] == "response"]
+		assert len(response_rows) == 1
+		assert response_rows[0]["content"] == "hello world"
+
+	@pytest.mark.asyncio
+	async def test_stream_writes_thinking_to_db(self):
+		"""start() should write accumulated thinking text to the database."""
+		sm = StreamManager()
+		mock_agent = MagicMock()
+
+		async def _thinking_stream(*args, **kwargs):
+			yield StreamChunk(content="answer", thinking="hmm", tool_calls=[], tool_results={}, done=True, usage=None)
+
+		mock_agent.stream_chat = _thinking_stream
+
+		from core.database import DatabaseManager
+		db = DatabaseManager(":memory:")
+		chat_id = db.create_chat()
+		turn_id = "turn-123"
+
+		stream_id = sm.start(
+			mock_agent, [], "hello",
+			db=db, chat_id=chat_id, turn_id=turn_id,
+		)
+		await asyncio.sleep(0.3)
+
+		sections = db.load_sections(chat_id)
+		thinking_rows = [s for s in sections if s["content_type"] == "thinking"]
+		assert len(thinking_rows) == 1
+		assert thinking_rows[0]["content"] == "hmm"
+
+	@pytest.mark.asyncio
+	async def test_stream_writes_tool_call_to_db(self):
+		"""start() should write tool calls to the database."""
+		sm = StreamManager()
+		mock_agent = MagicMock()
+
+		async def _tool_stream(*args, **kwargs):
+			yield StreamChunk(
+				content="",
+				thinking="",
+				tool_calls=[ToolCall(id="tc-1", name="read_file", arguments={"path": "/tmp/test"})],
+				tool_results={},
+				done=True,
+				usage=None,
+			)
+
+		mock_agent.stream_chat = _tool_stream
+
+		from core.database import DatabaseManager
+		db = DatabaseManager(":memory:")
+		chat_id = db.create_chat()
+		turn_id = "turn-123"
+
+		stream_id = sm.start(
+			mock_agent, [], "hello",
+			db=db, chat_id=chat_id, turn_id=turn_id,
+		)
+		await asyncio.sleep(0.3)
+
+		sections = db.load_sections(chat_id)
+		tool_rows = [s for s in sections if s["content_type"] == "tool_call"]
+		assert len(tool_rows) == 1
+		assert "read_file" in tool_rows[0]["content"]
+
+	@pytest.mark.asyncio
+	async def test_stream_writes_tool_result_to_db(self):
+		"""start() should merge tool results into tool_call rows."""
+		sm = StreamManager()
+		mock_agent = MagicMock()
+
+		async def _tool_stream(*args, **kwargs):
+			yield StreamChunk(
+				content="",
+				thinking="",
+				tool_calls=[ToolCall(id="tc-1", name="read_file", arguments={"path": "/tmp/test"})],
+				tool_results={},
+				done=False,
+				usage=None,
+			)
+			yield StreamChunk(
+				content="done",
+				thinking="",
+				tool_calls=[],
+				tool_results={"tc-1": "file contents"},
+				done=True,
+				usage=None,
+			)
+
+		mock_agent.stream_chat = _tool_stream
+
+		from core.database import DatabaseManager
+		db = DatabaseManager(":memory:")
+		chat_id = db.create_chat()
+		turn_id = "turn-123"
+
+		stream_id = sm.start(
+			mock_agent, [], "hello",
+			db=db, chat_id=chat_id, turn_id=turn_id,
+		)
+		await asyncio.sleep(0.3)
+
+		sections = db.load_sections(chat_id)
+		tool_rows = [s for s in sections if s["content_type"] == "tool_call"]
+		assert len(tool_rows) == 1
+		assert "file contents" in tool_rows[0]["content"]
 
 	@pytest.mark.asyncio
 	async def test_cancel_stops_stream(self):
@@ -424,7 +536,7 @@ class TestStreamManager:
 		async def _long_stream(*args, **kwargs):
 			for i in range(100):
 				yield StreamChunk(content=f"chunk {i}", thinking="", tool_calls=[], tool_results={}, done=False, usage=None)
-			yield StreamChunk(content="", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
+				yield StreamChunk(content="", thinking="", tool_calls=[], tool_results={}, done=True, usage=None)
 
 		mock_agent = MagicMock()
 		mock_agent.stream_chat = _long_stream
@@ -438,8 +550,8 @@ class TestStreamManager:
 		mock_agent.abort.assert_called_once()
 
 	@pytest.mark.asyncio
-	async def test_subscribe_to_finished_stream(self):
-		"""subscribe() to a finished stream should return a subscription with is_done=True."""
+	async def test_finished_stream_not_has_stream(self):
+		"""has_stream() should return False after a stream completes."""
 		sm = StreamManager()
 
 		async def _quick_stream(*args, **kwargs):
@@ -449,28 +561,13 @@ class TestStreamManager:
 		mock_agent.stream_chat = _quick_stream
 		stream_id = sm.start(mock_agent, [], "hello")
 
-		await asyncio.sleep(0.2)  # Let the stream complete
-
-		sub = sm.subscribe(stream_id, lambda c: None)
-		assert sub is not None
-		assert sub.is_done is True
-
-	@pytest.mark.asyncio
-	async def test_subscribe_to_unknown_stream(self):
-		"""subscribe() to an unknown stream ID should return None."""
-		sm = StreamManager()
-		result = sm.subscribe("nonexistent", lambda c: None)
-		assert result is None
+		await asyncio.sleep(0.2)
+		assert not sm.has_stream(stream_id)
 
 	def test_has_stream_unknown_id(self):
 		"""has_stream() with unknown ID should return False."""
 		sm = StreamManager()
 		assert sm.has_stream("nonexistent") is False
-
-	def test_is_streaming_unknown_id(self):
-		"""is_streaming() with unknown ID should return False."""
-		sm = StreamManager()
-		assert sm.is_streaming("nonexistent") is False
 
 
 # ---------------------------------------------------------------------------

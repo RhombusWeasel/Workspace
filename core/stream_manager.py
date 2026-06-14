@@ -1,441 +1,280 @@
-"""Stream Manager — owns LLM stream lifecycle independently of widgets.
+"""Stream Manager -- owns the LLM stream task and writes to the database.
 
-Decouples the streaming async iteration from any particular ChatManager
-widget instance.  When the workspace is recomposed (split / close), the
-old ChatManager is destroyed but the stream continues running inside
-StreamManager.  The new ChatManager re-subscribes by stream ID and
-receives any buffered + live chunks.
+The streaming async iterator runs as a background ``asyncio.Task``.  Every
+chunk is immediately converted into a database row (response text, thinking,
+tool call, or tool result) so the chat display can poll the database instead
+of receiving callbacks.
 
-StreamManager is a singleton stored on AppContext — it survives all
-DOM recompositions because AppContext is not a widget.
+When the workspace is recomposed (split / close), the old ChatManager is
+destroyed but the stream continues writing to the DB.  The new ChatManager
+simply polls the same ``chat_id`` and rebuilds the display from the latest
+rows.
 
-Key concepts:
-
-- **ActiveStream**: wraps an ``agent.stream_chat()`` async iterator.
-  Runs as a background ``asyncio.Task``.  Buffers chunks in a deque
-  so late subscribers can replay what they missed.
-
-- **Subscription**: returned by ``subscribe()``.  Holds a callback
-  that's called for each new chunk, plus a ``.drain()`` method that
-  replays buffered chunks.
-
-- **Stream lifecycle**:
-  1. ChatManager calls ``start(agent, history, user_text, tools)`` → UUID
-  2. StreamManager creates an ActiveStream, starts the background task
-  3. ChatManager subscribes by UUID, receives chunks via callback
-  4. On recomposition: old ChatManager detaches, new one re-subscribes
-  5. On permanent tab close: ``dispose()`` calls ``cancel()``
-  6. On stream completion: stream is cleaned up automatically
+On permanent tab close, ``ChatTabState.dispose()`` calls ``cancel()``, which
+aborts the agent and cancels the background task.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
-from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from core.providers.base import StreamChunk
 
 if TYPE_CHECKING:
     from core.agent import Agent
+    from core.database import DatabaseManager
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Subscription:
-    """A handle returned by ``StreamManager.subscribe()``.
-
-    Callers use this to ``drain()`` buffered chunks and receive a
-    callback for each new live chunk.
-
-    Attributes
-    ----------
-    stream_id:
-        UUID of the stream this subscription belongs to.
-    drain:
-        Callable that returns all buffered chunks since subscription
-        time and clears the buffer from this subscription's perspective.
-        Each chunk is only drained once per subscription.
-    cancel:
-        Callable to unsubscribe from the stream.
-    is_done:
-        Whether the stream has completed (including aborted streams).
-    is_aborted:
-        Whether the stream was aborted (user cancellation or error).
-    """
-
-    stream_id: str
-    drain: Callable[[], list[StreamChunk]]
-    cancel: Callable[[], None]
-    is_done: bool = False
-    is_aborted: bool = False
+# How often accumulated streaming content is written to the DB.
+DEFAULT_FLUSH_INTERVAL = 0.25
 
 
-@dataclass
-class _ActiveStream:
-    """Internal state for an active (running) stream.
-
-    The ``_task`` is the asyncio Task running the stream iteration.
-    ``_chunks`` is a bounded deque that retains recent chunks for
-    late subscribers (e.g. after a workspace recomposition).
-
-    ``_subscribers`` is a list of ``(callback, next_chunk_index)`` pairs.
-    The ``next_chunk_index`` tracks where each subscriber is in the
-    chunk buffer so they only receive chunks they haven't seen yet.
-    """
-
-    agent: Any  # Agent instance
-    history: list[dict[str, Any]]
-    user_text: str
-    tools: list[dict[str, Any]] | None
-    task: asyncio.Task | None = None
-    chunks: deque[StreamChunk] = field(default_factory=lambda: deque(maxlen=500))
-    done: bool = False
-    aborted: bool = False
-    error: str | None = None
-    # List of (callback, next_chunk_index) pairs
-    subscribers: list[tuple[Callable[[StreamChunk], None], int]] = field(default_factory=list)
-    # Lock for thread-safe subscriber management
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    def _cleanup(self) -> None:
-        """Remove finished subscribers (those with None callbacks)."""
-        self.subscribers = [
-            (cb, idx) for cb, idx in self.subscribers if cb is not None
-        ]
-
-
-# ---------------------------------------------------------------------------
-# StreamManager
-# ---------------------------------------------------------------------------
+def _format_tool_call_json(name: str, arguments: dict[str, Any], result: str | None = None) -> str:
+    """Serialise a tool call as JSON for database storage."""
+    data: dict[str, Any] = {"name": name, "arguments": arguments}
+    if result is not None:
+        data["result"] = result
+    return json.dumps(data)
 
 
 class StreamManager:
-    """Owns all active LLM streams, independent of any widget.
+    """Owns active LLM streams and persists their content to the database.
 
     Usage::
 
-        stream_id = manager.start(agent, history, user_text, tools=tools)
-        sub = manager.subscribe(stream_id, on_chunk)
-        buffered = sub.drain()  # replay chunks missed during gap
+        stream_id = manager.start(
+            agent, history, user_text, tools=tools,
+            db=db, chat_id=chat_id, turn_id=turn_id,
+        )
         ...
-        sub.cancel()  # unsubscribe
-        ...
-        manager.cancel(stream_id)  # abort the stream permanently
+        manager.cancel(stream_id)  # abort
     """
 
     def __init__(self) -> None:
-        self._streams: dict[str, _ActiveStream] = {}
-
-    # ------------------------------------------------------------------
-    # Start a new stream
-    # ------------------------------------------------------------------
+        self._streams: dict[str, asyncio.Task] = {}
+        self._metadata: dict[str, dict[str, Any]] = {}
 
     def start(
         self,
         agent: Agent,
         history: list[dict[str, Any]],
         user_text: str,
+        *,
         tools: list[dict[str, Any]] | None = None,
+        db: DatabaseManager | None = None,
+        chat_id: str | None = None,
+        turn_id: str | None = None,
+        flush_interval: float = DEFAULT_FLUSH_INTERVAL,
     ) -> str:
-        """Start a new streaming conversation and return the stream UUID.
+        """Start a streaming conversation and return the stream UUID.
 
-        The agent's ``stream_chat()`` method is run as a background
-        asyncio Task.  Chunks are buffered and forwarded to subscribers.
-
-        Parameters
-        ----------
-        agent:
-            The LLM agent to stream from.
-        history:
-            Conversation history (list of message dicts).
-        user_text:
-            The user's message text.
-        tools:
-            Optional list of tool definitions.
-
-        Returns
-        -------
-        str
-            UUID identifying this stream for ``subscribe()`` and
-            ``cancel()``.
+        The agent's ``stream_chat()`` iterator runs as a background task.
+        Chunks are written to *db* immediately (tool calls) or flushed
+        every *flush_interval* seconds (response / thinking text).
         """
         stream_id = uuid.uuid4().hex
-        active = _ActiveStream(
-            agent=agent,
-            history=list(history),  # copy so mutations don't affect stream
-            user_text=user_text,
-            tools=list(tools) if tools else None,
-        )
-        self._streams[stream_id] = active
 
-        # Start the background task.
+        self._metadata[stream_id] = {
+            "db": db,
+            "chat_id": chat_id,
+            "turn_id": turn_id,
+            "flush_interval": flush_interval,
+            "agent": agent,
+            # Accumulators for in-progress text sections.
+            "response_id": f"{turn_id}-response",
+            "response_text": "",
+            "response_dirty": False,
+            "thinking_id": f"{turn_id}-thinking",
+            "thinking_text": "",
+            "thinking_dirty": False,
+            # Track tool calls we have already persisted so results can be merged.
+            "tool_calls": {},
+        }
+
         loop = asyncio.get_running_loop()
-        active.task = loop.create_task(
-            self._run_stream(stream_id, active),
+        task = loop.create_task(
+            self._run_stream(stream_id, agent, history, user_text, tools),
             name=f"stream-{stream_id[:8]}",
         )
-
+        self._streams[stream_id] = task
         return stream_id
 
-    # ------------------------------------------------------------------
-    # Subscribe to an active stream
-    # ------------------------------------------------------------------
+    def cancel(self, stream_id: str) -> None:
+        """Abort the stream and remove it from the manager."""
+        task = self._streams.pop(stream_id, None)
+        meta = self._metadata.pop(stream_id, None)
+        if task is None:
+            return
 
-    def subscribe(
-        self,
-        stream_id: str,
-        on_chunk: Callable[[StreamChunk], None],
-    ) -> Subscription | None:
-        """Subscribe to chunks from an active stream.
+        if not task.done():
+            task.cancel()
 
-        The ``on_chunk`` callback is called for each new chunk that
-        arrives after subscription.  Previously buffered chunks can
-        be retrieved by calling ``subscription.drain()``.
-
-        If the stream ID is unknown or the stream has already finished
-        and been cleaned up, returns ``None``.
-
-        Parameters
-        ----------
-        stream_id:
-            UUID returned by ``start()``.
-        on_chunk:
-            Callback called with each new StreamChunk.
-
-        Returns
-        -------
-        Subscription | None
-            A subscription handle, or None if the stream is gone.
-        """
-        active = self._streams.get(stream_id)
-        if active is None:
-            return None
-
-        # Subscriber starts at the current chunk buffer length so it
-        # only receives NEW chunks.  Buffered chunks can be replayed
-        # via drain().
-        next_index = len(active.chunks)
-        active.subscribers.append((on_chunk, next_index))
-
-        # If the stream is already done, immediately notify.
-        if active.done:
-            # Create a final "done" chunk so the subscriber knows
-            # the stream is complete.
-            done_chunk = StreamChunk(
-                content="",
-                thinking="",
-                tool_calls=[],
-                tool_results={},
-                done=True,
-                usage=None,
-            )
+        agent = meta.get("agent") if meta else None
+        if agent is not None:
             try:
-                on_chunk(done_chunk)
+                agent.abort()
             except Exception:
                 pass
 
-        def _drain() -> list[StreamChunk]:
-            """Return all buffered chunks and advance the read position."""
-            # Start from where this subscriber was created.
-            # We re-read from the beginning of the buffer since chunks
-            # may have been evicted from the deque.  The caller should
-            # use persisted sections as the primary source of truth and
-            # only use drained chunks for anything after the last persist.
-            chunks = list(active.chunks)
-            return chunks
-
-        def _cancel() -> None:
-            """Remove this subscriber from the stream."""
-            # Replace the callback with None to mark it as cancelled.
-            # We don't modify the list in-place to avoid index shifts.
-            for i, (cb, idx) in enumerate(active.subscribers):
-                if cb is on_chunk:
-                    active.subscribers[i] = (None, idx)
-                    break
-
-        return Subscription(
-            stream_id=stream_id,
-            drain=_drain,
-            cancel=_cancel,
-            is_done=active.done,
-            is_aborted=active.aborted,
-        )
-
-    # ------------------------------------------------------------------
-    # Cancel / abort a stream
-    # ------------------------------------------------------------------
-
-    def cancel(self, stream_id: str) -> None:
-        """Cancel (abort) a stream permanently.
-
-        Aborts the agent, cancels the background task, and removes the
-        stream from the manager.  Any late subscribers will receive a
-        done chunk with ``aborted=True``.
-
-        Safe to call multiple times or on unknown stream IDs.
-        """
-        active = self._streams.pop(stream_id, None)
-        if active is None:
-            return
-
-        # Abort the agent.
-        try:
-            active.agent.abort()
-        except Exception:
-            pass
-
-        # Cancel the background task.
-        if active.task is not None and not active.task.done():
-            active.task.cancel()
-
-        # Notify subscribers that the stream was aborted.
-        aborted_chunk = StreamChunk(
-            content="",
-            thinking="",
-            tool_calls=[],
-            tool_results={},
-            done=True,
-            usage=None,
-        )
-        for cb, _ in active.subscribers:
-            if cb is not None:
-                try:
-                    cb(aborted_chunk)
-                except Exception:
-                    pass
-
-    # ------------------------------------------------------------------
-    # Query
-    # ------------------------------------------------------------------
-
     def has_stream(self, stream_id: str) -> bool:
-        """Return True if the stream ID refers to an active stream."""
-        return stream_id in self._streams
-
-    def is_streaming(self, stream_id: str) -> bool:
-        """Return True if the stream is still actively streaming (not done)."""
-        active = self._streams.get(stream_id)
-        if active is None:
+        """Return True if *stream_id* refers to a still-running stream."""
+        task = self._streams.get(stream_id)
+        if task is None:
             return False
-        return not active.done
+        return not task.done()
 
     def get_stream_ids(self) -> list[str]:
         """Return all active stream IDs."""
-        return list(self._streams.keys())
+        return [
+            sid for sid, task in self._streams.items()
+            if not task.done()
+        ]
 
-    # ------------------------------------------------------------------
-    # Background stream runner
-    # ------------------------------------------------------------------
+    def _write_text_sections(self, stream_id: str) -> None:
+        """Flush accumulated response/thinking text to the DB."""
+        meta = self._metadata.get(stream_id, {})
+        db: DatabaseManager | None = meta.get("db")
+        chat_id: str | None = meta.get("chat_id")
+        turn_id: str | None = meta.get("turn_id")
+        if db is None or chat_id is None or turn_id is None:
+            meta["response_dirty"] = False
+            meta["thinking_dirty"] = False
+            return
 
-    async def _run_stream(self, stream_id: str, active: _ActiveStream) -> None:
-        """Run the agent's stream_chat() and forward chunks to subscribers.
-
-        This is the background task that iterates over the async generator.
-        Each chunk is appended to the buffer and forwarded to all
-        subscribers.
-        """
-        try:
-            async for chunk in active.agent.stream_chat(
-                active.history,
-                active.user_text,
-                tools=active.tools,
-            ):
-                # Buffer the chunk for late subscribers.
-                active.chunks.append(chunk)
-
-                # Forward to all active subscribers.
-                for cb, next_idx in active.subscribers:
-                    if cb is not None:
-                        try:
-                            cb(chunk)
-                        except Exception:
-                            pass  # Best-effort delivery
-
-            # Stream completed normally.
-            active.done = True
-
-            # Send a final "done" chunk so subscribers know the stream
-            # is complete (the last real chunk may have done=True but
-            # we want to be explicit).
-            # Only send if the last buffered chunk wasn't already done.
-            if not active.chunks or not active.chunks[-1].done:
-                final_chunk = StreamChunk(
-                    content="",
-                    thinking="",
-                    tool_calls=[],
-                    tool_results={},
-                    done=True,
-                    usage=None,
+        if meta.get("response_dirty"):
+            try:
+                db.upsert_streaming_section(
+                    chat_id,
+                    turn_id,
+                    meta["response_id"],
+                    "response",
+                    meta["response_text"],
                 )
-                active.chunks.append(final_chunk)
-                for cb, _ in active.subscribers:
-                    if cb is not None:
-                        try:
-                            cb(final_chunk)
-                        except Exception:
-                            pass
+            except Exception:
+                pass
+            meta["response_dirty"] = False
+
+        if meta.get("thinking_dirty"):
+            try:
+                db.upsert_streaming_section(
+                    chat_id,
+                    turn_id,
+                    meta["thinking_id"],
+                    "thinking",
+                    meta["thinking_text"],
+                )
+            except Exception:
+                pass
+            meta["thinking_dirty"] = False
+
+    async def _run_stream(
+        self,
+        stream_id: str,
+        agent: Agent,
+        history: list[dict[str, Any]],
+        user_text: str,
+        tools: list[dict[str, Any]] | None,
+    ) -> None:
+        """Iterate the LLM stream and persist every chunk to the DB."""
+        meta = self._metadata.get(stream_id, {})
+        db: DatabaseManager | None = meta.get("db")
+        chat_id: str | None = meta.get("chat_id")
+        turn_id: str | None = meta.get("turn_id")
+        flush_interval: float = meta.get("flush_interval", DEFAULT_FLUSH_INTERVAL)
+
+        last_flush = 0.0
+
+        def _flush() -> None:
+            nonlocal last_flush
+            self._write_text_sections(stream_id)
+            last_flush = asyncio.get_running_loop().time()
+
+        try:
+            async for chunk in agent.stream_chat(history, user_text, tools=tools):
+                self._handle_chunk(stream_id, chunk)
+
+                now = asyncio.get_running_loop().time()
+                if now - last_flush >= flush_interval:
+                    _flush()
+
+            _flush()
 
         except asyncio.CancelledError:
-            active.done = True
-            active.aborted = True
-            # Notify subscribers of cancellation.
-            cancel_chunk = StreamChunk(
-                content="",
-                thinking="",
-                tool_calls=[],
-                tool_results={},
-                done=True,
-                usage=None,
-            )
-            for cb, _ in active.subscribers:
-                if cb is not None:
-                    try:
-                        cb(cancel_chunk)
-                    except Exception:
-                        pass
+            # User abort -- mark final content as aborted.
+            if meta.get("response_text"):
+                meta["response_text"] += "\n\n*[aborted]*"
+            else:
+                meta["response_text"] = "*[aborted]*"
+            meta["response_dirty"] = True
+            _flush()
 
         except Exception as exc:
-            active.done = True
-            active.error = str(exc)
-            # Send an error chunk to subscribers.
-            error_chunk = StreamChunk(
-                content=f"Error: {exc}",
-                thinking="",
-                tool_calls=[],
-                tool_results={},
-                done=True,
-                usage=None,
-            )
-            active.chunks.append(error_chunk)
-            for cb, _ in active.subscribers:
-                if cb is not None:
-                    try:
-                        cb(error_chunk)
-                    except Exception:
-                        pass
+            meta["response_text"] = f"Error: {exc}"
+            meta["response_dirty"] = True
+            _flush()
 
         finally:
-            # Clean up finished subscribers.
-            active._cleanup()
-            # Remove the stream after a short delay to allow late
-            # subscribers to drain the buffer.
-            # The stream stays in self._streams so that anyone who
-            # subscribes between stream end and cleanup can still
-            # get the final state.
-            # We schedule cleanup rather than doing it immediately.
-            try:
-                loop = asyncio.get_running_loop()
-                loop.call_later(30, self._cleanup_stream, stream_id)
-            except RuntimeError:
-                # No running loop — clean up immediately.
-                self._cleanup_stream(stream_id)
+            # Ensure a response row exists even if the stream yielded nothing.
+            if db is not None and chat_id is not None and turn_id is not None:
+                try:
+                    db.upsert_streaming_section(
+                        chat_id,
+                        turn_id,
+                        meta["response_id"],
+                        "response",
+                        meta.get("response_text", ""),
+                    )
+                except Exception:
+                    pass
 
-    def _cleanup_stream(self, stream_id: str) -> None:
-        """Remove a finished stream from the manager after a delay."""
-        self._streams.pop(stream_id, None)
+            self._streams.pop(stream_id, None)
+            self._metadata.pop(stream_id, None)
+
+    def _handle_chunk(self, stream_id: str, chunk: StreamChunk) -> None:
+        """Persist a single stream chunk to the database."""
+        meta = self._metadata.get(stream_id, {})
+        db: DatabaseManager | None = meta.get("db")
+        chat_id: str | None = meta.get("chat_id")
+        turn_id: str | None = meta.get("turn_id")
+
+        if chunk.content:
+            meta["response_text"] = meta.get("response_text", "") + chunk.content
+            meta["response_dirty"] = True
+
+        if chunk.thinking:
+            meta["thinking_text"] = meta.get("thinking_text", "") + chunk.thinking
+            meta["thinking_dirty"] = True
+
+        if chunk.tool_calls and db is not None and chat_id is not None and turn_id is not None:
+            for tc in chunk.tool_calls:
+                tc_id = tc.id or f"{turn_id}-tc-{len(meta['tool_calls'])}"
+                meta["tool_calls"][tc_id] = tc
+                try:
+                    db.upsert_streaming_section(
+                        chat_id,
+                        turn_id,
+                        tc_id,
+                        "tool_call",
+                        _format_tool_call_json(tc.name, tc.arguments),
+                    )
+                except Exception:
+                    pass
+
+        if chunk.tool_results and db is not None and chat_id is not None and turn_id is not None:
+            for tc_id, tc in meta["tool_calls"].items():
+                result = chunk.tool_results.get(tc.id, "")
+                if not result:
+                    continue
+                try:
+                    db.upsert_streaming_section(
+                        chat_id,
+                        turn_id,
+                        tc_id,
+                        "tool_call",
+                        _format_tool_call_json(tc.name, tc.arguments, result=result),
+                    )
+                except Exception:
+                    pass
