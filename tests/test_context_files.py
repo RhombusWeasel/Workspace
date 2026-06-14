@@ -39,6 +39,13 @@ def test_read_file_unreadable_file():
     assert _read_file("/proc/nonexistent/test.md") == ""
 
 
+def test_read_file_empty_file(tmp_path):
+    """A file with only whitespace returns empty string."""
+    f = tmp_path / "empty.md"
+    f.write_text("   \n  \n")
+    assert _read_file(str(f)) == ""
+
+
 def test_read_file_non_utf8(tmp_path):
     f = tmp_path / "test.md"
     f.write_bytes(b"\xff\xfe Bad encoding")
