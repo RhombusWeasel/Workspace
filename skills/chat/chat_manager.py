@@ -250,10 +250,15 @@ class ChatManager(Widget):
                         # sequence as they were created during streaming.
                         try:
                             tc_data = _json.loads(content)
-                            self._chat_display.add_tool_call(
+                            tc_id = self._chat_display.add_tool_call(
                                 tc_data["name"],
                                 tc_data["arguments"],
                             )
+                            # If the persisted JSON includes a result, display it.
+                            if "result" in tc_data and tc_data["result"]:
+                                self._chat_display.add_tool_result(
+                                    tc_id, tc_data["result"]
+                                )
                         except (_json.JSONDecodeError, KeyError):
                             self._chat_display.add_tool_call(
                                 "unknown",
@@ -499,6 +504,7 @@ class ChatManager(Widget):
         self._streaming = True
 
         watcher: StreamSection | None = None
+        pending_tool_results: dict[str, Any] = {}
 
         try:
             async for chunk in self._agent.stream_chat(
@@ -530,7 +536,7 @@ class ChatManager(Widget):
 
                     # Create individual tool call branches directly under the assistant turn.
                     for tc in chunk.tool_calls:
-                        self._chat_display.add_tool_call(
+                        tc_id = self._chat_display.add_tool_call(
                             tc.name, tc.arguments,
                         )
                         # Persist each tool call as a separate row (structured JSON).
@@ -539,9 +545,24 @@ class ChatManager(Widget):
                             "tool_call",
                             format_tool_call_json(tc.name, tc.arguments),
                         )
+                        # Track tc_id → tool call for result correlation.
+                        pending_tool_results[tc_id] = tc
                     # No StreamSection for tool calls — they are
                     # discrete display events, not streamed content.
                     watcher = None
+
+                # --- Tool results ---
+                if chunk.tool_results:
+                    # Match results to pending tool calls by tool call ID.
+                    for tc_id, tc in pending_tool_results.items():
+                        result = chunk.tool_results.get(tc.id, "")
+                        if result:
+                            self._chat_display.add_tool_result(tc_id, result)
+                            # Update the persisted JSON to include the result.
+                            self._update_tool_result(
+                                turn_id, tc.name, tc.arguments, result
+                            )
+                    pending_tool_results.clear()
 
                 # --- Response text ---
                 if chunk.content:
@@ -699,6 +720,46 @@ class ChatManager(Widget):
         except Exception:
             pass  # Best-effort — don't crash the stream for a DB error.
 
+    def _update_tool_result(
+        self,
+        turn_id: str,
+        name: str,
+        arguments: dict[str, Any],
+        result: str,
+    ) -> None:
+        """Update the persisted tool-call JSON to include the result.
+
+        Finds the in-memory section for this tool call and replaces its
+        content with an updated JSON that includes the ``result`` key.
+        Also updates the database row.
+        """
+        import json as _json
+        updated_json = format_tool_call_json(name, arguments, result=result)
+
+        # Update the in-memory section list — find the matching tool_call
+        # row by turn_id and tool name.
+        for sec in self._sections:
+            if (
+                sec["turn_id"] == turn_id
+                and sec["content_type"] == "tool_call"
+            ):
+                try:
+                    tc_data = _json.loads(sec["content"])
+                    if tc_data.get("name") == name:
+                        sec["content"] = updated_json
+                        break
+                except (_json.JSONDecodeError, KeyError):
+                    continue
+
+        # Update the database row if available.
+        if self._db is not None and self._chat_id is not None:
+            try:
+                self._db.update_tool_result(
+                    self._chat_id, turn_id, name, updated_json
+                )
+            except Exception:
+                pass  # Best-effort — don't crash the stream for a DB error.
+
     def _rebuild_history(self) -> None:
         """Rebuild in-memory LLM history from persisted or in-memory sections.
 
@@ -757,7 +818,16 @@ class ChatManager(Widget):
                     asst = _ensure_assistant(history, tid)
                     tc_list = asst.setdefault("tool_calls", [])
                     try:
-                        tc_list.append(_json.loads(s["content"]))
+                        tc_data = _json.loads(s["content"])
+                        tc_list.append(tc_data)
+                        # If the tool call JSON includes a result, emit a
+                        # tool-role message so the LLM sees the output.
+                        if "result" in tc_data and tc_data["result"] is not None:
+                            history.append({
+                                "role": "tool",
+                                "content": tc_data["result"],
+                                "name": tc_data.get("name", ""),
+                            })
                     except (_json.JSONDecodeError, TypeError):
                         pass
 

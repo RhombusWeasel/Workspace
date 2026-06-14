@@ -28,17 +28,28 @@ def format_tool_call_display(name: str, arguments: dict[str, Any]) -> str:
     return f"🔧 `{name}({args_str})`\n"
 
 
-def format_tool_call_json(name: str, arguments: dict[str, Any]) -> str:
+def format_tool_call_json(
+	name: str,
+	arguments: dict[str, Any],
+	result: str | None = None,
+) -> str:
     """Serialise a tool call as JSON for database storage.
 
     Returns a JSON string like::
 
         {"name": "read_file", "arguments": {"path": "foo.py"}}
 
+    When *result* is provided, it is included::
+
+        {"name": "read_file", "arguments": {"path": "foo.py"}, "result": "..."}
+
     This can be decoded by :meth:`DatabaseManager.reconstruct_history`
     when rebuilding LLM-consumable history from flat sections.
     """
-    return json.dumps({"name": name, "arguments": arguments})
+    data: dict[str, Any] = {"name": name, "arguments": arguments}
+    if result is not None:
+        data["result"] = result
+    return json.dumps(data)
 
 
 def format_tool_call_branch_label(name: str, arguments: dict[str, Any]) -> str:
@@ -85,6 +96,28 @@ def format_tool_call_detail(name: str, arguments: dict[str, Any]) -> str:
             val_repr = val_repr[:197] + "..."
         lines.append(f"**{key}**: `{val_repr}`")
     return "\n".join(lines)
+
+
+def format_tool_result_detail(result: str) -> str:
+    """Format a tool result as Markdown for the detail leaf.
+
+    Returns a Markdown string with a result header and the result
+    content in a code block.  Long results are truncated to 500
+    characters.
+    """
+    if len(result) > 500:
+        result = result[:497] + "..."
+    return f"---\n**Result:**\n```\n{result}\n```"
+
+
+def format_tool_call_branch_label_done(name: str, arguments: dict[str, Any]) -> str:
+    """Format a tool call collapsed label after the result is known.
+
+    Same as :func:`format_tool_call_branch_label` but with a checkmark
+    to indicate the tool has completed.
+    """
+    args_str = _format_args(arguments)
+    return f"\U000f0b46 `{name}({args_str})` \u2714"
 
 
 def _format_args(args: dict[str, Any]) -> str:

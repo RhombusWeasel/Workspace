@@ -328,15 +328,24 @@ class Agent:
                 content=assistant_content,
                 tool_calls=tool_calls,
             ))
+            tool_results: dict[str, str] = {}
             for tc in tool_calls:
                 result = await self._execute_tool_call(tc)
                 messages.append(
                     Message(role="tool", content=result, name=tc.name)
                 )
+                tool_results[tc.id] = result
 
             # Yield the tool-call info so the UI can display it.
             if last_chunk is not None:
                 yield last_chunk
+
+            # Yield tool execution results so the UI can display them.
+            if tool_results:
+                yield StreamChunk(
+                    content="",
+                    tool_results=tool_results,
+                )
 
             tool_call_rounds += 1
 
