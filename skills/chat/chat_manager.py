@@ -175,6 +175,11 @@ class ChatManager(Widget):
         so the user sees their conversation restored after a workspace
         recomposition (split / close).
 
+        Uses batch mode to avoid O(N²) rebuild cost — instead of
+        triggering a tree rebuild on every add operation, we enter batch
+        mode, replay all sections, finalize all turns in a single pass,
+        then exit batch mode to trigger a single tree rebuild.
+
         This method is async because it needs to await Markdown.update()
         calls to properly render section content.  It is scheduled as a
         background worker from on_mount().
@@ -194,64 +199,60 @@ class ChatManager(Widget):
                 turns[tid] = []
             turns[tid].append(sec)
 
-        # Yield to the event loop so that the display tree finishes
-        # mounting before we start adding sections.
-        await asyncio.sleep(0)
+        # Enter batch mode — suppress individual rebuilds and scrolls.
+        # We'll do a single rebuild at the end after all sections are added.
+        self._chat_display.begin_batch()
 
-        for tid in turn_order:
-            sections = turns[tid]
-            assistant_started = False
-            for sec in sections:
-                ct = sec["content_type"]
-                content = sec["content"]
+        try:
+            for tid in turn_order:
+                sections = turns[tid]
+                assistant_started = False
+                for sec in sections:
+                    ct = sec["content_type"]
+                    content = sec["content"]
 
-                if ct == "user":
-                    self._chat_display.add_user_message(content)
-                elif ct == "system":
-                    self._chat_display.add_system_message(content)
-                elif ct == "thinking":
-                    if not assistant_started:
-                        self._chat_display.begin_assistant_turn()
-                        assistant_started = True
-                        # Give the assistant branch time to mount.
-                        await asyncio.sleep(0)
-                    section_id = self._chat_display.add_section("thinking")
-                    await asyncio.sleep(0)
-                    await self._chat_display.update_section(section_id, content)
-                elif ct == "response":
-                    if not assistant_started:
-                        self._chat_display.begin_assistant_turn()
-                        assistant_started = True
-                        await asyncio.sleep(0)
-                    section_id = self._chat_display.add_section("response")
-                    await asyncio.sleep(0)
-                    await self._chat_display.update_section(section_id, content)
-                elif ct == "tool_call":
-                    if not assistant_started:
-                        self._chat_display.begin_assistant_turn()
-                        assistant_started = True
-                        await asyncio.sleep(0)
-                    # Add tool calls one at a time, in their original
-                    # order, so that branches appear in the same
-                    # sequence as they were created during streaming.
-                    try:
-                        tc_data = _json.loads(content)
-                        self._chat_display.add_tool_call(
-                            tc_data["name"],
-                            tc_data["arguments"],
-                        )
-                    except (_json.JSONDecodeError, KeyError):
-                        self._chat_display.add_tool_call(
-                            "unknown",
-                            {"raw": content},
-                        )
+                    if ct == "user":
+                        self._chat_display.add_user_message(content)
+                    elif ct == "system":
+                        self._chat_display.add_system_message(content)
+                    elif ct == "thinking":
+                        if not assistant_started:
+                            self._chat_display.begin_assistant_turn()
+                            assistant_started = True
+                        section_id = self._chat_display.add_section("thinking")
+                        await self._chat_display.update_section(section_id, content)
+                    elif ct == "response":
+                        if not assistant_started:
+                            self._chat_display.begin_assistant_turn()
+                            assistant_started = True
+                        section_id = self._chat_display.add_section("response")
+                        await self._chat_display.update_section(section_id, content)
+                    elif ct == "tool_call":
+                        if not assistant_started:
+                            self._chat_display.begin_assistant_turn()
+                            assistant_started = True
+                        # Add tool calls one at a time, in their original
+                        # order, so that branches appear in the same
+                        # sequence as they were created during streaming.
+                        try:
+                            tc_data = _json.loads(content)
+                            self._chat_display.add_tool_call(
+                                tc_data["name"],
+                                tc_data["arguments"],
+                            )
+                        except (_json.JSONDecodeError, KeyError):
+                            self._chat_display.add_tool_call(
+                                "unknown",
+                                {"raw": content},
+                            )
 
-            # Finalise each assistant turn as we go so that sections
-            # are swapped from Static to Markdown and empty sections are
-            # removed.  This is important for multi-turn conversations
-            # where finalize_turn() only processes the active turn.
-            if assistant_started:
-                await self._chat_display.finalize_turn()
+            # Finalize all assistant turns in a single pass — removes
+            # empty sections, updates labels, and swaps Static → Markdown.
+            self._chat_display.batch_finalize_turns()
+
+        finally:
+            # Exit batch mode — single rebuild + scroll.
+            self._chat_display.end_batch()
 
     # ------------------------------------------------------------------
     # Setup

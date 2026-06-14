@@ -271,7 +271,7 @@ class GutteredTreeRow(TreeRow):
             return
         # Cancel any pending debounced update.
         if self._resize_timer is not None:
-            self._resize_timer.cancel()
+            self._resize_timer.stop()
         # Schedule the gutter update for ~1 frame later.
         self._resize_timer = self.set_timer(1 / 60, self._apply_gutter_resize)
 

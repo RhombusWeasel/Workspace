@@ -42,7 +42,6 @@ from textual.widgets import Markdown, Static
 
 from ui.tree.tree import Tree
 from ui.tree.tree_row import TreeNode
-from ui.tree.tree_row_guttered import GutteredTreeRow
 
 
 # ---------------------------------------------------------------------------
@@ -115,12 +114,24 @@ class ChatDisplay(Widget):
         # Maps section_id → section_type (for finalize swap decisions).
         self._section_types: dict[str, str] = {}
 
+        # Batch mode — when True, _rebuild() and _schedule_scroll() are
+        # suppressed.  Call end_batch() to trigger a single rebuild +
+        # scroll.  Used by ChatManager._rebuild_display_from_sections()
+        # to avoid O(N²) rebuilds during conversation restore.
+        self._batch_mode: bool = False
+
+        # Node lookup map — provides O(1) lookups for _find_node() instead
+        # of recursive tree walks.  Maintained in sync with the tree data
+        # model by _register_node() and _unregister_node().
+        self._node_map: dict[str, TreeNode] = {}
+        self._register_node(self._root)
+
     # ------------------------------------------------------------------
     # Composition
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Tree(self._root, row_class=GutteredTreeRow)
+        yield Tree(self._root)
 
     # ------------------------------------------------------------------
     # Scrolling
@@ -146,7 +157,12 @@ class ChatDisplay(Widget):
         tree's virtual size, but the layout pass happens asynchronously.
         Calling ``scroll_end()`` immediately would use the old virtual
         size, so we defer by ~1 frame to let the layout catch up.
+
+        During batch mode, scroll is suppressed — it will be triggered
+        once by :meth:`end_batch`.
         """
+        if self._batch_mode:
+            return
         self.set_timer(1 / 60, self._scroll_to_bottom)
 
     # ------------------------------------------------------------------
@@ -182,6 +198,7 @@ class ChatDisplay(Widget):
             children=[leaf],
         )
         self._root.children.append(branch)
+        self._register_node(branch)
         self._rebuild()
 
         # Expand the new user branch by default.
@@ -218,11 +235,15 @@ class ChatDisplay(Widget):
             data={"role": "assistant", "type": "branch"},
         )
         self._root.children.append(asst_node)
+        self._register_node(asst_node)
 
         self._active_asst_id = asst_id
-        self._section_widgets = {}
-        self._section_texts = {}
-        self._section_types = {}
+        # In batch mode, accumulate section tracking across turns
+        # so that batch_finalize_turns can process all turns.
+        if not self._batch_mode:
+            self._section_widgets = {}
+            self._section_texts = {}
+            self._section_types = {}
 
         self._rebuild()
 
@@ -286,6 +307,7 @@ class ChatDisplay(Widget):
         asst_node = self._find_node(self._active_asst_id)
         if asst_node is not None:
             asst_node.children.append(branch)
+            self._register_node(branch)
 
         self._rebuild()
 
@@ -352,6 +374,10 @@ class ChatDisplay(Widget):
                 if not self._is_empty_section(c)
             ]
             if len(keep) != len(node.children):
+                # Unregister removed nodes from the lookup map.
+                removed = [c for c in node.children if c not in keep]
+                for rm in removed:
+                    self._unregister_node(rm)
                 node.children = keep
                 self._rebuild()
 
@@ -398,6 +424,7 @@ class ChatDisplay(Widget):
             children=[leaf],
         )
         self._root.children.append(branch)
+        self._register_node(branch)
         self._rebuild()
 
         tree = self.query_one(Tree)
@@ -434,6 +461,7 @@ class ChatDisplay(Widget):
             children=[leaf],
         )
         self._root.children.append(branch)
+        self._register_node(branch)
         self._rebuild()
 
         tree = self.query_one(Tree)
@@ -462,6 +490,10 @@ class ChatDisplay(Widget):
         self._section_widgets = {}
         self._section_texts = {}
         self._section_types = {}
+        # Reset the node lookup map — only the root remains.
+        self._node_map.clear()
+        self._register_node(self._root)
+        self._batch_mode = False
         self._rebuild()
 
     # ------------------------------------------------------------------
@@ -475,11 +507,13 @@ class ChatDisplay(Widget):
         Tool call branches are not section branches — they sit as
         direct children of the assistant node and should never be
         treated as empty sections.
+
+        Checks ``_section_texts`` which tracks text for all sections
+        in the current turn (and across turns during batch mode).
         """
         # Tool call branches are never "empty sections" — they have
         # their own content (Markdown detail leaf) and are not tracked
-        # in _section_texts.  They sit as direct children of the
-        # assistant node alongside thinking/response sections.
+        # in _section_texts.
         if branch.data and branch.data.get("tool_call"):
             return False
         if not branch.children:
@@ -506,9 +540,167 @@ class ChatDisplay(Widget):
                 return _truncate(text, 60)
         return ""
 
+    # ------------------------------------------------------------------
+    # Node lookup map
+    # ------------------------------------------------------------------
+
+    def _register_node(self, node: TreeNode) -> None:
+        """Register a node and all its children in the lookup map."""
+        self._node_map[node.id] = node
+        for child in node.children:
+            self._register_node(child)
+
+    def _unregister_node(self, node: TreeNode) -> None:
+        """Remove a node and all its children from the lookup map."""
+        self._node_map.pop(node.id, None)
+        for child in node.children:
+            self._unregister_node(child)
+
     def _find_node(self, node_id: str) -> TreeNode | None:
-        """Find a node by ID, searching the entire tree recursively."""
-        return _find_node_recursive(self._root, node_id)
+        """Find a node by ID using the O(1) lookup map.
+
+        Falls back to recursive search if the node is not in the map
+        (e.g. during initial construction before registration).
+        """
+        node = self._node_map.get(node_id)
+        if node is not None:
+            return node
+        # Fallback — should not normally be needed.
+        result = _find_node_recursive(self._root, node_id)
+        if result is not None:
+            self._node_map[node_id] = result
+        return result
+
+    # ------------------------------------------------------------------
+    # Batch mode
+    # ------------------------------------------------------------------
+
+    def begin_batch(self) -> None:
+        """Enter batch mode — suppress _rebuild() and _schedule_scroll().
+
+        During batch mode, adding nodes and sections does not trigger
+        individual tree rebuilds or scroll events.  Call :meth:`end_batch`
+        to exit batch mode and perform a single rebuild + scroll.
+
+        This is used by :meth:`ChatManager._rebuild_display_from_sections`
+        to avoid O(N²) rebuild cost when replaying a full conversation.
+        """
+        self._batch_mode = True
+
+    def end_batch(self) -> None:
+        """Exit batch mode — perform a single rebuild and scroll.
+
+        Restores normal operation: subsequent add/update calls will
+        trigger individual rebuilds and scrolls as before.
+
+        Also clears section tracking dicts (``_section_widgets``,
+        ``_section_texts``, ``_section_types``) that were needed during
+        the batch rebuild but are no longer needed after finalization.
+        """
+        self._batch_mode = False
+        self._section_widgets = {}
+        self._section_texts = {}
+        self._section_types = {}
+        self._rebuild()
+        self._scroll_to_bottom()
+
+    def batch_finalize_turns(self) -> None:
+        """Finalize all completed assistant turns in batch mode.
+
+        During batch rebuild, :meth:`finalize_turn` is called per-turn
+        in :meth:`ChatManager._rebuild_display_from_sections`.  This method
+        provides a single-pass alternative that processes all turns at once,
+        removing empty sections, swapping Static → Markdown in the data
+        model, and preparing labels.
+
+        Must be called while in batch mode (between :meth:`begin_batch`
+        and :meth:`end_batch`).  After this, call :meth:`end_batch` to
+        trigger the final rebuild.
+
+        Note: This does NOT clear ``_section_widgets`` / ``_section_texts`` /
+        ``_section_types`` — those are cleared by :meth:`end_batch`.
+        """
+        # Find all assistant nodes that have sections to finalize.
+        for child in list(self._root.children):
+            if child.data and child.data.get("role") == "assistant":
+                self._finalize_assistant_node(child)
+
+        # Swap Static → Markdown in the data model (no DOM operations
+        # needed — the tree will be rebuilt by end_batch which mounts
+        # the correct widgets).
+        self._swap_sections_in_data_model()
+
+        # Mark active turn as done, but don't clear section tracking yet —
+        # end_batch clears them after the rebuild.
+        self._active_asst_id = None
+
+    def _swap_sections_in_data_model(self) -> None:
+        """Swap completed response/tools sections from Static → Markdown
+        in the tree data model only.
+
+        Unlike :meth:`_swap_sections_to_markdown`, this does not perform
+        any DOM operations.  It replaces the content widget on the tree
+        node so that when :meth:`end_batch` triggers a
+        :meth:`Tree.rebuild`, the new Markdown widgets are mounted
+        directly instead of Static widgets.
+
+        Thinking sections are left as Static — they don't benefit from
+        markdown rendering.
+        """
+        for section_id, section_type in self._section_types.items():
+            if section_type in _KEEP_STATIC_SECTIONS:
+                continue
+            widget = self._section_widgets.get(section_id)
+            if not isinstance(widget, Static):
+                continue
+            text = self._section_texts.get(section_id, "")
+            if not text:
+                continue
+
+            # Update the tree data model — replace the Static widget reference
+            # on the leaf node with a new Markdown widget.
+            section_branch = self._find_node(section_id)
+            if section_branch is not None and section_branch.children:
+                leaf = section_branch.children[0]
+                new_widget = Markdown(text, id=f"{widget.id}-rendered")
+                leaf.content = new_widget
+                # Also update the tracking dict so the tree mounts the
+                # correct widget during rebuild.
+                self._section_widgets[section_id] = new_widget
+
+            # Unmount the old Static widget if it's in the DOM.
+            # (During batch rebuild it may not be mounted yet.)
+            try:
+                if widget.parent is not None:
+                    widget.remove()
+            except Exception:
+                pass
+
+    def _finalize_assistant_node(self, asst_node: TreeNode) -> None:
+        """Finalize a single assistant node: remove empty sections,
+        update labels, and prepare for Static→Markdown swap.
+
+        This is the batch-mode equivalent of the removal + label update
+        parts of finalize_turn.  The Static→Markdown swap is done
+        separately in batch_finalize_turns via _swap_sections_to_markdown.
+        """
+        # Remove empty section children.
+        keep = [c for c in asst_node.children if not self._is_empty_section(c)]
+        if len(keep) != len(asst_node.children):
+            # Unregister removed nodes from the lookup map.
+            removed = [c for c in asst_node.children if c not in keep]
+            for node in removed:
+                self._unregister_node(node)
+            asst_node.children = keep
+
+        # Update collapsed label to show a preview of the response.
+        preview = self._turn_preview(asst_node)
+        if preview:
+            asst_node.label = f"\uf4ad  [green]Assistant:[/green] {preview}"
+
+    # ------------------------------------------------------------------
+    # Rebuild
+    # ------------------------------------------------------------------
 
     def _rebuild(self) -> None:
         """Rebuild the tree and restore expand/collapse state.
@@ -516,7 +708,12 @@ class ChatDisplay(Widget):
         Uses :meth:`Tree.restore_expand_state` so that branches the
         user has manually collapsed stay collapsed across rebuilds.
         New nodes are expanded by default.
+
+        During batch mode, this is a no-op — the rebuild is deferred
+        to :meth:`end_batch`.
         """
+        if self._batch_mode:
+            return
         tree = self.query_one(Tree)
         tree.rebuild()
         tree.restore_expand_state()
@@ -586,6 +783,7 @@ class ChatDisplay(Widget):
         asst_node = self._find_node(self._active_asst_id)
         if asst_node is not None:
             asst_node.children.append(branch)
+            self._register_node(branch)
 
         self._rebuild()
 
