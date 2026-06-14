@@ -120,6 +120,20 @@ class ChatDisplay(Widget):
         # to avoid O(N²) rebuilds during conversation restore.
         self._batch_mode: bool = False
 
+        # Coalesced scroll — during streaming, _schedule_scroll() is called
+        # on every update_section().  Without coalescing, each call creates
+        # a new timer.  With the _scroll_pending flag, only one timer exists
+        # at a time — new calls while a timer is pending are no-ops.
+        self._scroll_pending: bool = False
+
+        # Throttled rebuild — during streaming, structural additions
+        # (add_section, add_tool_call, begin_assistant_turn) each call
+        # _rebuild().  With the _rebuild_pending flag, rapid calls are
+        # coalesced into a single rebuild per frame.  The first call fires
+        # immediately; subsequent calls within the same frame are skipped.
+        # The flag is cleared after the rebuild completes.
+        self._rebuild_pending: bool = False
+
         # Node lookup map — provides O(1) lookups for _find_node() instead
         # of recursive tree walks.  Maintained in sync with the tree data
         # model by _register_node() and _unregister_node().
@@ -160,10 +174,22 @@ class ChatDisplay(Widget):
 
         During batch mode, scroll is suppressed — it will be triggered
         once by :meth:`end_batch`.
+
+        Uses coalescing — only one scroll timer exists at a time.  If a
+        scroll is already pending, this call is a no-op.  This avoids
+        creating ~20 redundant timers per second during fast streaming.
         """
         if self._batch_mode:
             return
-        self.set_timer(1 / 60, self._scroll_to_bottom)
+        if self._scroll_pending:
+            return
+        self._scroll_pending = True
+        self.set_timer(1 / 60, self._do_deferred_scroll)
+
+    def _do_deferred_scroll(self) -> None:
+        """Fire the deferred scroll and reset the pending flag."""
+        self._scroll_pending = False
+        self._scroll_to_bottom()
 
     # ------------------------------------------------------------------
     # User messages
@@ -379,7 +405,7 @@ class ChatDisplay(Widget):
                 for rm in removed:
                     self._unregister_node(rm)
                 node.children = keep
-                self._rebuild()
+                self._immediate_rebuild()
 
             # Swap response/tools sections from Static → Markdown.
             await self._swap_sections_to_markdown()
@@ -494,7 +520,9 @@ class ChatDisplay(Widget):
         self._node_map.clear()
         self._register_node(self._root)
         self._batch_mode = False
-        self._rebuild()
+        self._rebuild_pending = False
+        self._scroll_pending = False
+        self._immediate_rebuild()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -545,14 +573,31 @@ class ChatDisplay(Widget):
     # ------------------------------------------------------------------
 
     def _register_node(self, node: TreeNode) -> None:
-        """Register a node and all its children in the lookup map."""
+        """Register a node and all its children in the lookup map.
+
+        Also registers in the Tree's _node_map so that expand_node()
+        can find the node before the deferred rebuild fires.
+        """
         self._node_map[node.id] = node
+        try:
+            tree = self.query_one(Tree)
+            tree._node_map[node.id] = node
+        except Exception:
+            pass  # Tree not mounted yet — will be synced on rebuild
         for child in node.children:
             self._register_node(child)
 
     def _unregister_node(self, node: TreeNode) -> None:
-        """Remove a node and all its children from the lookup map."""
+        """Remove a node and all its children from the lookup map.
+
+        Also removes from the Tree's _node_map.
+        """
         self._node_map.pop(node.id, None)
+        try:
+            tree = self.query_one(Tree)
+            tree._node_map.pop(node.id, None)
+        except Exception:
+            pass
         for child in node.children:
             self._unregister_node(child)
 
@@ -598,10 +643,14 @@ class ChatDisplay(Widget):
         the batch rebuild but are no longer needed after finalization.
         """
         self._batch_mode = False
+        self._rebuild_pending = False
+        self._scroll_pending = False
         self._section_widgets = {}
         self._section_texts = {}
         self._section_types = {}
-        self._rebuild()
+        # Immediate rebuild — not throttled, since this is the final
+        # rebuild that renders the entire conversation.
+        self._immediate_rebuild()
         self._scroll_to_bottom()
 
     def batch_finalize_turns(self) -> None:
@@ -703,17 +752,53 @@ class ChatDisplay(Widget):
     # ------------------------------------------------------------------
 
     def _rebuild(self) -> None:
-        """Rebuild the tree and restore expand/collapse state.
+        """Rebuild the tree with throttling for streaming performance.
 
-        Uses :meth:`Tree.restore_expand_state` so that branches the
-        user has manually collapsed stay collapsed across rebuilds.
-        New nodes are expanded by default.
+        During streaming, multiple structural additions can happen in
+        quick succession (e.g. add_section + add_tool_call).  Throttling
+        coalesces rapid _rebuild() calls into a single rebuild per frame.
+
+        The first call schedules a rebuild via ``set_timer(0, ...)``;
+        subsequent calls within the same frame are skipped.  When the
+        timer fires, :meth:`_do_deferred_rebuild` resets the pending
+        flag and performs the rebuild.
+
+        For immediate, non-throttled rebuilds (e.g. in :meth:`clear`
+        or :meth:`end_batch`), use :meth:`_immediate_rebuild` instead.
 
         During batch mode, this is a no-op — the rebuild is deferred
         to :meth:`end_batch`.
         """
         if self._batch_mode:
             return
+        if self._rebuild_pending:
+            return
+        self._rebuild_pending = True
+        self.set_timer(1 / 60, self._do_deferred_rebuild)
+
+    def _do_deferred_rebuild(self) -> None:
+        """Fire the deferred rebuild and reset the pending flag.
+
+        During streaming, this is a lightweight rebuild that doesn't
+        call restore_expand_state() — each add method handles targeted
+        expand of the new node.  Full restore_expand_state() is only
+        needed during batch rebuild (end_batch).
+        """
+        self._rebuild_pending = False
+        tree = self.query_one(Tree)
+        tree.rebuild()
+        # Note: no restore_expand_state() here.  Each add method
+        # does targeted expand_node() for the new node, so we don't
+        # need the O(n) walk.  Visibility is already refreshed by
+        # tree.rebuild().
+
+    def _immediate_rebuild(self) -> None:
+        """Immediate, non-throttled rebuild with full expand state restore.
+
+        Used by :meth:`clear` and :meth:`end_batch` where we need the
+        rebuild to happen right away and want full expand state restoration.
+        """
+        self._rebuild_pending = False
         tree = self.query_one(Tree)
         tree.rebuild()
         tree.restore_expand_state()
