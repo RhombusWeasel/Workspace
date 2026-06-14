@@ -1,17 +1,12 @@
-"""Chat manager — orchestrates streaming chat between input, display, agent, and database.
+"""Chat manager -- orchestrates streaming chat between input, display, agent, and database.
 
 Composes a :class:`~ui.chat.chat_input.ChatInput` and
 :class:`~ui.chat.chat_display.ChatDisplay`, catching ``ChatSubmitted``
-messages and driving the full streaming cycle through an LLM agent.
+messages and driving the streaming cycle through an LLM agent.
 
 Supports aborting an in-progress stream via the abort button or
 ``Escape`` key.  When aborted, the partial response is preserved
 in the display and database.
-
-Section management is delegated to :class:`~ui.chat.stream_section.StreamSection`
-instances — one per display section (thinking, tool_call, response).
-The manager creates a new section each time the stream transitions
-to a different chunk type.
 """
 
 from __future__ import annotations
@@ -29,7 +24,6 @@ from skills.chat.chat_input import ChatInput, ChatTextArea
 from skills.chat.chat_display import ChatDisplay
 from skills.chat.command_palette import CommandPalette
 from skills.chat.file_palette import FilePalette
-from skills.chat.stream_section import StreamSection
 from skills.chat.tool_format import format_tool_call_json
 # TODO: Re-implement revert buttons for Collapsible architecture
 
@@ -38,9 +32,9 @@ class ChatManager(Widget):
     """Orchestrates a streaming conversation.
 
     Composes a ``ChatInput`` and ``ChatDisplay``.  Listens for
-    ``ChatInput.ChatSubmitted``, runs the agent streaming loop, updates
-    the display via :class:`StreamSection` watchers, and persists each
-    section to the database as it completes.
+    ``ChatInput.ChatSubmitted``, starts the LLM stream through
+    :class:`~core.stream_manager.StreamManager`, polls the database for
+    updates, and renders them in the display.
 
     State persistence: The ``_state`` attribute holds a reference to the
     tab's :class:`~skills.chat.chat_tab.ChatTabState`.  When the
@@ -68,11 +62,20 @@ class ChatManager(Widget):
         self._tools: list[dict[str, Any]] | None = None
         self._history: list[dict[str, Any]] = []
         self._sections: list[dict[str, str]] = []
-        """In-memory mirror of flat sections — used to build history when
+        """In-memory mirror of flat sections -- used to build history when
         there is no database, and kept in sync for consistency."""
         self._db: Any = None
         self._chat_id: str | None = None
+        self._stream_id: str | None = None
+        """UUID of the active stream in StreamManager.
+
+        When streaming is active, this references a stream in the
+        StreamManager.  On workspace recomposition, the stream continues
+        running in StreamManager and the fresh ChatManager re-subscribes
+        using this ID.  None when not streaming.
+        """
         self._streaming_task: asyncio.Task | None = None
+        """Background worker that polls the DB while a stream is active."""
         self._state: Any = None
         self._turn_checkpoint_tags: dict[str, str] = {}
         """Map of turn_id to checkpoint tag for revert support.
@@ -127,14 +130,85 @@ class ChatManager(Widget):
                 self.app.context.working_directory
             )
 
-        # If state was restored, rebuild the visual display asynchronously.
-        # The rebuild needs to await Markdown.update() calls, so it runs
-        # as a background worker.
+        # If state was restored, rebuild the visual display and resume
+        # polling any active stream.
         if self._state is not None and self._sections:
-            self.run_worker(self._rebuild_display_from_sections())
-        elif self._state is None or not self._sections:
-            # Fresh chat tab — show system prompt if configured.
+            self.run_worker(self._rebuild_and_maybe_resume())
+        elif self._state is not None and getattr(self._state, "_stream_id", None):
+            self.run_worker(self._resume_stream(self._state._stream_id))
+        else:
             self._maybe_show_system_prompt()
+
+    def _resume_stream(self, stream_id: str) -> None:
+        """Resume polling an active stream after workspace recomposition.
+
+        The stream task continues writing to the DB.  The new widget just
+        needs to start polling the same chat_id.
+        """
+        ctx = self._get_context()
+        if ctx is None or ctx.stream_manager is None:
+            return
+        if not ctx.stream_manager.has_stream(stream_id):
+            self._streaming = False
+            self._stream_id = None
+            if self._state is not None:
+                self._state._stream_id = None
+            self._chat_input.set_streaming(False)
+            return
+
+        self._chat_input.set_streaming(True)
+        self._streaming = True
+        self._streaming_task = self.run_worker(self._poll_stream(stream_id))
+
+    def on_unmount(self) -> None:
+        """Detach display when the widget is removed from the DOM.
+
+        Called when the workspace is recomposed (split/close) or when
+        the chat tab is closed.  Marks the display as detached so
+        in-flight streaming updates bail out, but does NOT cancel the
+        stream -- the stream continues running in StreamManager and
+        the new ChatManager will re-subscribe after recomposition.
+
+        The stream is only cancelled when the tab is permanently
+        closed (via ChatTabState.dispose()).
+        """
+        self._detach_display()
+
+    def on_remove(self) -> None:
+        """Detach display when the widget is removed (belt-and-suspenders).
+
+        Same as on_unmount -- detach display but don't cancel the stream.
+        """
+        self._detach_display()
+
+    def _detach_display(self) -> None:
+        """Mark the display as detached and stop the local polling worker.
+
+        The stream itself continues in StreamManager.  Only the local
+        polling worker and the display reference are cleaned up.
+        """
+        if hasattr(self, '_chat_display') and self._chat_display is not None:
+            self._chat_display._detached = True
+        if self._streaming_task is not None and not self._streaming_task.is_finished:
+            self._streaming_task.cancel()
+
+    def _cancel_streaming(self) -> None:
+        """Cancel the stream entirely -- only used for user-initiated abort.
+
+        Unlike _detach_display(), this cancels the stream in StreamManager
+        so the LLM agent is aborted and the background task is cleaned up.
+        Used when the user explicitly aborts a response.
+        """
+        if self._stream_id is not None:
+            ctx = self._get_context()
+            if ctx and ctx.stream_manager:
+                ctx.stream_manager.cancel(self._stream_id)
+            self._stream_id = None
+        if self._streaming_task is not None and not self._streaming_task.is_finished:
+            self._streaming_task.cancel()
+        self._streaming = False
+        if hasattr(self, '_chat_display') and self._chat_display is not None:
+            self._chat_display._detached = True
 
     def focus(self) -> None:
         """Focus the chat input.
@@ -144,6 +218,12 @@ class ChatManager(Widget):
         the first focusable widget (e.g. a Tree inside ChatDisplay).
         """
         self._chat_input.focus()
+
+    def _get_context(self) -> Any:
+        """Return the AppContext, or None if not available."""
+        if hasattr(self.app, 'context') and self.app.context is not None:
+            return self.app.context
+        return None
 
     # ------------------------------------------------------------------
     # State persistence (survives workspace recomposition)
@@ -164,6 +244,11 @@ class ChatManager(Widget):
         self._db = state._db
         self._chat_id = state._chat_id
         self._turn_checkpoint_tags = getattr(state, '_turn_checkpoint_tags', {})
+        # Stream ID is adopted here so on_mount can re-subscribe.
+        self._stream_id = getattr(state, '_stream_id', None)
+        # If we have a stream ID, we're mid-stream -- set the flag.
+        if self._stream_id is not None:
+            self._streaming = True
 
     def flush_state(self) -> None:
         """Sync current widget state back to the ChatTabState.
@@ -172,6 +257,9 @@ class ChatManager(Widget):
         recomposition.  Copies the widget's internal state into the
         persistent state object so the fresh widget can restore it
         after the rebuild.
+
+        The stream ID is persisted so the new ChatManager can
+        re-subscribe to the active stream in StreamManager.
         """
         if self._state is not None:
             self._state._history = self._history
@@ -181,101 +269,110 @@ class ChatManager(Widget):
             self._state._db = self._db
             self._state._chat_id = self._chat_id
             self._state._turn_checkpoint_tags = self._turn_checkpoint_tags
+            # Persist the stream ID so the new widget can re-subscribe.
+            self._state._stream_id = self._stream_id
 
-    async def _rebuild_display_from_sections(self) -> None:
-        """Reconstruct the chat display from persisted sections.
-
-        Groups sections by turn_id and replays them into the ChatDisplay
-        so the user sees their conversation restored after a workspace
-        recomposition (split / close).
-
-        Uses batch mode to avoid O(N²) rebuild cost — instead of
-        triggering a tree rebuild on every add operation, we enter batch
-        mode, replay all sections, finalize all turns in a single pass,
-        then exit batch mode to trigger a single tree rebuild.
-
-        This method is async because it needs to await Markdown.update()
-        calls to properly render section content.  It is scheduled as a
-        background worker from on_mount().
-        """
-        if not self._sections:
+    async def _resume_stream(self, stream_id: str) -> None:
+        """Resume polling an active stream after workspace recomposition."""
+        ctx = self._get_context()
+        if ctx is None or ctx.stream_manager is None:
+            return
+        if not ctx.stream_manager.has_stream(stream_id):
+            self._streaming = False
+            self._stream_id = None
+            if self._state is not None:
+                self._state._stream_id = None
+            self._chat_input.set_streaming(False)
             return
 
-        import json as _json
+        self._chat_input.set_streaming(True)
+        self._streaming = True
+        self._streaming_task = self.run_worker(self._poll_stream(stream_id))
 
-        # Group sections by turn_id, preserving order of first appearance.
-        turn_order: list[str] = []
-        turns: dict[str, list[dict]] = {}
-        for sec in self._sections:
-            tid = sec["turn_id"]
-            if tid not in turns:
-                turn_order.append(tid)
-                turns[tid] = []
-            turns[tid].append(sec)
+    async def _rebuild_and_maybe_resume(self) -> None:
+        """Rebuild the display from persisted sections and resume polling.
 
-        # Enter batch mode — suppress individual rebuilds and scrolls.
-        # We'll do a single rebuild at the end after all sections are added.
-        self._chat_display.begin_batch()
+        Uses ``refresh_from_sections`` — the same method that drives the
+        display during streaming — so history loading follows the exact
+        same code path that is already proven to work.
+        """
+        # Prefer DB sections (fresh, includes section_id) over in-memory
+        # sections (may lack section_id from older conversations).
+        sections = None
+        if self._db is not None and self._chat_id is not None:
+            try:
+                sections = self._db.load_sections(self._chat_id)
+            except Exception:
+                pass  # Fall back to in-memory sections.
+
+        if sections is None:
+            # Fallback to in-memory sections (from ChatTabState).
+            sections = self._sections
+
+        if not sections:
+            return
 
         try:
-            for tid in turn_order:
-                sections = turns[tid]
-                assistant_started = False
-                for sec in sections:
-                    ct = sec["content_type"]
-                    content = sec["content"]
-
-                    if ct == "user":
-                        self._chat_display.add_user_message(content)
-                    elif ct == "system":
-                        self._chat_display.add_system_message(content)
-                    elif ct == "thinking":
-                        if not assistant_started:
-                            self._chat_display.begin_assistant_turn()
-                            assistant_started = True
-                        section_id = self._chat_display.add_section("thinking")
-                        await self._chat_display.update_section(section_id, content)
-                    elif ct == "response":
-                        if not assistant_started:
-                            self._chat_display.begin_assistant_turn()
-                            assistant_started = True
-                        section_id = self._chat_display.add_section("response")
-                        await self._chat_display.update_section(section_id, content)
-                    elif ct == "tool_call":
-                        if not assistant_started:
-                            self._chat_display.begin_assistant_turn()
-                            assistant_started = True
-                        # Add tool calls one at a time, in their original
-                        # order, so that branches appear in the same
-                        # sequence as they were created during streaming.
-                        try:
-                            tc_data = _json.loads(content)
-                            tc_id = self._chat_display.add_tool_call(
-                                tc_data["name"],
-                                tc_data["arguments"],
-                            )
-                            # If the persisted JSON includes a result, display it.
-                            if "result" in tc_data and tc_data["result"]:
-                                self._chat_display.add_tool_result(
-                                    tc_id, tc_data["result"]
-                                )
-                        except (_json.JSONDecodeError, KeyError):
-                            self._chat_display.add_tool_call(
-                                "unknown",
-                                {"raw": content},
-                            )
-
-            # Finalize all assistant turns in a single pass — removes
-            # empty sections, updates labels, and swaps Static → Markdown.
-            self._chat_display.batch_finalize_turns()
-
-        finally:
-            # Exit batch mode — single rebuild + scroll.
-            self._chat_display.end_batch()
+            await self._chat_display.refresh_from_sections(sections, finalize=True)
+        except Exception:
+            # Show user-visible feedback so empty display isn't silently confusing.
+            if self.is_mounted and not self._chat_display._detached:
+                try:
+                    self._chat_display.add_system_message(
+                        "⚠ Failed to load conversation history. "
+                        "Check the logs for details."
+                    )
+                except Exception:
+                    pass  # Best-effort — don't crash for a display error.
 
         # Re-attach revert buttons to completed user message nodes that
         # have checkpoint tags from a previous session.
         self._attach_revert_buttons()
+
+        if self._state is not None and getattr(self._state, '_stream_id', None):
+            await self._resume_stream(self._state._stream_id)
+
+    async def _resume_stream(self, stream_id: str) -> None:
+        """Re-subscribe to an active stream after workspace recomposition.
+
+        Called from ``on_mount()`` when the ChatTabState carries a
+        ``_stream_id``, indicating that streaming was in progress when
+        the workspace was recomposed.
+
+        The display has already been rebuilt from persisted sections by
+        ``_rebuild_and_maybe_resume()``.  This method re-subscribes
+        to the StreamManager stream and processes only NEW chunks that
+        arrive after the rebuild.
+
+        All previously-persisted content is already on the display, so
+        we skip the buffered chunks (they correspond to already-
+        persisted sections) and only process chunks arriving after
+        subscription.
+        """
+        ctx = self._get_context()
+        if ctx is None or ctx.stream_manager is None:
+            return
+
+        sm = ctx.stream_manager
+        if not sm.has_stream(stream_id):
+            # Stream already finished or was cancelled during recomposition.
+            self._streaming = False
+            self._stream_id = None
+            if self._state is not None:
+                self._state._stream_id = None
+            self._chat_input.set_streaming(False)
+            return
+
+        # Re-enter streaming mode on the display.
+        self._chat_input.set_streaming(True)
+        self._streaming = True
+
+        # Process chunks from the StreamManager -- resume mode means
+        # we skip all buffered chunks (already displayed via rebuild)
+        # and only process new chunks arriving after subscription.
+        self._streaming_task = self.run_worker(
+            self._process_stream_chunks(stream_id, resume=True)
+        )
 
     # ------------------------------------------------------------------
     # Setup
@@ -295,7 +392,7 @@ class ChatManager(Widget):
         If no agent was explicitly set, this creates a default agent
         using the provider and agent registries.
 
-        The database chat row is **not** created here — it is created
+        The database chat row is **not** created here -- it is created
         lazily on first persist so that opening a tab without sending
         a message does not leave an empty conversation in the DB.
         """
@@ -310,7 +407,7 @@ class ChatManager(Widget):
         Like :meth:`wire_from_context`, but forces the use of the named
         agent instead of the session default.
 
-        The database chat row is **not** created here — it is created
+        The database chat row is **not** created here -- it is created
         lazily on first persist so that opening a tab without sending
         a message does not leave an empty conversation in the DB.
         """
@@ -329,7 +426,7 @@ class ChatManager(Widget):
         if ctx.agents is not None:
             agent_def = ctx.agents.get_agent(agent_id)
 
-        # Resolve the provider — agent may specify a named provider instance.
+        # Resolve the provider -- agent may specify a named provider instance.
         if ctx.providers is not None:
             if agent_def and agent_def.get("provider"):
                 try:
@@ -350,7 +447,7 @@ class ChatManager(Widget):
         else:
             system_prompt = "You are a helpful AI coding assistant."
 
-        # Determine the model — agent definition may specify an override.
+        # Determine the model -- agent definition may specify an override.
         model = ""
         if agent_def and ctx.agents is not None:
             model = ctx.agents.resolve_model(agent_def, ctx)
@@ -358,7 +455,7 @@ class ChatManager(Widget):
             provider_name = ctx.config.get("session.provider", "ollama")
             model = ctx.config.get(f"providers.{provider_name}.model", "")
 
-        # Resolve tools — agent may specify a subset.
+        # Resolve tools -- agent may specify a subset.
         tool_filter = None
         if agent_def and ctx.agents is not None:
             tool_filter = ctx.agents.resolve_tools(agent_def)
@@ -368,7 +465,7 @@ class ChatManager(Widget):
         else:
             tools = get_tools()
 
-        # Resolve max_tool_iterations — agent may override the session default.
+        # Resolve max_tool_iterations -- agent may override the session default.
         max_tool_iterations = ctx.config.get("session.max_tool_calls", 10)
         if agent_def and ctx.agents is not None:
             mt = ctx.agents.resolve_max_tool_iterations(agent_def)
@@ -380,7 +477,7 @@ class ChatManager(Widget):
         if agent_def and ctx.agents is not None:
             skill_names = ctx.agents.resolve_skills(agent_def)
             if skill_names is not None and ctx.skills is not None:
-                # Agent wants specific skills — build XML for just those.
+                # Agent wants specific skills -- build XML for just those.
                 skills_xml = ctx.skills.render_selected(skill_names)
 
         agent = Agent(
@@ -401,7 +498,7 @@ class ChatManager(Widget):
     def on_command_palette_command_selected(
         self, event: CommandPalette.CommandSelected
     ) -> None:
-        """Handle selection from the command palette — fill the input."""
+        """Handle selection from the command palette -- fill the input."""
         event.stop()
         self._chat_input.palette.hide()
         # Suppress the on_text_area_changed that setting text triggers,
@@ -418,7 +515,7 @@ class ChatManager(Widget):
     def on_file_palette_file_selected(
         self, event: FilePalette.FileSelected
     ) -> None:
-        """Handle selection from the file palette — insert the file path."""
+        """Handle selection from the file palette -- insert the file path."""
         event.stop()
         self._chat_input.file_palette.hide()
         ta = self._chat_input.query_one(ChatTextArea)
@@ -446,7 +543,7 @@ class ChatManager(Widget):
     # ------------------------------------------------------------------
 
     def on_chat_input_chat_submitted(self, event: ChatInput.ChatSubmitted) -> None:
-        """Handle a user submission — detect slash commands or kick off streaming."""
+        """Handle a user submission -- detect slash commands or kick off streaming."""
         event.stop()
         text = event.text
 
@@ -462,18 +559,20 @@ class ChatManager(Widget):
     def on_chat_input_chat_abort_requested(
         self, event: ChatInput.ChatAbortRequested
     ) -> None:
-        """Handle abort request — cancel the streaming task."""
+        """Handle abort request -- cancel the stream via StreamManager."""
         event.stop()
-        if self._streaming_task is not None and not self._streaming_task.is_finished:
-            self._agent.abort()
-            self._streaming_task.cancel()
+        self._cancel_streaming()
+
+    # ------------------------------------------------------------------
+    # Streaming turn
+    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Streaming turn
     # ------------------------------------------------------------------
 
     async def _handle_submit(self, user_text: str) -> None:
-        """Full streaming turn: display user msg, stream assistant, save."""
+        """Full streaming turn: display user msg, start LLM stream, poll DB."""
         turn_id = uuid.uuid4().hex
 
         # Create a git checkpoint before processing the user message.
@@ -483,18 +582,14 @@ class ChatManager(Widget):
         self._chat_display.add_user_message(user_text)
         self._persist_section(turn_id, "user", user_text)
 
-        # Assistant branch (no sections yet — added on demand).
-        self._chat_display.begin_assistant_turn()
-
-        # New rows were mounted synchronously; yield to the event loop
-        # so the assistant branch finishes its mount lifecycle before we
-        # add sections to it.
+        # Assistant branch -- StreamManager will write sections here.
+        self._chat_display.begin_assistant_turn(turn_id=turn_id)
         self.refresh(layout=True)
         await asyncio.sleep(0)
 
         if self._agent is None:
-            section = StreamSection(self._chat_display, "response")
-            await section.replace("No agent configured.")
+            error_section_id = self._chat_display.add_section("response")
+            await self._chat_display.update_section(error_section_id, "No agent configured.")
             await self._chat_display.finalize_turn()
             self._chat_input.focus()
             return
@@ -503,146 +598,110 @@ class ChatManager(Widget):
         self._chat_input.set_streaming(True)
         self._streaming = True
 
-        watcher: StreamSection | None = None
-        pending_tool_results: dict[str, Any] = {}
+        # Ensure a chat row exists so StreamManager has a chat_id to write to.
+        if self._db is not None and self._chat_id is None:
+            self._chat_id = self._db.create_chat()
 
-        try:
-            async for chunk in self._agent.stream_chat(
+        ctx = self._get_context()
+        stream_manager = ctx.stream_manager if ctx and ctx.stream_manager else None
+
+        if stream_manager is not None:
+            self._stream_id = stream_manager.start(
+                self._agent,
                 self._history,
                 user_text,
                 tools=self._tools,
-            ):
-                # --- Thinking ---
-                if chunk.thinking:
-                    if watcher is None or watcher.section_type != "thinking":
-                        # Close previous section and persist its text.
-                        if watcher is not None:
-                            await watcher.flush()
-                            self._persist_section(
-                                turn_id, watcher.section_type, watcher.text
-                            )
-                        watcher = StreamSection(self._chat_display, "thinking")
-                    await watcher.append(chunk.thinking)
+                db=self._db,
+                chat_id=self._chat_id,
+                turn_id=turn_id,
+            )
+            await self._poll_stream(self._stream_id)
+        else:
+            # Fallback when no StreamManager is available.
+            await self._process_stream_direct(turn_id, user_text)
 
-                # --- Tool calls ---
-                if chunk.tool_calls:
-                    # Close previous section and persist its text.
-                    if watcher is not None:
-                        await watcher.flush()
-                        self._persist_section(
-                            turn_id, watcher.section_type, watcher.text
-                        )
-                        watcher = None
+    async def _poll_stream(self, stream_id: str) -> None:
+        """Poll the DB while a stream is running and refresh the display.
 
-                    # Create individual tool call branches directly under the assistant turn.
-                    for tc in chunk.tool_calls:
-                        tc_id = self._chat_display.add_tool_call(
-                            tc.name, tc.arguments,
-                        )
-                        # Persist each tool call as a separate row (structured JSON).
-                        self._persist_section(
-                            turn_id,
-                            "tool_call",
-                            format_tool_call_json(tc.name, tc.arguments),
-                        )
-                        # Track tc_id → tool call for result correlation.
-                        pending_tool_results[tc_id] = tc
-                    # No StreamSection for tool calls — they are
-                    # discrete display events, not streamed content.
-                    watcher = None
+        The stream task writes chunks directly to the database.  This
+        loop simply loads the latest sections and asks ChatDisplay to
+        render them.  When the stream finishes, the final refresh finalises
+        the assistant turn.
+        """
+        ctx = self._get_context()
+        if ctx is None or ctx.stream_manager is None:
+            return
 
-                # --- Tool results ---
-                if chunk.tool_results:
-                    # Match results to pending tool calls by tool call ID.
-                    for tc_id, tc in pending_tool_results.items():
-                        result = chunk.tool_results.get(tc.id, "")
-                        if result:
-                            self._chat_display.add_tool_result(tc_id, result)
-                            # Update the persisted JSON to include the result.
-                            self._update_tool_result(
-                                turn_id, tc.name, tc.arguments, result
-                            )
-                    pending_tool_results.clear()
+        sm = ctx.stream_manager
+        poll_interval = 0.25
 
-                # --- Response text ---
-                if chunk.content:
-                    if watcher is None or watcher.section_type != "response":
-                        # Close previous section and persist its text.
-                        if watcher is not None:
-                            await watcher.flush()
-                            self._persist_section(
-                                turn_id, watcher.section_type, watcher.text
-                            )
-                        watcher = StreamSection(self._chat_display, "response")
-                    await watcher.append(chunk.content)
+        try:
+            while sm.has_stream(stream_id):
+                if not self.is_mounted or self._chat_display._detached:
+                    break
 
-                # --- Token usage (on done chunk) ---
-                if chunk.done and chunk.usage:
-                    model_name = getattr(self._agent, "_model", "")
-                    self._chat_input.update_context_progress(
-                        model_name,
-                        chunk.usage.total_tokens,
-                        chunk.usage.context_length,
-                    )
+                if self._db is not None and self._chat_id is not None:
+                    try:
+                        sections = self._db.load_sections(self._chat_id)
+                        await self._chat_display.refresh_from_sections(sections)
+                    except Exception:
+                        pass
 
-                # --- Scroll on stream completion ---
-                if chunk.done:
-                    self._chat_display._schedule_scroll()
+                await asyncio.sleep(poll_interval)
 
         except asyncio.CancelledError:
-            # Aborted — persist whatever we have so far.
-            if watcher is not None:
-                replacement = await watcher.mark_aborted()
-                self._persist_section(
-                    turn_id, watcher.section_type, watcher.text
-                )
-                if replacement is not None:
-                    await replacement.flush()
-                    watcher = replacement
-                    self._persist_section(
-                        turn_id, watcher.section_type, watcher.text
+            pass
+
+        # Final refresh after stream completes or is cancelled.
+        if self.is_mounted and not self._chat_display._detached:
+            if self._db is not None and self._chat_id is not None:
+                try:
+                    sections = self._db.load_sections(self._chat_id)
+                    await self._chat_display.refresh_from_sections(
+                        sections, finalize=True
                     )
-            else:
-                watcher = StreamSection(self._chat_display, "response")
-                await watcher.replace("*[aborted]*")
-                self._persist_section(turn_id, "response", watcher.text)
+                    # Refresh in-memory sections and history from DB.
+                    self._sections = [
+                        {
+                            "turn_id": s["turn_id"],
+                            "content_type": s["content_type"],
+                            "content": s["content"],
+                        }
+                        for s in sections
+                    ]
+                    self._rebuild_history()
+                except Exception:
+                    pass
 
-        except Exception as exc:
-            if watcher is None or watcher.section_type != "response":
-                if watcher is not None:
-                    await watcher.flush()
-                    self._persist_section(
-                        turn_id, watcher.section_type, watcher.text
-                    )
-                watcher = StreamSection(self._chat_display, "response")
-            await watcher.replace(f"Error: {exc}")
-            self._persist_section(turn_id, watcher.section_type, watcher.text)
-
-        else:
-            # Normal completion — persist the final section.
-            if watcher is not None:
-                await watcher.flush()
-                self._persist_section(
-                    turn_id, watcher.section_type, watcher.text
-                )
-
-        # Rebuild in-memory history from the database so it's always
-        # consistent with what was persisted.
-        self._rebuild_history()
+        # Update context usage bar with token counts from the completed stream.
+        usage_chunk = sm.get_usage(stream_id)
+        if usage_chunk is not None and usage_chunk.usage is not None:
+            model_name = getattr(self._agent, "_model", "")
+            self._chat_input.update_context_progress(
+                model_name,
+                usage_chunk.usage.total_tokens,
+                usage_chunk.usage.context_length,
+            )
 
         # Exit streaming mode.
+        self._streaming = False
+        self._stream_id = None
+        if self._state is not None:
+            self._state._stream_id = None
+        if self.is_mounted and not self._chat_display._detached:
+            self._chat_input.set_streaming(False)
+            self._chat_input.focus()
+            self._attach_revert_buttons()
+
+    async def _process_stream_direct(self, turn_id: str, user_text: str) -> None:
+        """Fallback when StreamManager is unavailable."""
+        # StreamManager is created by bootstrap and should always be present.
+        error_id = self._chat_display.add_section("response")
+        await self._chat_display.update_section(error_id, "StreamManager not available.")
+        await self._chat_display.finalize_turn()
         self._chat_input.set_streaming(False)
         self._streaming = False
-        await self._chat_display.finalize_turn()
         self._chat_input.focus()
-
-        # After the turn is finalized, attach revert buttons to completed
-        # user message branches that have checkpoint tags.
-        self._attach_revert_buttons()
-
-    # ------------------------------------------------------------------
-    # Slash command dispatch
-    # ------------------------------------------------------------------
 
     async def _handle_command(self, text: str) -> None:
         """Parse a slash command from *text* and execute it.
@@ -654,7 +713,7 @@ class ChatManager(Widget):
         without_slash = text[1:]
         parts = without_slash.split(None, 1)
         if not parts:
-            # Bare / with no command name — ignore.
+            # Bare / with no command name -- ignore.
             self._chat_display.add_system_message(
                 "Type / followed by a command name."
             )
@@ -668,7 +727,7 @@ class ChatManager(Widget):
 
         try:
             result = await execute_command(command_name, self.app, command_args)
-            # Command succeeded — show the result as a system message.
+            # Command succeeded -- show the result as a system message.
             result_text = str(result) if result is not None else ""
             if result_text:
                 self._chat_display.add_system_message(result_text)
@@ -708,7 +767,7 @@ class ChatManager(Widget):
         if self._db is None:
             return
 
-        # Lazy chat creation — only write to the DB when there's
+        # Lazy chat creation -- only write to the DB when there's
         # actual content to persist.
         if self._chat_id is None:
             self._chat_id = self._db.create_chat()
@@ -718,7 +777,7 @@ class ChatManager(Widget):
                 self._chat_id, turn_id, content_type, content
             )
         except Exception:
-            pass  # Best-effort — don't crash the stream for a DB error.
+            pass  # Best-effort -- don't crash the stream for a DB error.
 
     def _update_tool_result(
         self,
@@ -736,7 +795,7 @@ class ChatManager(Widget):
         import json as _json
         updated_json = format_tool_call_json(name, arguments, result=result)
 
-        # Update the in-memory section list — find the matching tool_call
+        # Update the in-memory section list -- find the matching tool_call
         # row by turn_id and tool name.
         for sec in self._sections:
             if (
@@ -758,7 +817,7 @@ class ChatManager(Widget):
                     self._chat_id, turn_id, name, updated_json
                 )
             except Exception:
-                pass  # Best-effort — don't crash the stream for a DB error.
+                pass  # Best-effort -- don't crash the stream for a DB error.
 
     def _rebuild_history(self) -> None:
         """Rebuild in-memory LLM history from persisted or in-memory sections.
@@ -775,7 +834,7 @@ class ChatManager(Widget):
             except Exception:
                 pass
 
-        # No database (or DB error) — reconstruct from in-memory sections.
+        # No database (or DB error) -- reconstruct from in-memory sections.
         self._history = self._reconstruct_from_sections(self._sections)
 
     @staticmethod
@@ -866,7 +925,7 @@ class ChatManager(Widget):
                         self._turn_checkpoint_tags[turn_id] = tag
                         return tag
         except Exception:
-            pass  # Best-effort — no checkpoint if git is unavailable.
+            pass  # Best-effort -- no checkpoint if git is unavailable.
         return None
 
     def _attach_revert_buttons(self) -> None:
@@ -961,7 +1020,7 @@ class ChatManager(Widget):
     def new_conversation(self) -> None:
         """Start a fresh conversation: clear display, reset history.
 
-        The database chat row is **not** created eagerly — it will be
+        The database chat row is **not** created eagerly -- it will be
         created lazily on the first ``_persist_section()`` call, so that
         starting a new conversation without sending a message does not
         leave an empty row in the database.

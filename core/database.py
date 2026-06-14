@@ -1,4 +1,4 @@
-"""Database — SQLite-backed persistence for chats, messages, agent definitions, todos, and
+"""Database -- SQLite-backed persistence for chats, messages, agent definitions, todos, and
 input history.
 
 Includes a ``BaseDBProvider`` abstract class so alternative backends can
@@ -46,7 +46,7 @@ class BaseDBProvider(ABC):
 
 
 class SQLiteProvider(BaseDBProvider):
-    """SQLite backend — the only bundled provider."""
+    """SQLite backend -- the only bundled provider."""
 
     def __init__(self) -> None:
         self._conn: sqlite3.Connection | None = None
@@ -103,7 +103,7 @@ class SQLiteProvider(BaseDBProvider):
             return
 
         if "system_prompt" in columns:
-            # Old schema detected — rename to agents_legacy.
+            # Old schema detected -- rename to agents_legacy.
             try:
                 self._conn.execute("DROP TABLE IF EXISTS agents_legacy")
                 self._conn.execute("ALTER TABLE agents RENAME TO agents_legacy")
@@ -133,6 +133,7 @@ class SQLiteProvider(BaseDBProvider):
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id      TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
                 turn_id      TEXT NOT NULL,
+                section_id   TEXT NOT NULL DEFAULT '',
                 content_type TEXT NOT NULL,
                 content      TEXT NOT NULL DEFAULT '',
                 created_at   TEXT NOT NULL
@@ -140,6 +141,9 @@ class SQLiteProvider(BaseDBProvider):
 
             CREATE INDEX IF NOT EXISTS idx_messages_chat
                 ON messages(chat_id, id);
+
+            CREATE INDEX IF NOT EXISTS idx_messages_section
+                ON messages(chat_id, turn_id, section_id);
 
             CREATE TABLE IF NOT EXISTS agents (
                 id                  TEXT PRIMARY KEY,
@@ -183,7 +187,7 @@ class SQLiteProvider(BaseDBProvider):
 
 
 # ---------------------------------------------------------------------------
-# DatabaseManager — public API
+# DatabaseManager -- public API
 # ---------------------------------------------------------------------------
 
 
@@ -253,6 +257,7 @@ class DatabaseManager:
         turn_id: str,
         content_type: str,
         content: str,
+        section_id: str = "",
     ) -> int:
         """Insert a single message section row.
 
@@ -272,23 +277,74 @@ class DatabaseManager:
         content:
             Text for this section.  For ``tool_call`` rows this is a
             JSON-encoded dict ``{"name": ..., "arguments": ...}``.
+        section_id:
+            Optional stable identifier for a streaming section so it
+            can be updated in place.  Empty for one-shot sections.
         """
         cur = self._provider.conn.execute(
-            "INSERT INTO messages (chat_id, turn_id, content_type, content, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (chat_id, turn_id, content_type, content, _now()),
+            "INSERT INTO messages (chat_id, turn_id, section_id, content_type, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (chat_id, turn_id, section_id, content_type, content, _now()),
         )
         self._provider.conn.commit()
         return cur.lastrowid
+
+    def upsert_streaming_section(
+        self,
+        chat_id: str,
+        turn_id: str,
+        section_id: str,
+        content_type: str,
+        content: str,
+    ) -> int:
+        """Update an in-progress streaming section, or insert it if absent.
+
+        The same ``section_id`` within a ``chat_id``/``turn_id`` pair is
+        updated in place until the stream finalises, keeping the
+        conversation's row order stable.  Returns the row id.
+        """
+        rows = self._provider.execute(
+            "SELECT id FROM messages WHERE chat_id = ? AND turn_id = ? AND section_id = ?",
+            (chat_id, turn_id, section_id),
+        )
+        if rows:
+            row_id = rows[0]["id"]
+            self._provider.execute(
+                "UPDATE messages SET content = ?, content_type = ? WHERE id = ?",
+                (content, content_type, row_id),
+            )
+            self._provider.conn.commit()
+            return row_id
+
+        return self.save_section(
+            chat_id, turn_id, content_type, content, section_id=section_id
+        )
+
+    def finalize_streaming_section(
+        self,
+        chat_id: str,
+        turn_id: str,
+        section_id: str,
+        content_type: str,
+        content: str,
+    ) -> int:
+        """Convert a streaming section into a final section row.
+
+        Updates the existing streaming row in place so its position in
+        the message sequence is preserved.  Returns the row id.
+        """
+        return self.upsert_streaming_section(
+            chat_id, turn_id, section_id, content_type, content
+        )
 
     def load_sections(self, chat_id: str) -> list[dict[str, Any]]:
         """Return all message sections for *chat_id* ordered by ``id``.
 
         Each dict has keys ``id``, ``chat_id``, ``turn_id``,
-        ``content_type``, ``content``, ``created_at``.
+        ``section_id``, ``content_type``, ``content``, ``created_at``.
         """
         rows = self._provider.execute(
-            "SELECT id, chat_id, turn_id, content_type, content, created_at "
+            "SELECT id, chat_id, turn_id, section_id, content_type, content, created_at "
             "FROM messages WHERE chat_id = ? ORDER BY id ASC",
             (chat_id,),
         )
@@ -405,7 +461,7 @@ class DatabaseManager:
             (chat_id, turn_id),
         )
         if not rows or rows[0]["min_id"] is None:
-            return  # turn_id not found — nothing to delete.
+            return  # turn_id not found -- nothing to delete.
 
         min_id = rows[0]["min_id"]
         self._provider.execute(
@@ -451,7 +507,7 @@ class DatabaseManager:
                 continue
 
     # ------------------------------------------------------------------
-    # Agent CRUD (deprecated — use AgentManager from core.agent_registry)
+    # Agent CRUD (deprecated -- use AgentManager from core.agent_registry)
     # ------------------------------------------------------------------
 
     # The old agents table had columns: id, name, description, system_prompt, model, created_at.
@@ -469,7 +525,7 @@ class DatabaseManager:
     ) -> str:
         import warnings
         warnings.warn(
-            "DatabaseManager.create_agent() is deprecated — use AgentManager.create_agent()",
+            "DatabaseManager.create_agent() is deprecated -- use AgentManager.create_agent()",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -488,7 +544,7 @@ class DatabaseManager:
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         import warnings
         warnings.warn(
-            "DatabaseManager.get_agent() is deprecated — use AgentManager.get_agent()",
+            "DatabaseManager.get_agent() is deprecated -- use AgentManager.get_agent()",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -503,7 +559,7 @@ class DatabaseManager:
     def list_agents(self) -> list[dict[str, Any]]:
         import warnings
         warnings.warn(
-            "DatabaseManager.list_agents() is deprecated — use AgentManager.list_agents()",
+            "DatabaseManager.list_agents() is deprecated -- use AgentManager.list_agents()",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -517,7 +573,7 @@ class DatabaseManager:
     def delete_agent(self, agent_id: str) -> None:
         import warnings
         warnings.warn(
-            "DatabaseManager.delete_agent() is deprecated — use AgentManager.delete_agent()",
+            "DatabaseManager.delete_agent() is deprecated -- use AgentManager.delete_agent()",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -526,11 +582,11 @@ class DatabaseManager:
     def seed_agents(self, agents_data: list[dict[str, Any]]) -> None:
         """Insert agents if they don't already exist (matched by ``id``).
 
-        Deprecated — AgentManager handles seeding internally.
+        Deprecated -- AgentManager handles seeding internally.
         """
         import warnings
         warnings.warn(
-            "DatabaseManager.seed_agents() is deprecated — seeding is handled by AgentManager",
+            "DatabaseManager.seed_agents() is deprecated -- seeding is handled by AgentManager",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -620,7 +676,7 @@ class DatabaseManager:
             self._provider.conn.commit()
             return cur.lastrowid
         except sqlite3.IntegrityError:
-            # Duplicate — update timestamp instead
+            # Duplicate -- update timestamp instead
             self._provider.execute(
                 "UPDATE input_history SET created_at = ? WHERE input = ?",
                 (_now(), text),

@@ -55,26 +55,31 @@ ChatDisplay .streaming-content {
 
 ChatDisplay .chat-user {
     border-left: heavy $primary;
+    border-top: none;
     padding-left: 1;
 }
 
 ChatDisplay .chat-response {
     border-left: heavy $success;
+    border-top: none;
     padding-left: 1;
 }
 
 ChatDisplay .chat-thinking {
     border-left: heavy $warning;
+    border-top: none;
     padding-left: 1;
 }
 
 ChatDisplay .chat-tools {
     border-left: heavy $accent;
+    border-top: none;
     padding-left: 1;
 }
 
 ChatDisplay .chat-system {
     border-left: heavy grey;
+    border-top: none;
     padding-left: 1;
 }
 

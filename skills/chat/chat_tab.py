@@ -55,10 +55,19 @@ class ChatTabState(TabState):
         self._tools: list[dict[str, Any]] | None = None
         self._db: Any = None
         self._chat_id: str | None = None
+        # Stream ID — set when streaming is active so that the new
+        # ChatManager can re-subscribe after workspace recomposition.
+        self._stream_id: str | None = None
 
     def dispose(self) -> None:
-        """Release resources when the chat tab is permanently closed."""
-        # Release database chat reference (the DB itself is shared).
+        """Release resources when the chat tab is permanently closed.
+
+        Cancels any active stream via the StreamManager so the LLM
+        agent is aborted and the background task is cleaned up.
+        """
+        if self._stream_id and self._ctx and self._ctx.stream_manager:
+            self._ctx.stream_manager.cancel(self._stream_id)
+            self._stream_id = None
         self._db = None
         self._chat_id = None
 

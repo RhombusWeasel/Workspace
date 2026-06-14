@@ -1,39 +1,39 @@
-"""Chat display — a VerticalScroll-based conversation view with streaming Markdown sections.
+"""Chat display -- a VerticalScroll-based conversation view with streaming Markdown sections.
 
 Each assistant turn is a **Vertical** container holding collapsible sections.
 Sections are added on demand via :meth:`add_section` as their content arrives
 during streaming, producing a natural sequential layout (e.g. Thinking →
 Tools → Thinking → Response).
 
-**Default expand/collapse** — Response and system sections are expanded
+**Default expand/collapse** -- Response and system sections are expanded
 automatically when created.  Thinking sections and tool call branches
 are collapsed by default, controlled by the ``open_thinking`` and
 ``open_tools`` constructor parameters (both default to ``False``).
 
-**System prompt display** — When ``show_system_prompt`` is True, the
+**System prompt display** -- When ``show_system_prompt`` is True, the
 LLM system prompt is displayed as a collapsible section at the start
 of each conversation.
 
-**Streaming optimisation** — During streaming, ALL section types use
+**Streaming optimisation** -- During streaming, ALL section types use
 plain :class:`~textual.widgets.Static` text instead of
 :class:`~textual.widgets.Markdown`.  This eliminates expensive markdown
-parsing on every chunk — Textual's ``Markdown.update()`` re-parses the
+parsing on every chunk -- Textual's ``Markdown.update()`` re-parses the
 entire accumulated text and recreates all child widgets on every call,
 which is O(n²) over the length of the response.  ``Static.update()``
 is a lightweight string replacement + refresh by contrast.
 
 When the turn is finalised (``finalize_turn()``), response and tools
 sections are swapped from ``Static`` to ``Markdown`` for rich rendering.
-Thinking sections remain as ``Static`` permanently — they don't benefit
+Thinking sections remain as ``Static`` permanently -- they don't benefit
 from markdown rendering and the swap cost isn't justified.
 
 The display auto-scrolls to the bottom when new content is added or
 updated, so the view follows along with streaming output.
 
-**Architecture** — ChatDisplay extends VerticalScroll directly, making
+**Architecture** -- ChatDisplay extends VerticalScroll directly, making
 it inherently scrollable.  Each message is a self-contained widget
 mounted directly into the display.  This makes all operations O(1):
-adding a message, adding a section, expanding/collapsing — no tree
+adding a message, adding a section, expanding/collapsing -- no tree
 walks, no rebuilds, no prefix computation.
 """
 
@@ -264,10 +264,10 @@ class SystemPromptSection(Collapsible):
 
 
 class ChatDisplay(VerticalScroll):
-    """Streaming conversation display — a VerticalScroll with Collapsible sections.
+    """Streaming conversation display -- a VerticalScroll with Collapsible sections.
 
     Extends VerticalScroll directly so that the display is inherently
-    scrollable — mouse wheel and keyboard scrolling work without needing
+    scrollable -- mouse wheel and keyboard scrolling work without needing
     focus redirection to an inner scroll container.
 
     Provides a high-level API for building and updating a conversation:
@@ -346,22 +346,37 @@ class ChatDisplay(VerticalScroll):
         # Maps turn_id → AssistantTurn widget (for finding in DOM).
         self._turn_map: dict[str, AssistantTurn] = {}
 
-        # Batch mode — when True, mount() calls are deferred to end_batch().
+        # Batch mode -- when True, mount() calls are deferred to end_batch().
         self._batch_mode: bool = False
         self._batch_widgets: list[Widget] = []
 
-        # Deferred tool results — when tool results arrive during batch
+        # Deferred tool results -- when tool results arrive during batch
         # mode, they are queued here and applied after end_batch() mounts
         # the widgets.
         self._deferred_tool_results: list[tuple[str, str]] = []
 
-        # Coalesced scroll — during streaming, _schedule_scroll() is called
+        # Coalesced scroll -- during streaming, _schedule_scroll() is called
         # on every update_section().  Without coalescing, each call creates
         # a new timer.  With the _scroll_pending flag, only one timer exists
         # at a time.
         self._scroll_pending: bool = False
 
-    # No compose() needed — ChatDisplay IS the VerticalScroll.
+        # Detached flag -- set to True when the widget is removed from the
+        # DOM (e.g. during workspace recomposition).  Streaming updates
+        # check this flag and bail out early to avoid updating a widget
+        # that no longer exists.
+        self._detached: bool = False
+
+        # DB-driven refresh state -- maps (turn_id, section_id) → content.
+        # Used by :meth:`refresh_from_sections` to diff against the DB and
+        # update only what changed.
+        self._section_state: dict[tuple[str, str], dict[str, Any]] = {}
+        # Map (turn_id, section_id) → widget id for sections created by refresh.
+        self._refresh_section_map: dict[tuple[str, str], str] = {}
+        # Track turn_ids for which a user message has been created during refresh.
+        self._user_turn_ids: set[str] = set()
+
+    # No compose() needed -- ChatDisplay IS the VerticalScroll.
     # Messages are mounted directly into self.
 
     # ------------------------------------------------------------------
@@ -370,6 +385,8 @@ class ChatDisplay(VerticalScroll):
 
     def _scroll_to_bottom(self) -> None:
         """Scroll the chat display to show the latest content."""
+        if self._detached or not self.is_mounted:
+            return
         try:
             self.scroll_end(animate=False)
         except Exception:
@@ -378,9 +395,11 @@ class ChatDisplay(VerticalScroll):
     def _schedule_scroll(self) -> None:
         """Schedule a deferred scroll-to-bottom after layout recalculates.
 
-        During batch mode, scroll is suppressed — it will be triggered
+        During batch mode, scroll is suppressed -- it will be triggered
         once by :meth:`end_batch`.
         """
+        if self._detached or not self.is_mounted:
+            return
         if self._batch_mode:
             return
         if self._scroll_pending:
@@ -402,6 +421,9 @@ class ChatDisplay(VerticalScroll):
 
         Returns the message ID.
         """
+        if self._detached or not self.is_mounted:
+            return f"user-detached-{self._turn_count}"
+
         self._turn_count += 1
         msg_id = f"user-{self._turn_count}"
 
@@ -419,13 +441,27 @@ class ChatDisplay(VerticalScroll):
     # Assistant turn lifecycle
     # ------------------------------------------------------------------
 
-    def begin_assistant_turn(self) -> str:
+    def begin_assistant_turn(self, turn_id: str | None = None) -> str:
         """Create an assistant turn container with a header label.
+
+        Parameters
+        ----------
+        turn_id:
+            Optional stable turn identifier.  If provided, the turn widget
+            is tracked under this id so DB-driven refresh can locate it.
+            If omitted, a fresh id is generated.
 
         Returns the turn ID.
         """
+        if self._detached or not self.is_mounted:
+            self._turn_count += 1
+            asst_id = turn_id or f"asst-{self._turn_count}"
+            self._active_asst_id = asst_id
+            self._turn_map[asst_id] = None  # type: ignore
+            return asst_id
+
         self._turn_count += 1
-        asst_id = f"asst-{self._turn_count}"
+        asst_id = turn_id or f"asst-{self._turn_count}"
 
         turn = AssistantTurn(asst_id)
 
@@ -460,8 +496,16 @@ class ChatDisplay(VerticalScroll):
             )
         if self._active_asst_id is None:
             raise RuntimeError(
-                "No active assistant turn — call begin_assistant_turn first"
+                "No active assistant turn -- call begin_assistant_turn first"
             )
+
+        # If detached, track section state but skip DOM operations.
+        if self._detached or not self.is_mounted:
+            self._section_count += 1
+            section_id = f"{section_type}-sec{self._section_count}"
+            self._section_texts[section_id] = ""
+            self._section_types[section_id] = section_type
+            return section_id
 
         self._section_count += 1
         section_id = f"{section_type}-sec{self._section_count}"
@@ -519,8 +563,12 @@ class ChatDisplay(VerticalScroll):
         """Update the content widget for the section identified by *section_id*.
 
         During streaming all sections are ``Static``, so this is a
-        lightweight synchronous update — no markdown parsing.
+        lightweight synchronous update -- no markdown parsing.
         """
+        # Bail out if the display has been detached from the DOM.
+        if self._detached or not self.is_mounted:
+            return
+
         widget = self._section_widgets.get(section_id)
         if widget is None:
             return
@@ -539,6 +587,14 @@ class ChatDisplay(VerticalScroll):
         are swapped from plain ``Static`` to ``Markdown`` for rich formatting.
         Thinking sections remain as ``Static``.
         """
+        # If detached, just clear tracking state without DOM operations.
+        if self._detached or not self.is_mounted:
+            self._active_asst_id = None
+            self._section_widgets = {}
+            self._section_texts = {}
+            self._section_types = {}
+            return
+
         asst_id = self._active_asst_id
         if asst_id is None:
             return
@@ -641,6 +697,138 @@ class ChatDisplay(VerticalScroll):
         self._batch_widgets = []
         self._deferred_tool_results = []
         self._scroll_pending = False
+        self._section_state = {}
+        self._refresh_section_map = {}
+        self._user_turn_ids = set()
+
+    # ------------------------------------------------------------------
+    # DB-driven refresh
+    # ------------------------------------------------------------------
+
+    async def refresh_from_sections(
+        self, sections: list[dict[str, Any]], *, finalize: bool = False
+    ) -> None:
+        """Synchronise the display with a list of DB section rows.
+
+        Each row must contain ``turn_id``, ``section_id``, ``content_type``
+        and ``content``.  Existing widgets are updated in place when their
+        content changed; new rows create new widgets.  Missing rows are left
+        alone (they may belong to a different conversation).
+
+        Parameters
+        ----------
+        sections:
+            DB section rows ordered by ``id``.
+        finalize:
+            When True, call :meth:`finalize_turn` on the active assistant
+            turn after applying updates.  Use this when the stream has
+            completed.
+        """
+        if self._detached or not self.is_mounted:
+            return
+
+        # Group by turn, preserving order of first appearance.
+        turn_order: list[str] = []
+        turns: dict[str, list[dict[str, Any]]] = {}
+        for sec in sections:
+            tid = sec["turn_id"]
+            if tid not in turns:
+                turn_order.append(tid)
+                turns[tid] = []
+            turns[tid].append(sec)
+
+        for tid in turn_order:
+            has_assistant = any(
+                s["content_type"] in ("thinking", "tool_call", "response")
+                for s in turns[tid]
+            )
+
+            # Add user messages for this turn (whether or not there's
+            # an assistant response — the user may have sent a message
+            # that hasn't been responded to yet).
+            for sec in turns[tid]:
+                if sec["content_type"] == "user" and tid not in self._user_turn_ids:
+                    self.add_user_message(sec["content"])
+                    self._user_turn_ids.add(tid)
+
+            # Ensure an assistant turn exists for this turn_id.
+            if has_assistant and tid not in self._turn_map:
+                self.begin_assistant_turn(turn_id=tid)
+
+            turn_widget = self._turn_map.get(tid)
+            if turn_widget is None:
+                # No assistant turn for this turn_id — process user and
+                # system messages (already handled above), skip thinking/
+                # response/tool_call which require an assistant turn.
+                for sec in turns[tid]:
+                    ct = sec["content_type"]
+                    content = sec.get("content", "")
+                    sid = sec.get("section_id") or str(sec.get("id", ""))
+                    key = (tid, sid)
+                    if ct == "system" and key not in self._section_state:
+                        self.add_system_message(content)
+                    self._section_state[key] = {
+                        "content_type": ct,
+                        "content": content,
+                    }
+                continue
+
+            for sec in turns[tid]:
+                ct = sec["content_type"]
+                content = sec.get("content", "")
+                sid = sec.get("section_id") or str(sec.get("id", ""))
+                key = (tid, sid)
+
+                prev = self._section_state.get(key)
+                if prev is not None and prev["content"] == content:
+                    continue
+
+                if ct == "thinking":
+                    section_id = self._refresh_section_map.get(key)
+                    if section_id is None:
+                        section_id = self.add_section("thinking")
+                        self._refresh_section_map[key] = section_id
+                    await self.update_section(section_id, content)
+
+                elif ct == "response":
+                    section_id = self._refresh_section_map.get(key)
+                    if section_id is None:
+                        section_id = self.add_section("response")
+                        self._refresh_section_map[key] = section_id
+                    await self.update_section(section_id, content)
+
+                elif ct == "tool_call":
+                    section_id = self._refresh_section_map.get(key)
+                    if section_id is None:
+                        import json as _json
+                        try:
+                            tc_data = _json.loads(content)
+                            name = tc_data.get("name", "unknown")
+                            args = tc_data.get("arguments", {})
+                        except (_json.JSONDecodeError, KeyError):
+                            name = "unknown"
+                            args = {}
+                        section_id = self.add_tool_call(name, args)
+                        self._refresh_section_map[key] = section_id
+                    import json as _json
+                    try:
+                        tc_data = _json.loads(content)
+                        if "result" in tc_data and tc_data["result"]:
+                            self.add_tool_result(section_id, tc_data["result"])
+                    except (_json.JSONDecodeError, KeyError):
+                        pass
+
+                elif ct == "system" and key not in self._section_state:
+                    self.add_system_message(content)
+
+                self._section_state[key] = {
+                    "content_type": ct,
+                    "content": content,
+                }
+
+        if finalize and self._active_asst_id is not None:
+            await self.finalize_turn()
+            self._schedule_scroll()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -672,7 +860,7 @@ class ChatDisplay(VerticalScroll):
             contents = collapsible.query_one(Collapsible.Contents)
             contents.mount(widget)
         except Exception:
-            # Collapsible not yet composed — add to _contents_list so
+            # Collapsible not yet composed -- add to _contents_list so
             # compose() will yield it inside Contents.
             collapsible.compose_add_child(widget)
 
@@ -681,7 +869,7 @@ class ChatDisplay(VerticalScroll):
     # ------------------------------------------------------------------
 
     def begin_batch(self) -> None:
-        """Enter batch mode — defer mount() calls until end_batch().
+        """Enter batch mode -- defer mount() calls until end_batch().
 
         During batch mode, adding messages and sections does not trigger
         individual mount() calls.  Call :meth:`end_batch` to mount all
@@ -692,7 +880,7 @@ class ChatDisplay(VerticalScroll):
         self._deferred_tool_results = []
 
     def end_batch(self) -> None:
-        """Exit batch mode — mount all deferred widgets and scroll.
+        """Exit batch mode -- mount all deferred widgets and scroll.
 
         Restores normal operation: subsequent add/update calls will
         trigger individual mount() calls as before.
@@ -721,7 +909,7 @@ class ChatDisplay(VerticalScroll):
                     self.mount(widget)
                     current_turn = widget
                 else:
-                    # Section or ToolCallSection — mount inside the current
+                    # Section or ToolCallSection -- mount inside the current
                     # turn's Contents container via _mount_into_collapsible,
                     # which correctly routes widgets into the Collapsible's
                     # Contents whether the parent has already composed or not.
@@ -730,7 +918,7 @@ class ChatDisplay(VerticalScroll):
                     else:
                         self.mount(widget)
 
-        # Apply deferred tool results — these were queued during batch
+        # Apply deferred tool results -- these were queued during batch
         # mode when the ToolCallSection widgets were not yet in the DOM.
         # Find the widgets in the batch list and update them directly.
         if self._deferred_tool_results:
@@ -749,7 +937,7 @@ class ChatDisplay(VerticalScroll):
         # Apply expand/collapse config.
         self._apply_expand_config()
 
-        # Clear section tracking — after batch finalize, these are
+        # Clear section tracking -- after batch finalize, these are
         # no longer needed (the widgets are already in the DOM).
         self._section_widgets = {}
         self._section_texts = {}
@@ -845,17 +1033,21 @@ class ChatDisplay(VerticalScroll):
         """
         if self._active_asst_id is None:
             raise RuntimeError(
-                "No active assistant turn — call begin_assistant_turn first"
+                "No active assistant turn -- call begin_assistant_turn first"
             )
 
         self._tool_call_count += 1
         tc_id = f"tc-{self._tool_call_count}"
 
+        # If detached, skip DOM operations but track state.
+        if self._detached or not self.is_mounted:
+            return tc_id
+
         # Collapsed: name + short args.  Expanded: just the name.
         label = format_tool_call_branch_label(name, arguments)
         label_expanded = format_tool_call_branch_label_expanded(name)
 
-        # Detail content — Markdown with formatted arguments.
+        # Detail content -- Markdown with formatted arguments.
         detail = format_tool_call_detail(name, arguments)
 
         start_collapsed = not self._open_tools
@@ -904,6 +1096,10 @@ class ChatDisplay(VerticalScroll):
         result:
             The tool execution result string.
         """
+        # If detached, skip DOM operations.
+        if self._detached or not self.is_mounted:
+            return
+
         # In batch mode, defer the result until widgets are mounted.
         if self._batch_mode:
             self._deferred_tool_results.append((tc_id, result))
@@ -922,10 +1118,10 @@ class ChatDisplay(VerticalScroll):
         try:
             tc_widget = self.query_one(f"#tc-{tc_id}", ToolCallSection)
         except Exception:
-            return  # Widget not found — best-effort.
+            return  # Widget not found -- best-effort.
 
         if tc_widget._has_result:
-            return  # Already has result — don't duplicate.
+            return  # Already has result -- don't duplicate.
         tc_widget._has_result = True
 
         # Update the Markdown content with the result.
@@ -939,7 +1135,7 @@ class ChatDisplay(VerticalScroll):
             )
             md_widget.update(f"{original_detail}\n{result_md}")
         except Exception:
-            pass  # Best-effort — don't crash for a display update.
+            pass  # Best-effort -- don't crash for a display update.
 
         # Update collapsed label to show checkmark.
         new_label = format_tool_call_branch_label_done(
@@ -965,7 +1161,7 @@ class ChatDisplay(VerticalScroll):
         )
 
         if tc_widget._has_result:
-            return  # Already has result — don't duplicate.
+            return  # Already has result -- don't duplicate.
         tc_widget._has_result = True
 
         # Update collapsed label to show checkmark.
@@ -991,7 +1187,7 @@ class ChatDisplay(VerticalScroll):
             md_widget = tc_widget.query_one(f"#{md_id}", Markdown)
             md_widget.update(full_detail)
         except Exception:
-            # Widget not composed yet — replace the child Markdown content
+            # Widget not composed yet -- replace the child Markdown content
             # by updating the widget's internal state. The Collapsible will
             # compose it with the correct content on mount.
             pass
@@ -1048,11 +1244,11 @@ class ChatDisplay(VerticalScroll):
             # will yield the new Markdown widget.
             try:
                 contents = section.query_one(Collapsible.Contents)
-                # Section has composed — swap in DOM.
+                # Section has composed -- swap in DOM.
                 old_widget.remove()
                 await contents.mount(new_widget)
             except Exception:
-                # Section not yet composed — update _contents_list directly.
+                # Section not yet composed -- update _contents_list directly.
                 try:
                     idx = section._contents_list.index(old_widget)
                     section._contents_list[idx] = new_widget
