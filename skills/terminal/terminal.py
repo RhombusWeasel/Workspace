@@ -204,7 +204,7 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
             message = await pty.recv_queue.get()
 
             from textual import log
-            log.warning(f"terminal: recv got message: {message[0]}")
+            log.warning(f"terminal: recv got message: {message[0]}, pty.emulator={pty.emulator is not None}")
 
             stdout_chunks: list[str] = []
             setup_requested = False
@@ -639,12 +639,23 @@ class TerminalView(Widget):
             # The upstream start() creates its own recv_task using
             # recv(), so we need to replace it with our throttled one.
             from textual import log
-            log.warning("terminal: mounting fresh terminal")
+            log.warning(f"terminal: mounting fresh terminal")
+
+            # Monkey-patch stop() to log when it's called — diagnostic.
+            _original_stop = self._pty.stop
+            def _logged_stop(msg="unknown caller"):
+                from textual import log
+                log.warning(f"terminal: PtyTerminal.stop() called! caller={msg}")
+                import traceback
+                traceback.print_stack()
+                _original_stop()
+            self._pty.stop = _logged_stop
+
             self._pty.start()
             # Cancel the upstream recv task and replace with ours.
             if self._pty.recv_task is not None and not self._pty.recv_task.done():
                 from textual import log
-                log.warning("terminal: cancelling upstream recv_task")
+                log.warning(f"terminal: cancelling upstream recv_task={self._pty.recv_task}")
                 self._pty.recv_task.cancel()
                 # Fire-and-forget await — the cancellation will
                 # propagate, we just need to ensure it's awaited.
@@ -654,7 +665,7 @@ class TerminalView(Widget):
             self._recv_task = asyncio.create_task(_throttled_recv(self._pty))
             self._pty.recv_task = self._recv_task
             from textual import log
-            log.warning(f"terminal: started throttled recv, task={self._recv_task}")
+            log.warning(f"terminal: started throttled recv, task={self._recv_task}, pty.emulator={self._pty.emulator is not None}")
 
         # Focus the terminal so the user can type immediately.
         self._focus_terminal()
