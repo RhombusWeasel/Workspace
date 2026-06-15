@@ -203,6 +203,9 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
             # await, so the event loop is free between batches.
             message = await pty.recv_queue.get()
 
+            from textual import log
+            log.warning(f"terminal: recv got message: {message[0]}")
+
             stdout_chunks: list[str] = []
             setup_requested = False
             disconnect_requested = False
@@ -241,6 +244,8 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
             # event loop.  Process cleanup is handled by
             # _async_stop_emulator() called from dispose() instead.
             if disconnect_requested:
+                from textual import log
+                log.warning("terminal: disconnect received, stopping recv loop")
                 return
 
             # Feed all accumulated stdout to pyte in one call.
@@ -633,9 +638,13 @@ class TerminalView(Widget):
             # Fresh terminal — spawn a new shell process.
             # The upstream start() creates its own recv_task using
             # recv(), so we need to replace it with our throttled one.
+            from textual import log
+            log.warning("terminal: mounting fresh terminal")
             self._pty.start()
             # Cancel the upstream recv task and replace with ours.
             if self._pty.recv_task is not None and not self._pty.recv_task.done():
+                from textual import log
+                log.warning("terminal: cancelling upstream recv_task")
                 self._pty.recv_task.cancel()
                 # Fire-and-forget await — the cancellation will
                 # propagate, we just need to ensure it's awaited.
@@ -644,6 +653,8 @@ class TerminalView(Widget):
                 )
             self._recv_task = asyncio.create_task(_throttled_recv(self._pty))
             self._pty.recv_task = self._recv_task
+            from textual import log
+            log.warning(f"terminal: started throttled recv, task={self._recv_task}")
 
         # Focus the terminal so the user can type immediately.
         self._focus_terminal()
