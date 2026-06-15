@@ -136,11 +136,13 @@
   - **Pending manual test**: Verify tabs are restored correctly after app restart
 
 - Fix: Terminal hangs and crashes after 2 commands ✅
-  - Branch: `fix/terminal-hang-crash`, commit a1c1fb6
+  - Branch: `fix/terminal-hang-crash`, commits a1c1fb6, fb29331
   - Plan: `.agents/plans/fix-terminal-hang-crash.md`
-  - 5 bugs fixed: unthrottled render loop (primary), duplicate recv_task, signal leak, compose screen clobber, unmount safety
+  - 6 bugs fixed: blocking os.waitpid (primary crash cause), unthrottled render loop, duplicate recv_task, signal leak, compose screen clobber, unmount safety
   - Replaced upstream PtyTerminal.recv() with throttled recv that drains batches, renders once per ~16ms
-  - 26 new tests, all 439 pass
+  - Replaced blocking TerminalEmulator.stop() with _async_stop_emulator + _reap_process (SIGTERM → poll → SIGKILL)
+  - _throttled_recv no longer calls pty.stop() on disconnect
+  - 40 new tests, all 453 pass
 
 ## In Progress
 
