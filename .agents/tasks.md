@@ -135,11 +135,14 @@
   - **Bug fix**: Use `workspace._save_pane_tab_states()` instead of DOM queries for reliable tab capture during shutdown
   - **Pending manual test**: Verify tabs are restored correctly after app restart
 
-## In Progress
-- Fix: Terminal hangs and crashes after 2 commands
+- Fix: Terminal hangs and crashes after 2 commands ✅
+  - Branch: `fix/terminal-hang-crash`, commit a1c1fb6
   - Plan: `.agents/plans/fix-terminal-hang-crash.md`
-  - 5 bugs identified: unthrottled render loop (primary), duplicate recv_task, signal leak, compose screen clobber, unmount safety
-  - Branch: TBD
+  - 5 bugs fixed: unthrottled render loop (primary), duplicate recv_task, signal leak, compose screen clobber, unmount safety
+  - Replaced upstream PtyTerminal.recv() with throttled recv that drains batches, renders once per ~16ms
+  - 26 new tests, all 439 pass
+
+## In Progress
 
 ## Not Started
 - Bundled skills: coding, todo

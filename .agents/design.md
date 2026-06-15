@@ -67,3 +67,4 @@ Mission-critical tests only — core safety, tools, streaming, chat display, con
 - **Skill scripts/** — Python scripts run in-process via `exec()` with `context` (AppContext) and `args` globals
 - **3-tier discovery** — Bundled → user-level → project-level (later overrides earlier)
 - **Terminal preservation** — pyte Screen + TerminalDisplay transferred across recomposition, not widget remount
+- **Throttled terminal recv** — Replaces upstream `PtyTerminal.recv()` with batch-drain + single-render + 16ms sleep to prevent event loop starvation under heavy PTY output
