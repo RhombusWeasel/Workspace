@@ -651,6 +651,18 @@ class TerminalView(Widget):
                 _original_stop()
             self._pty.stop = _logged_stop
 
+            # Also trap __setattr__ on the PtyTerminal to catch when
+            # emulator is set to None.
+            _original_setattr = type(self._pty).__setattr__
+            def _trapped_setattr(pty_self, name, value):
+                if name == 'emulator' and value is None:
+                    from textual import log
+                    log.warning(f"terminal: pty.emulator set to None!")
+                    import traceback
+                    traceback.print_stack()
+                _original_setattr(pty_self, name, value)
+            type(self._pty).__setattr__ = _trapped_setattr
+
             self._pty.start()
             # Cancel the upstream recv task and replace with ours.
             if self._pty.recv_task is not None and not self._pty.recv_task.done():
@@ -795,7 +807,14 @@ class TerminalView(Widget):
 
         When not scrolled up, all keys are left for PtyTerminal to handle.
         """
-        if self._pty is None or self._pty.emulator is None:
+        if self._pty is None:
+            return
+
+        # Diagnostic: check if emulator is alive when key reaches us
+        from textual import log
+        log.warning(f"terminal: TerminalView.on_key key={event.key}, pty.emulator={self._pty.emulator is not None}, pty._stopped={getattr(self._pty, '_stopped', 'n/a')}")
+
+        if self._pty.emulator is None:
             return
 
         key = event.key
