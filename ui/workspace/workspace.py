@@ -206,7 +206,7 @@ class Workspace(Widget):
     # Content preservation around recomposition
     # ------------------------------------------------------------------
 
-    def _save_pane_tab_states(self) -> dict[str, "SavedTabState"]:
+    def _save_pane_tab_states(self, *, disconnect: bool = False) -> dict[str, "SavedTabState"]:
         """Collect tab state from every pane that has a WorkspaceTabs."""
         from ui.workspace.tabs import WorkspaceTabs, SavedTabState
 
@@ -215,7 +215,7 @@ class Workspace(Widget):
             try:
                 container = self.query_one(f"#pane-{leaf.id}", PaneContainer)
                 tabs = container.query_one(WorkspaceTabs)
-                states[leaf.id] = tabs.save_state()
+                states[leaf.id] = tabs.save_state(disconnect=disconnect)
             except Exception as e:
                 log.debug("_save_pane_tab_states: failed for leaf %s: %s", leaf.id, e)
         return states
@@ -290,13 +290,16 @@ class Workspace(Widget):
         running terminals survive workspace splits and closes.
 
         Each widget's ``flush_state()`` is called before recomposition to
-        sync any unsaved UI state back to the TabState object.  After
+        sync any unsaved UI state back to the TabState object.  Widgets
+        with ``disconnect_from_emulator()`` are also asked to sever
+        their connection to live resources so that emulator queues
+        are not read by two recv tasks after the rebuild.  After
         recomposition, fresh widgets are created from factories that
         receive the same TabState — so they read from state in on_mount().
         Orphaned tabs (whose pane was closed) have their state disposed,
         releasing external resources like PTY processes.
         """
-        saved = self._save_pane_tab_states()
+        saved = self._save_pane_tab_states(disconnect=True)
         await self.recompose()
         restored = self._restore_pane_tab_states(saved)
         self._cleanup_orphaned_states(saved, restored)

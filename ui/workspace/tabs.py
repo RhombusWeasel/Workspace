@@ -294,14 +294,19 @@ class WorkspaceTabs(Widget):
     # State persistence (survives DOM recomposition)
     # ------------------------------------------------------------------
 
-    def save_state(self) -> SavedTabState:
+    def save_state(self, *, disconnect: bool = False) -> SavedTabState:
         """Return a snapshot of all open tabs so they can be restored later.
 
         ``content_factory`` callables and ``state`` objects are carried
         directly — no extraction or snapshot logic is needed.  Widgets
         that have a ``flush_state()`` method are asked to sync their
-        current UI state back to the ``state`` object before the DOM
-        rebuild.
+        current UI state back to the ``state`` object.
+
+        When ``disconnect`` is True (used during recomposition), widgets
+        that have a ``disconnect_from_emulator()`` method are also asked
+        to sever their connection to live resources (PTY processes, etc.)
+        so that the emulator's queues are not read by two recv tasks
+        simultaneously after the DOM rebuild.
         """
         saved_tabs: list[SavedTab] = []
         for tab_id, info in self._tabs.items():
@@ -309,6 +314,11 @@ class WorkspaceTabs(Widget):
             # back to the persistent state object.
             if info.content is not None and hasattr(info.content, "flush_state"):
                 info.content.flush_state()
+
+            # During recomposition, ask widgets to disconnect from
+            # live resources so queues don't conflict after rebuild.
+            if disconnect and info.content is not None and hasattr(info.content, "disconnect_from_emulator"):
+                info.content.disconnect_from_emulator()
 
             # state and content_factory are carried directly — they
             # survive recomposition without any widget-specific logic.

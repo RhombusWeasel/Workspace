@@ -135,11 +135,18 @@
   - **Bug fix**: Use `workspace._save_pane_tab_states()` instead of DOM queries for reliable tab capture during shutdown
   - **Pending manual test**: Verify tabs are restored correctly after app restart
 
-## In Progress
-- Fix: Terminal hangs and crashes after 2 commands
+- Fix: Terminal hangs and crashes after 2 commands ✅
+  - Branch: `fix/terminal-hang-crash`, commits a1c1fb6, fb29331, b71d393, c83515b
   - Plan: `.agents/plans/fix-terminal-hang-crash.md`
-  - 5 bugs identified: unthrottled render loop (primary), duplicate recv_task, signal leak, compose screen clobber, unmount safety
-  - Branch: TBD
+  - 6 bugs fixed: flush_state killing emulator (primary cause of 1-command death), blocking os.waitpid, unthrottled render loop, duplicate recv_task, signal leak, compose screen clobber
+  - Replaced upstream PtyTerminal.recv() with throttled recv that drains batches, renders once per ~16ms
+  - Replaced blocking TerminalEmulator.stop() with _async_stop_emulator + _reap_process (SIGTERM → poll → SIGKILL)
+  - Separated flush_state() (capture only) from disconnect_from_emulator() (full disconnect for recomposition)
+  - Exception resilience: _render_screen and _throttled_recv catch and log errors instead of dying silently
+  - 44 tests, all 457 pass
+  - **Needs manual testing**: verify terminal stays responsive after multiple commands, session saves don't kill it, closing tabs works, no crashes
+
+## In Progress
 
 ## Not Started
 - Bundled skills: coding, todo
