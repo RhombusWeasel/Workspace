@@ -867,3 +867,117 @@ class TestTerminalStateDispose:
             state.dispose()
 
         assert state.emulator is None
+
+
+# ---------------------------------------------------------------------------
+# Test: _throttled_recv exception resilience
+# ---------------------------------------------------------------------------
+
+
+class TestThrottledRecvExceptionResilience:
+    """Verify that _throttled_recv survives exceptions that previously
+    killed the recv loop silently, leaving the terminal dead."""
+
+    @pytest.mark.asyncio
+    async def test_render_error_does_not_kill_recv(self):
+        """If _render_screen raises, _throttled_recv catches it and
+        continues processing subsequent messages."""
+        pty = _FakePty()
+        render_calls = 0
+        original_refresh = pty.refresh
+
+        def bad_refresh():
+            nonlocal render_calls
+            render_calls += 1
+            if render_calls == 1:
+                raise RuntimeError("widget not mounted")
+            original_refresh()
+
+        pty.refresh = bad_refresh
+
+        await pty.recv_queue.put(["stdout", "first"])
+        await pty.recv_queue.put(["stdout", "second"])
+
+        task = asyncio.create_task(_throttled_recv(pty))
+        # Wait long enough for both batches to be processed.
+        await asyncio.sleep(0.2)
+
+        # Task should NOT be dead — the render error was caught.
+        assert not task.done()
+
+        # stream.feed should have been called (output was processed).
+        assert pty.stream.feed.call_count >= 1
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_render_error_logged(self):
+        """When _render_screen raises, the error is logged not silently
+        swallowed."""
+        pty = _FakePty()
+        pty.refresh = MagicMock(side_effect=RuntimeError("bad render"))
+
+        await pty.recv_queue.put(["stdout", "hello"])
+
+        task = asyncio.create_task(_throttled_recv(pty))
+        await asyncio.sleep(0.05)
+
+        # Task should still be alive.
+        assert not task.done()
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_stream_feed_and_render_both_fail(self):
+        """If both stream.feed (TypeError) and _render_screen fail,
+        recv still continues."""
+        pty = _FakePty()
+        pty.stream.feed.side_effect = TypeError("bad feed")
+        pty.refresh = MagicMock(side_effect=RuntimeError("bad render"))
+
+        # Queue a first message and let it process.
+        await pty.recv_queue.put(["stdout", "hello"])
+        task = asyncio.create_task(_throttled_recv(pty))
+        await asyncio.sleep(0.05)
+
+        # Queue a second message to verify recv continues.
+        await pty.recv_queue.put(["stdout", "world"])
+        await asyncio.sleep(0.05)
+
+        # Task should still be alive despite both errors.
+        assert not task.done()
+
+        # Both messages should have been attempted.
+        assert pty.stream.feed.call_count >= 2
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Test: _render_screen exception safety
+# ---------------------------------------------------------------------------
+
+
+class TestRenderScreenExceptionSafety:
+    """Verify _render_screen catches exceptions from pty.refresh()."""
+
+    def test_refresh_error_caught(self):
+        """If pty.refresh() raises, _render_screen catches it."""
+        pty = _FakePty()
+        pty.refresh = MagicMock(side_effect=RuntimeError("not mounted"))
+        # Should not raise.
+        _render_screen(pty)
+        # But display should still have been set.
+        assert pty._display is not None

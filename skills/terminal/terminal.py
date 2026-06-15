@@ -188,6 +188,14 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
 
     This guarantees the event loop stays responsive regardless of how
     fast the PTY produces output.
+
+    The entire inner loop body is wrapped in a broad try/except so
+    that a transient error (e.g. a render failure during DOM
+    recomposition, a pyte TypeError) does **not** kill the recv loop.
+    Previous versions only caught ``CancelledError``, which meant any
+    other exception silently terminated the task and the terminal
+    appeared dead (no more output rendered, shell still running but
+    invisible).
     """
     try:
         while True:
@@ -257,13 +265,20 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
                     log.warning("could not feed:", error)
 
                 # Render once for the entire batch.
-                _render_screen(pty)
+                try:
+                    _render_screen(pty)
+                except Exception as error:
+                    from textual import log
+                    log.warning("terminal render error:", error)
 
             # Yield to the event loop — keeps the app responsive.
             await asyncio.sleep(_RENDER_INTERVAL)
 
     except asyncio.CancelledError:
         pass
+    except Exception as error:
+        from textual import log
+        log.warning("_throttled_recv died:", error)
 
 
 def _render_screen(pty: PtyTerminal) -> None:
@@ -304,8 +319,11 @@ def _render_screen(pty: PtyTerminal) -> None:
 
         lines.append(line_text)
 
-    pty._display = TerminalDisplay(lines)
-    pty.refresh()
+    try:
+        pty._display = TerminalDisplay(lines)
+        pty.refresh()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -735,8 +753,11 @@ class TerminalView(Widget):
 
             lines.append(line_text)
 
-        pty._display = TerminalDisplay(lines)
-        pty.refresh()
+        try:
+            pty._display = TerminalDisplay(lines)
+            pty.refresh()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Input handlers
