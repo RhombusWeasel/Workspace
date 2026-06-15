@@ -73,3 +73,40 @@ def _on_files_edit(data: dict, ctx: AppContext) -> None:
             tabs.open_tab(tab_id, filename, state=state, content_factory=_make_file_editor)
 
         app.run_worker(_do())
+
+
+# ---------------------------------------------------------------------------
+# Session handler registration
+# ---------------------------------------------------------------------------
+
+from core.session import TabTypeHandler, register_tab_type
+
+
+def _serialise_file_editor(state: FileEditorState) -> dict:
+    """Extract persistent data from a FileEditorState."""
+    return {"filepath": state.filepath}
+
+
+def _deserialise_file_editor(data: dict, ctx: AppContext) -> FileEditorState | None:
+    """Reconstruct a FileEditorState from serialised data.
+
+    Returns None if the file no longer exists (the tab will be skipped).
+    """
+    filepath = data.get("filepath", "")
+    if not filepath or not os.path.isfile(filepath):
+        return None  # File gone — skip this tab
+    return FileEditorState(filepath)
+
+
+def _make_file_editor_label(state: FileEditorState) -> str:
+    """Produce the tab label for a restored file editor tab."""
+    return os.path.basename(state.filepath)
+
+
+register_tab_type(TabTypeHandler(
+    tab_type="file_editor",
+    serialise=_serialise_file_editor,
+    deserialise=_deserialise_file_editor,
+    content_factory=lambda s: FileEditor(s),
+    make_label=_make_file_editor_label,
+))

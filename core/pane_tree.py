@@ -407,6 +407,58 @@ def _set_content_impl(node: Pane, target_id: str, content: Any) -> Pane:
 
 
 # ---------------------------------------------------------------------------
+# Serialisation — persist/restore pane trees (for session state)
+# ---------------------------------------------------------------------------
+
+
+def pane_tree_to_dict(root: Pane) -> dict:
+    """Convert a pane tree to a JSON-serialisable dict.
+
+    LeafPane → {"type": "leaf", "id": ...}
+    SplitPane → {"type": "split", "id": ..., "direction": ..., "ratio": ..., "children": [...]}
+
+    Leaf ``content`` is NOT serialised — it holds live widgets.
+    The caller is responsible for serialising tab state separately.
+    """
+    if isinstance(root, LeafPane):
+        return {"type": "leaf", "id": root.id}
+    elif isinstance(root, SplitPane):
+        left, right = root.children
+        return {
+            "type": "split",
+            "id": root.id,
+            "direction": root.direction,
+            "ratio": root.ratio,
+            "children": [
+                pane_tree_to_dict(left),
+                pane_tree_to_dict(right),
+            ],
+        }
+    else:
+        raise TypeError(f"Unknown pane type: {type(root)!r}")
+
+
+def pane_tree_from_dict(data: dict) -> Pane:
+    """Reconstruct a pane tree from a dict produced by :func:`pane_tree_to_dict`.
+
+    Leaf content is ``None`` — the caller restores tab state separately.
+    """
+    ptype = data.get("type")
+    if ptype == "leaf":
+        return LeafPane(id=data["id"], content=None)
+    elif ptype == "split":
+        children = tuple(pane_tree_from_dict(c) for c in data["children"])
+        return SplitPane(
+            id=data["id"],
+            direction=data["direction"],
+            ratio=data["ratio"],
+            children=children,
+        )
+    else:
+        raise ValueError(f"Unknown pane type in session data: {ptype!r}")
+
+
+# ---------------------------------------------------------------------------
 # Query helpers
 # ---------------------------------------------------------------------------
 

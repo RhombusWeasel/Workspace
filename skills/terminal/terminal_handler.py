@@ -110,3 +110,44 @@ def register_terminal_leader_chords() -> None:
         "Open",
         event_type="terminal.open",
     )
+
+
+# ---------------------------------------------------------------------------
+# Session handler registration
+# ---------------------------------------------------------------------------
+
+from core.session import TabTypeHandler, register_tab_type
+
+
+def _serialise_terminal(state: TerminalState) -> dict:
+    """Extract persistent data from a TerminalState.
+
+    Note: the running shell process cannot be restored, but we preserve
+    the working directory so the terminal reopens in the same location.
+    """
+    return {
+        "command": state.command,
+        "working_directory": state.working_directory,
+    }
+
+
+def _deserialise_terminal(data: dict, ctx: AppContext) -> TerminalState:
+    """Reconstruct a TerminalState from serialised data."""
+    return TerminalState(
+        command=data.get("command"),
+        working_directory=data.get("working_directory") or ctx.working_directory,
+    )
+
+
+def _make_terminal_from_state(s: TerminalState) -> TerminalView:
+    """Content factory that creates a TerminalView from restored state."""
+    return TerminalView(s)
+
+
+register_tab_type(TabTypeHandler(
+    tab_type="terminal",
+    serialise=_serialise_terminal,
+    deserialise=_deserialise_terminal,
+    content_factory=_make_terminal_from_state,
+    make_label=lambda s: "Terminal",
+))

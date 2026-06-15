@@ -154,6 +154,8 @@ class WorkspaceTabs(Widget):
         self._active: str | None = None
         self._focus_generation: int = 0
         """Monotonically increasing counter to invalidate stale focus requests."""
+        self._batch_depth: int = 0
+        """When > 0, :meth:`_refresh` calls are deferred until the batch ends."""
 
     # ------------------------------------------------------------------
     # Public API
@@ -252,6 +254,31 @@ class WorkspaceTabs(Widget):
 
         self._refresh()
         self.post_message(self.TabClosed(tab_id))
+
+    def begin_batch(self) -> None:
+        """Defer :meth:`_refresh` calls until :meth:`end_batch` is called.
+
+        Use this when opening multiple tabs in quick succession (e.g.
+        session restore) to avoid the race condition where a previous
+        tab's content hasn't finished mounting when the next tab is
+        opened, causing both content widgets to be visible at once.
+
+        Calls can be nested — only the outermost :meth:`end_batch`
+        triggers the final :meth:`_refresh`.
+        """
+        self._batch_depth += 1
+
+    def end_batch(self) -> None:
+        """End batch mode and refresh the widget.
+
+        Must be called once for each :meth:`begin_batch` call.  When
+        the outermost batch ends, :meth:`_refresh` is called to update
+        the tab bar and content area.
+        """
+        if self._batch_depth > 0:
+            self._batch_depth -= 1
+        if self._batch_depth == 0:
+            self._refresh()
 
     def switch_tab(self, tab_id: str) -> None:
         """Activate a tab."""
@@ -386,6 +413,8 @@ class WorkspaceTabs(Widget):
 
     def _refresh(self) -> None:
         """Rebuild the tab bar and content area to reflect current state."""
+        if self._batch_depth > 0:
+            return
         self._focus_generation += 1
         self._refresh_tab_bar()
         self._refresh_content()

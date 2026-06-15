@@ -107,6 +107,14 @@ class AppContext:
     active streams survive workspace recomposition.
     """
 
+    session_manager: Any = None
+    """Session manager — saves and restores workspace state across app restarts.
+
+    Set by bootstrap to a :class:`~core.session.SessionManager`
+    instance.  The app calls ``save()`` on shutdown and ``restore()``
+    on mount.
+    """
+
     # Deprecated field aliases for migration
     prompts: Any = None
     """Deprecated — use ``ctx.agents`` instead.

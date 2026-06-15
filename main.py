@@ -6,9 +6,11 @@ Entry point: parses arguments, bootstraps services, launches the app.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Footer, Header
@@ -20,6 +22,8 @@ from core.events import WorkspaceEvent, dispatch
 from ui.sidebar.sidebar import Sidebar, SidebarContainer
 from ui.workspace import Workspace
 from core.terminal_passthrough import register_terminal_passthrough
+
+log = logging.getLogger(__name__)
 
 # App-level keys that must pass through the terminal widget.
 register_terminal_passthrough({"ctrl+q", "ctrl+space", "ctrl+@"})
@@ -35,6 +39,7 @@ register_defaults({"ui": {"theme": _UI_DEFAULT_THEME}})
 import ui.widgets.leader_overlay  # noqa: F401 — side-effect import for handler registration
 # Import file edit handler so its @register_handler("files.edit") runs.
 import ui.workspace.file_edit_handler  # noqa: F401 — side-effect import for handler registration
+import ui.workspace.welcome_view  # noqa: F401 — side-effect import for session handler registration
 # Import inline suggestion module so its register_defaults() runs
 # before bootstrap's apply_defaults().
 import core.inline_suggest  # noqa: F401 — side-effect import for config defaults
@@ -145,11 +150,85 @@ class WorkspaceApp(App):
 
     async def on_mount(self) -> None:
         self._apply_theme_from_config()
+
+        # Wire session manager's ctx now that the app exists
+        self.context.session_manager.ctx = self.context
+
+        # Restore session if one exists, otherwise open welcome tab
+        if self.context.session_manager.has_session:
+            restored = self.context.session_manager.restore(
+                self.ws, self.left_container, self.right_container
+            )
+            if not restored:
+                # Session restore failed — fall back to welcome tab
+                self.ws.run_worker(self.ws._open_welcome_tab())
+        else:
+            # No session file — open the welcome tab as usual
+            self.ws.run_worker(self.ws._open_welcome_tab())
+
         self.ws.focus()
+
+        # Periodically save session state (every 5 seconds)
+        self._session_save_interval = self.set_interval(
+            5, self._periodic_session_save
+        )
+
+    async def on_unmount(self) -> None:
+        """Save session state before the app shuts down."""
+        # Stop periodic save
+        if hasattr(self, "_session_save_interval"):
+            self._session_save_interval.stop()
+
+        # Best-effort final save (may fail if DOM is already torn down)
+        self._save_session()
+
+    _save_count = 0
+
+    def _save_session(self) -> None:
+        """Save current session state to disk."""
+        WorkspaceApp._save_count += 1
+        n = WorkspaceApp._save_count
+        try:
+            left_hidden = self.left_container.is_hidden
+            right_hidden = self.right_container.is_hidden
+            children = list(self.ws.children)
+            if not children:
+                log.debug("_save_session #%d: skipping (no DOM children)", n)
+                return
+            self.context.session_manager.save(
+                self.ws, left_hidden, right_hidden
+            )
+            log.debug("Session saved (#%d)", n)
+        except Exception as e:
+            log.warning("Failed to save session (#%d): %s", n, e, exc_info=True)
+
+    def _periodic_session_save(self) -> None:
+        """Periodically save session state to protect against crashes."""
+        self._save_session()
 
     def action_open_leader(self) -> None:
         """Post an event so the handler in leader_overlay.py pushes the screen."""
         self.post_message(WorkspaceEvent("app.open_leader", {}))
+
+    def exit(self, result=None, return_code=0, message=None) -> None:
+        """Override exit to save session before shutting down."""
+        self._save_session()
+        super().exit(result=result, return_code=return_code, message=message)
+
+    async def action_quit(self) -> None:
+        """Save session before quitting."""
+        self._save_session()
+        await super().action_quit()
+
+    async def _on_exit_app(self) -> None:
+        """Save session at the very start of the shutdown sequence."""
+        self._save_session()
+        await super()._on_exit_app()
+
+    def on_key(self, event: events.Key) -> None:
+        """Intercept Ctrl+Q to save session before quit."""
+        if event.key == "ctrl+q":
+            self._save_session()
 
     def on_workspace_event(self, event: WorkspaceEvent) -> None:
         """Route every :class:`WorkspaceEvent` through the handler registry.

@@ -605,3 +605,64 @@ def _on_db_open_query(data: dict, ctx: AppContext) -> None:
             )
 
         app.run_worker(_do())
+
+
+# ---------------------------------------------------------------------------
+# Session handler registration
+# ---------------------------------------------------------------------------
+
+from core.session import TabTypeHandler, register_tab_type
+
+
+def _serialise_query_editor(state: QueryEditorState) -> dict:
+    """Extract persistent data from a QueryEditorState.
+
+    Note: query results are not persisted (too large, may be stale).
+    Only the connection ID and current query text are saved.
+    """
+    return {
+        "connection_id": state.connection_id,
+        "query_text": state.query_text,
+    }
+
+
+def _deserialise_query_editor(data: dict, ctx: AppContext) -> QueryEditorState | None:
+    """Reconstruct a QueryEditorState from serialised data.
+
+    Returns None if the connection no longer exists.
+    """
+    connection_id = data.get("connection_id", "")
+    query_text = data.get("query_text", "")
+
+    # Verify the connection still exists
+    if ctx.db_connections is not None:
+        conn_info = ctx.db_connections.get_connection(connection_id)
+        if conn_info is None:
+            return None  # Connection gone — skip this tab
+    else:
+        return None  # No database connections available
+
+    return QueryEditorState(
+        connection_id=connection_id,
+        query_text=query_text,
+    )
+
+
+def _make_query_editor_from_state(s: QueryEditorState) -> QueryEditor:
+    """Content factory that creates a QueryEditor from restored state."""
+    return QueryEditor(s)
+
+
+def _make_query_label(state: QueryEditorState) -> str:
+    """Produce tab label for a restored query editor."""
+    # Try to get connection name from context
+    return f"󰆼 {state.connection_id}"
+
+
+register_tab_type(TabTypeHandler(
+    tab_type="query_editor",
+    serialise=_serialise_query_editor,
+    deserialise=_deserialise_query_editor,
+    content_factory=_make_query_editor_from_state,
+    make_label=_make_query_label,
+))

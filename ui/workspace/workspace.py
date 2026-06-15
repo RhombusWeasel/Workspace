@@ -20,6 +20,7 @@ Leader chords post :class:`~core.events.WorkspaceEvent` messages.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
@@ -41,6 +42,8 @@ from core.pane_tree import (
 from core.events import WorkspaceEvent
 from core.terminal_passthrough import register_terminal_passthrough
 from ui.workspace.tabs import TabState, WorkspaceTabs
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +216,8 @@ class Workspace(Widget):
                 container = self.query_one(f"#pane-{leaf.id}", PaneContainer)
                 tabs = container.query_one(WorkspaceTabs)
                 states[leaf.id] = tabs.save_state()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("_save_pane_tab_states: failed for leaf %s: %s", leaf.id, e)
         return states
 
 
@@ -303,7 +306,22 @@ class Workspace(Widget):
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
-        """Open a Welcome tab in the initially focused pane."""
+        """Open a Welcome tab in the initially focused pane.
+
+        If the app has a session manager with a saved session, skip the
+        welcome tab — the session restore will populate the workspace.
+        """
+        # Check if a session exists — if so, don't open welcome tab
+        # because the session restore in WorkspaceApp.on_mount will
+        # populate the workspace from the saved session.
+        try:
+            app = self.app
+            ctx = getattr(app, "context", None)
+            if ctx and ctx.session_manager and ctx.session_manager.has_session:
+                return
+        except Exception:
+            pass
+
         self.run_worker(self._open_welcome_tab())
 
     async def _open_welcome_tab(self) -> None:

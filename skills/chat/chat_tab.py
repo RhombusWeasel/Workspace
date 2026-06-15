@@ -186,3 +186,41 @@ def register_chat_leader_chords() -> None:
         "AI Chat",
         event_type="chat.open",
     )
+
+
+# ---------------------------------------------------------------------------
+# Session handler registration
+# ---------------------------------------------------------------------------
+
+from core.session import TabTypeHandler, register_tab_type
+
+
+def _serialise_chat(state: ChatTabState) -> dict:
+    """Extract persistent data from a ChatTabState."""
+    return {
+        "chat_id": state._chat_id,
+        "agent_id": state._agent_id,
+    }
+
+
+def _deserialise_chat(data: dict, ctx: AppContext) -> ChatTabState:
+    """Reconstruct a ChatTabState from serialised data."""
+    state = ChatTabState(ctx=ctx, agent_id=data.get("agent_id"))
+    state._chat_id = data.get("chat_id")
+    return state
+
+
+def _make_chat_label(state: ChatTabState) -> str:
+    """Produce the tab label for a restored chat tab."""
+    if state._agent_id:
+        return f"ë ° {state._agent_id}"
+    return "ë ° AI Chat"
+
+
+register_tab_type(TabTypeHandler(
+    tab_type="chat",
+    serialise=_serialise_chat,
+    deserialise=_deserialise_chat,
+    content_factory=_create_chat_content,
+    make_label=_make_chat_label,
+))
