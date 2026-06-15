@@ -17,6 +17,7 @@ config/
 docs/
 implementations/
 tests/
+scripts/
 *.db
 *.db-shm
 *.db-wal
