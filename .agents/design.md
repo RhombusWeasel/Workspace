@@ -68,3 +68,4 @@ Mission-critical tests only — core safety, tools, streaming, chat display, con
 - **3-tier discovery** — Bundled → user-level → project-level (later overrides earlier)
 - **Terminal preservation** — pyte Screen + TerminalDisplay transferred across recomposition, not widget remount
 - **Throttled terminal recv** — Replaces upstream `PtyTerminal.recv()` with batch-drain + single-render + 16ms sleep to prevent event loop starvation under heavy PTY output
+- **flush_state vs disconnect** — `flush_state()` captures state without destroying live references; `disconnect_from_emulator()` does the full disconnect and is only called during recomposition
