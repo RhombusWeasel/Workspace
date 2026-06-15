@@ -159,5 +159,11 @@
   - Graceful handling: missing deps, bad URLs, non-HTML, timeouts, truncation
   - 17 tests pass, all pre-existing tests unaffected
 
+## In Progress
+- Consolidate workspace_docs skill documentation
+  - Branch: `chore/consolidate-workspace-docs`
+  - Plan: `.agents/plans/consolidate-workspace-docs.md`
+  - Audit all 18 doc files against current codebase, fix inaccuracies, add missing modules, eliminate redundancy, condense to most information-dense form
+
 ## Not Started
 - Bundled skills: coding, todo
