@@ -19,6 +19,12 @@ redaction (scrubbing secrets) is handled automatically by the
 `provider.stream_chat()` redacts messages before they leave the process.
 The Agent no longer needs its own redaction logic.
 
+**Note:** In production use, `ChatManager` delegates streaming to
+`StreamManager`, which owns the background `asyncio.Task` and persists
+sections to the database.  `Agent.stream_chat()` is the low-level API;
+`StreamManager.start()` is the recommended entry point.  See
+[stream_manager.md](stream_manager.md) for details.
+
 ---
 
 ## Architecture

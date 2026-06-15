@@ -1,47 +1,33 @@
 # Skills System
 
-**File:** `core/skills.py`
-**Depends on:** `os`
+**Files:** `core/skills.py` (discovery), `core/paths.py` (tier resolution), `bootstrap.py` (loading), `core/skill_package_manager.py` (install/update/remove)
+**Depends on:** `os`, `importlib`, `sys`
 
 ---
 
 ## Purpose
 
-Skills are the sole extension mechanism in Workspace.  A skill is a directory
-containing a `SKILL.md` manifest — a format compatible with the Anthropic
-skill specification (ClaudeCode, Codex).  Skills are discovered via a
-3-tier directory scan (bundled → user → project) and can provide:
+Skills are the sole extension mechanism in Workspace. A skill is a directory containing a `SKILL.md` manifest — a format compatible with the Anthropic skill specification (ClaudeCode, Codex). Skills provide:
 
-- **Agent knowledge** — markdown instructions the LLM reads via
-  `activate_skill`
+- **Agent knowledge** — markdown instructions the LLM reads via `activate_skill`
 - **UI registrations** — sidebar panels, event handlers, leader chords
 - **Agent tools** — Python functions the LLM can invoke
 - **Slash commands** — `/command` entries the user can type
 - **AppContext services** — service factories wired into the app context
 
-A skill can be purely agent-facing (knowledge only), purely app-facing
-(UI only), or both.  The skill system unifies what were formerly separate
-"skills" and "plugins" — they share the same manifest format and discovery
-mechanism.
-
 ---
 
-## Architecture
+## Discovery & 3-Tier Overriding
 
-```
-3-tier directory scan
-    │
-    ├── {workspace_dir}/skills/          ← bundled (tier 1)
-    ├── ~/.agents/skills/           ← user (tier 2)
-    └── {wd}/.agents/skills/        ← project (tier 3) — wins
-    │
-    ▼
-SkillManager.scan(tier_paths, enabled_map)
-    │
-    ▼
-_skills: {name → Skill}     ← later tiers override same-named skills
-_enabled: set[str]          ← skills not explicitly disabled in config
-```
+`core/paths.resolve(subpath, working_dir)` returns three directories in order of increasing precedence:
+
+| Tier | Path | Scope |
+|---|---|---|
+| 1 — Bundled | `{workspace_dir}/skills/` | Ships with Workspace |
+| 2 — User | `~/.agents/skills/` | Global per-user skills |
+| 3 — Project | `{working_dir}/.agents/skills/` | Per-project skills — **wins** |
+
+`SkillManager.scan(tier_paths, enabled)` scans each tier for subdirectories containing a `SKILL.md` manifest. When two tiers have a skill with the same name, the **later tier wins**. To disable a skill entirely, set `"skill_name": false` in config under `skills.enabled`.
 
 ---
 
@@ -51,6 +37,9 @@ _enabled: set[str]          ← skills not explicitly disabled in config
 ---
 name: my_skill
 description: Short description shown in catalog
+requirements:
+  - requests>=2.28
+  - psycopg2-binary>=2.9
 ---
 
 # My Skill
@@ -59,26 +48,19 @@ Detailed markdown instructions that the LLM reads when the skill
 is activated.  This body is returned by the `activate_skill` tool.
 ```
 
-The YAML frontmatter requires `name` and `description`.  The body after
-the closing `---` is the skill's documentation / instructions.
-
-Optional frontmatter fields:
+YAML frontmatter requires `name` and `description`. The body after `---` is the skill's documentation. Optional fields:
 
 | Field | Description |
 |---|---|
-| `requirements` | YAML list of pip-format package specifiers (for installable skills) |
+| `requirements` | YAML list of pip-format package specifiers (installed via `uv pip install` when using `/skill install`) |
 
 ---
 
 ## Skill Profiles
 
-There are three common skill profiles:
-
 ### Ecosystem skill (Anthropic spec)
 
-No `__init__.py`.  Just SKILL.md + optional `scripts/`.  These skills
-are compatible with any tool that follows the Anthropic skill
-specification.
+No `__init__.py`. Just SKILL.md + optional `scripts/`. Compatible with any tool that follows the Anthropic skill specification.
 
 ```
 my_skill/
@@ -89,10 +71,7 @@ my_skill/
 
 ### UI skill
 
-Has `__init__.py` as the Python entry point.  Registers sidebar panels,
-event handlers, tools, commands, and services.  Gets full `importlib`
-load treatment with `__path__`/`__package__` handling for nested
-sub-packages.
+Has `__init__.py`. Gets full `importlib` load with `__path__`/`__package__` handling for nested sub-packages.
 
 ```
 my_skill/
@@ -107,8 +86,7 @@ my_skill/
 
 ### Hybrid skill
 
-Has agent knowledge (SKILL.md body) plus flat UI components.  Uses
-`components/` directory for sidebar panels, handlers, etc.
+Has agent knowledge (SKILL.md body) plus flat UI components. Uses `components/` directory for sidebar panels, handlers, etc. No `__init__.py` needed.
 
 ```
 my_skill/
@@ -125,133 +103,75 @@ my_skill/
 
 ## The `__init__.py` Gate
 
-`__init__.py` is **optional**.  Its presence determines how the skill
-is loaded at bootstrap:
+`__init__.py` is **optional**. Its presence determines loading:
 
 | Has `__init__.py`? | Loading | Used for |
 |---|---|---|
-| ❌ | Discovery only — SKILL.md body available to agent, scripts runnable | Ecosystem skills, pure knowledge skills |
-| ✅ | Full `importlib` load — `__path__`/`__package__` set, nested sub-imports work | UI skills with complex package structures |
+| ❌ | Discovery only — SKILL.md body available to agent, scripts runnable | Ecosystem/pure knowledge skills |
+| ✅ | Full `importlib` load — `__path__`/`__package__` set, nested sub-imports work | UI skills with complex packages |
 
-Skills without `__init__.py` can still have Python code in `components/`,
-`tools/`, and `cmd/` directories — those are auto-imported as flat files
-by the bootstrap loader.
+Skills without `__init__.py` can still have Python code in `components/`, `tools/`, and `cmd/` — those are auto-imported as flat files by the bootstrap loader.
+
+---
+
+## Loading Process
+
+Bootstrap loads skills in `Bootstrap._load_skill_init_files()`:
+
+1. **`sys.path` guarantee** — Project root added to `sys.path` so skills can `from core.config import Config`.
+2. **Package namespace setup** — A synthetic `skills` package is registered in `sys.modules` with `__path__` pointing to `{workspace_dir}/skills/`. Enables absolute imports like `from skills.my_skill.core import X`.
+3. **Flat component loading** — Skills with `components/`, `tools/`, and `cmd/` directories get their files imported as flat modules, triggering `@register_*` decorators.
+4. **Per-skill `__init__.py` loading** — For each discovered skill with `__init__.py`:
+   - Loaded via `importlib.util.spec_from_file_location`
+   - `__path__` set to `[skill_dir]` so sub-imports resolve from the skill's own directory
+   - `__package__` set to `f"skills.{mod_name}"` for correct relative import resolution
+   - Module registered in `sys.modules` under its fully-qualified name
+   - If the module declares `SKILL_SERVICES`, each factory callable is collected for later invocation with `(config, vault)`
+5. **CSS collection** — `paths.collect_tcss()` gathers all `.tcss` files across all tiers.
+6. **Requirement installation** — If SKILL.md declares `requirements`, `SkillPackageManager.install()` runs `uv pip install` (fallback: `pip install`). Dependencies must be on `sys.path` since skills run in-process.
+7. **Error isolation** — Failed skills are skipped with a warning to stderr. The application continues. The broken module is removed from `sys.modules`.
+
+**Import resolution:** Skills can import from `core/` because the project root is on `sys.path`:
+```python
+from core.events import register_handler    # ✅ works
+from core.config import Config              # ✅ works
+from context import AppContext              # ✅ works
+```
+
+Skills with `__init__.py` can also do sub-imports:
+```python
+from skills.my_skill.core.connections import ConnectionManager  # ✅ works
+```
+
+**Golden rule:** Modules with `@register_handler`, `@register_tool`, `@register_sidebar_tab`, or `@register_command` must be imported by `__init__.py` or live in an auto-discovered directory (`components/`, `tools/`, `cmd/`).
 
 ---
 
 ## SkillManager API
 
-### `scan(tier_paths, enabled=None)`
-
-Rebuild the skill catalog from the given tier paths.  Call this once at
-bootstrap.
-
 ```python
-skill_manager.scan(
-    tier_paths=[
-        "/opt/workspace/skills",
-        "/home/alice/.agents/skills",
-        "/project/.agents/skills",
-    ],
-    enabled={"my_skill": True, "old_skill": False},
-)
+mgr = SkillManager()
+mgr.scan(tier_paths, enabled_map)
 ```
 
-`enabled` is a `name → bool` map.  Skills missing from the map default
-to enabled.
+| Method | Returns | Description |
+|---|---|---|
+| `scan(tier_paths, enabled=None)` | — | Rebuild catalog from tier paths |
+| `list_skills()` | `list[str]` | Sorted enabled skill names |
+| `get_skill(name)` | `Skill \| None` | Skill by name (even if disabled) |
+| `get_skill_body(name)` | `str \| None` | Markdown body (even if disabled) |
+| `get_skill_dirs()` | `list[tuple[str, str]]` | `(name, base_dir)` for enabled skills |
+| `get_skill_init_dirs()` | `list[str]` | Base dirs with `__init__.py` |
+| `get_skill_cmd_dirs()` | `list[str]` | Paths to enabled `cmd/` subdirectories |
+| `get_skill_tools_dirs()` | `list[str]` | Paths to enabled `tools/` subdirectories |
+| `get_skill_components_dirs()` | `list[str]` | Paths to enabled `components/` subdirectories |
+| `get_skill_services()` | `dict` | Collected `SKILL_SERVICES` from loaded modules |
+| `set_skill_services(services)` | — | Store service factories |
+| `get_catalog_xml()` | `str` | Bare XML listing enabled skills |
+| `render_selected(skill_names)` | `str` | XML catalog in code fences for system prompts |
+| `reset()` | — | Clear all skills (for tests) |
 
-### `list_skills() → list[str]`
-
-Return sorted list of enabled skill names.
-
-### `get_skill(name) → Skill | None`
-
-Return a skill by name (even if disabled), or `None`.
-
-### `get_skill_body(name) → str | None`
-
-Return the markdown body for a skill (even if disabled), or `None`.
-
-### `get_skill_dirs() → list[tuple[str, str]]`
-
-Return `(name, base_dir)` pairs for enabled skills.  Useful for finding
-a skill's root directory.
-
-### `get_skill_init_dirs() → list[str]`
-
-Return base directories of enabled skills that contain `__init__.py`.
-These are loaded at bootstrap with full `importlib` treatment.
-
-### `get_skill_cmd_dirs() → list[str]`
-
-Return paths to `cmd/` subdirectories that exist inside enabled skills.
-
-### `get_skill_tools_dirs() → list[str]`
-
-Return paths to `tools/` subdirectories that exist inside enabled skills.
-
-### `get_skill_components_dirs() → list[str]`
-
-Return paths to `components/` subdirectories that exist inside enabled skills.
-Components directories contain Python modules that register UI elements
-(sidebar panels, event handlers, leader chords, config defaults) via the
-usual decorator pattern.  They are auto-imported by the bootstrap loader,
-exactly like `tools/` and `cmd/` directories.
-
-### `get_skill_services() → dict`
-
-Return collected `SKILL_SERVICES` from loaded skill modules.  Services are
-populated by bootstrap's `_load_skill_init_files()` phase.
-
-### `set_skill_services(services)`
-
-Store service factories collected during bootstrap loading.  Called by
-`Bootstrap._load_skill_init_files()` after each skill's `__init__.py` is
-loaded.
-
-### `get_catalog_xml() → str`
-
-Return an XML string listing enabled skills for the agent's system prompt:
-
-```xml
-<available_skills>
-  <skill>
-    <name>my_skill</name>
-    <description>Short description</description>
-    <location>/path/to/SKILL.md</location>
-  </skill>
-</available_skills>
-```
-
-This returns **bare XML** — no code fences.  For the wrapped version
-suitable for injection into LLM system prompts, use `render_selected()`.
-
-### `render_selected(skill_names) → str`
-
-Render the XML catalog for a subset of skills, wrapped in triple-backtick
-`xml` code fences.  This is the preferred method for injecting skill
-catalogs into agent system prompts, as the code fences help LLMs
-interpret the XML correctly.
-
-```python
-xml = skill_manager.render_selected(["chat", "git", "terminal"])
-# Returns:
-# ```xml
-# <available_skills>
-#   <skill>...
-# </available_skills>
-# ```
-```
-
-If `skill_names` is empty or `None`, renders all enabled skills.
-
-### `reset()`
-
-Clear all skills, enabled state, and services.  Use between tests.
-
----
-
-## Skill Data
+### Skill Data Class
 
 ```python
 @dataclass
@@ -265,105 +185,9 @@ class Skill:
 
 ---
 
-## Creating a Skill
-
-### 1. Create the directory
-
-```bash
-mkdir -p ~/.agents/skills/my_skill
-```
-
-### 2. Write SKILL.md
-
-```bash
-cat > ~/.agents/skills/my_skill/SKILL.md << 'EOF'
----
-name: my_skill
-description: Instructions for doing X with the project
----
-
-# My Skill
-
-Detailed instructions the LLM should follow when this skill is activated.
-Include examples, constraints, and step-by-step procedures.
-EOF
-```
-
-### 3. (Optional) Add `__init__.py` for UI skills
-
-If your skill registers sidebar panels, event handlers, or other Python
-components that need to import each other, add `__init__.py`:
-
-```python
-# ~/.agents/skills/my_skill/__init__.py
-"""My Skill — UI extension for Workspace."""
-
-from skills.my_skill.handlers import register_handlers  # noqa: F401
-from skills.my_skill.services import SKILL_SERVICES       # noqa: F401
-
-__all__ = ["SKILL_SERVICES"]
-```
-
-### 4. (Optional) Add tools
-
-```
-my_skill/
-├── SKILL.md
-└── tools/
-    └── my_tool.py       ← @register_tool decorators, auto-discovered
-```
-
-### 5. (Optional) Add commands
-
-```
-my_skill/
-├── SKILL.md
-└── cmd/
-    └── mycommand.py     ← @register_command decorators, auto-discovered
-```
-
-### 6. (Optional) Add UI components
-
-```
-my_skill/
-├── SKILL.md
-├── components/
-│   └── my_panel.py   ← @register_sidebar_tab, @register_handler, etc.
-└── my_skill.tcss     ← Widget styles (auto-collected)
-```
-
-Components directories are auto-imported by the bootstrap loader, enabling
-skills to register sidebar panels, event handlers, leader chords, and config
-defaults — no `__init__.py` needed for flat component files.
-
-### 7. Restart Workspace
-
-Skills are discovered at startup.  Restart to pick up new skills.
-
----
-
-## The `activate_skill` Tool
-
-The built-in `activate_skill` tool lets the LLM read a skill's full body:
-
-```
-User: "Help me deploy to staging"
-LLM: *calls activate_skill(skill_name="deployment")*
-LLM: *reads skill body, follows deployment instructions*
-```
-
-This means skills are pulled into context on demand — only when the LLM
-determines they're relevant.  The skill catalog XML (from
-`get_catalog_xml()`) is always in the system prompt, giving the LLM a
-menu of available skills to choose from.
-
----
-
 ## SKILL_SERVICES Convention
 
-Skills with `__init__.py` may declare a `SKILL_SERVICES` dict mapping
-service names to factory callables.  Bootstrap calls each factory with
-`(config, vault)` and wires the results into `AppContext`:
+Skills with `__init__.py` may declare a `SKILL_SERVICES` dict mapping service names to factory callables. Bootstrap calls each factory with `(config, vault)`:
 
 ```python
 # skills/my_skill/__init__.py
@@ -374,66 +198,116 @@ SKILL_SERVICES = {
 }
 ```
 
-```python
-# skills/my_skill/services.py
-from core.config import Config
-from core.vault import VaultManager
-
-def create_my_service(config: Config, vault: VaultManager):
-    return MyService(config, vault)
-```
-
-Other components access the service via `ctx.services["my_service"]` or,
-for known services like `db_connections`, via `ctx.db_connections`.
+Other components access via `ctx.services["my_service"]` or, for known services like `db_connections`, via `ctx.db_connections`.
 
 ---
 
-## Testing
+## Auto-Discovery Provider Pattern
 
-```python
-from core.skills import SkillManager, skill_manager
+For skills that support multiple backends (e.g. different database types):
 
-def test_skill_discovery(tmp_path):
-    # Create a skill on disk
-    skill_dir = tmp_path / "my_skill"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        "---\nname: my_skill\ndescription: Test skill\n---\n\n# Body\n"
-    )
+1. Define an ABC and `@register_provider` decorator in your core module
+2. Create a `providers/` sub-package that auto-imports all `.py` files
+3. Each provider self-registers via the decorator at import time
 
-    mgr = SkillManager()
-    mgr.scan([str(tmp_path)])
-
-    assert "my_skill" in mgr.list_skills()
-    assert mgr.get_skill_body("my_skill") == "# Body"
 ```
+skills/database/core/
+├── db_connections.py     ← DBProvider ABC, registry
+└── providers/
+    ├── __init__.py      ← Auto-discovers .py files, imports them
+    └── sqlite.py        ← @register_provider class SQLiteProvider
+```
+
+No other changes needed — the connection form automatically shows new provider types, and `ConnectionManager` routes to them.
+
+---
+
+## Skill Package Manager
+
+`core/skill_package_manager.py` handles installing, updating, removing, and listing skills from git repositories. Skills are always installed from a **tagged release** — never from a live branch.
+
+### `.skill.json` metadata
+
+Every installed skill gets a `.skill.json`:
+```json
+{
+    "source": "https://github.com/user/workspace-postgres",
+    "version": "v0.3.1",
+    "installed_at": "2025-05-21T10:30:00Z",
+    "requirements": ["psycopg2-binary>=2.9", "requests>=2.28"]
+}
+```
+
+### Slash command
+
+```
+/skill install <url>                  Install from git (latest tag, global)
+/skill install <url> --version X      Install a specific tag
+/skill install <url> --local          Install to project-local tier
+/skill install <url> --subdir D       Use a subdirectory from a monorepo
+/skill update <name>                  Update to latest tag
+/skill update <name> --version X     Update to a specific tag
+/skill update --all                   Update all managed skills
+/skill remove <name>                  Remove global skill
+/skill remove <name> --local          Remove project-local skill
+/skill list                            List all discovered skills
+```
+
+---
+
+## Creating a Skill
+
+### 1. Create the directory
+```bash
+mkdir -p ~/.agents/skills/my_skill
+```
+
+### 2. Write SKILL.md
+```bash
+cat > ~/.agents/skills/my_skill/SKILL.md << 'EOF'
+---
+name: my_skill
+description: Instructions for doing X with the project
+---
+
+# My Skill
+
+Detailed instructions the LLM should follow when this skill is activated.
+EOF
+```
+
+### 3. (Optional) Add `__init__.py` for UI skills
+```python
+# skills/my_skill/__init__.py
+from skills.my_skill.handlers import register_handlers  # noqa: F401
+from skills.my_skill.services import SKILL_SERVICES       # noqa: F401
+__all__ = ["SKILL_SERVICES"]
+```
+
+### 4. (Optional) Add tools, commands, or components
+
+| Directory | Auto-discovered? | What it registers |
+|---|---|---|
+| `tools/` | Yes | `@register_tool()` |
+| `cmd/` | Yes | `@register_command()` |
+| `components/` | Yes | `@register_sidebar_tab()`, `@register_handler()`, etc. |
+
+### 5. (Optional) Add CSS
+
+Create a `.tcss` file in the skill directory — auto-collected by `collect_tcss()`.
+
+### 6. Restart Workspace
+
+Skills are discovered at startup. Restart to pick up new skills.
 
 ---
 
 ## Design Decisions
 
-1. **Unified skill concept** — Skills are the sole extension mechanism.
-   The former "plugins" concept has been merged into skills.  A skill with
-   `__init__.py` gets the same treatment plugins used to get; a skill
-   without `__init__.py` works as an ecosystem-compatible knowledge bundle.
-
-2. **`__init__.py` is optional** — This ensures compatibility with the
-   Anthropic skill specification.  Ecosystem skills (ClaudeCode, Codex)
-   don't have `__init__.py` — they're just SKILL.md + scripts.  UI skills
-   add `__init__.py` when they need complex Python package structures.
-
-3. **Explicit scan, no auto-reload** — `scan()` is called once at
-   bootstrap.  Adding a skill requires a restart.  This avoids complexity
-   from filesystem watchers and ensures the catalog is stable.
-
-4. **XML catalog for LLM** — The catalog XML is injected into the agent's
-   system prompt so the LLM knows which skills exist.  This is more
-   structured than free-form text and easier for the LLM to parse.
-
-5. **Skills can contain code** — A skill's `tools/`, `cmd/`, and
-   `components/` directories are auto-imported by the bootstrap loader.
-  This lets a skill provide both knowledge (markdown body) and tools
-  (Python code) as well as UI components (sidebar panels, handlers, etc.).
-
-6. **Enabled/disabled in config** — The `skills.enabled` config key maps
-  skill names to booleans.  Missing entries default to `True` (enabled).
+1. **Unified skill concept** — Skills are the sole extension mechanism. The former "plugins" concept has been merged. A skill with `__init__.py` gets full loading treatment; without it, works as an ecosystem-compatible knowledge bundle.
+2. **Decorator self-registration** — `@register_sidebar_tab`, `@register_handler`, `@register_tool`, and `@register_command` all self-register at import time. No manual wiring needed.
+3. **Explicit scan, no auto-reload** — `scan()` is called once at bootstrap. Adding a skill requires a restart.
+4. **XML catalog for LLM** — The catalog XML is injected into the agent's system prompt so the LLM knows which skills exist.
+5. **Later tier overrides earlier** — Same as config: project-level overrides user-level overrides bundled.
+6. **Graceful degradation on import failure** — Broken skills are skipped with a warning. The application continues.
+7. **Dependencies install into project venv** — Since skills run in-process, their Python dependencies must be on `sys.path`. `uv pip install` (fallback: `pip install`) installs `requirements:` from SKILL.md.

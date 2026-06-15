@@ -1,6 +1,6 @@
 # LLM Providers
 
-**Files:** `core/providers/base.py` (base class + redaction + data classes), `core/providers/ollama.py` (Ollama implementation), `core/providers/registry.py` (named instance management)
+**Files:** `core/providers/base.py` (base class + data classes), `core/redaction.py` (redaction logic), `core/providers/ollama.py` (Ollama implementation), `core/providers/registry.py` (named instance management)
 **Depends on:** `core.config` (for config defaults), `core.vault` (for API key resolution + secret redaction)
 
 ---
@@ -218,16 +218,17 @@ async def _do_stream_chat(self, messages, model, tools=None) -> AsyncIterator[St
 
 ## Message Redaction
 
-`BaseProvider` automatically redacts secrets from messages before sending
-them to the LLM.  This happens transparently — the `Agent` and all
-callers receive un-redacted messages, and only the provider-specific
-methods see scrubbed content.
+Message redaction is handled by `core/redaction.py`, which is called by
+`BaseProvider.chat()` and `BaseProvider.stream_chat()` before messages
+are passed to provider-specific methods.  The Agent and all callers
+receive un-redacted messages; only the provider-specific methods see
+scrubbed content.
 
 ### How it works
 
 1. **Vault secrets**: When the vault is unlocked, all credential passwords
-   and secure notes are collected.  When locked, previously cached secrets
-   are used.
+   and secure notes are collected from `core/vault.py`.  When locked,
+   previously cached secrets are used.
 2. **Quoted-string matching**: Secrets are only redacted when they appear
    as the *complete content* between matching quote delimiters (`'secret'`,
    `"secret"`, `` `secret` ``).  This prevents false positives (e.g.

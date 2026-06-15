@@ -28,7 +28,8 @@ class Bootstrap:
         vault = self._init_vault()              # Phase 7
         providers = self._init_provider_registry(config, vault)  # Phase 8
         agents = self._init_agent_registry(database)              # Phase 9
-        self._register_agent_providers(agents, skills, providers) # Phase 9b
+        self._register_agent_providers(agents, skills, providers) # Phase 9a
+        self._register_context_providers(agents)                  # Phase 9b
         skill_services = self._load_skill_init_files(skills, config, vault) # Phase 10
         self._init_leader()                     # Phase 11
         css_paths = self._collect_css()         # Phase 12

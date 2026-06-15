@@ -32,8 +32,11 @@ CREATE TABLE messages (
     turn_id      TEXT NOT NULL,
     content_type TEXT NOT NULL,  -- "user", "thinking", "tool_call", "response", "system"
     content      TEXT NOT NULL DEFAULT '',
+    section_id   TEXT NOT NULL DEFAULT '',  -- Unique per sequential section (for streaming upsert)
     created_at   TEXT NOT NULL
 );
+
+CREATE INDEX idx_messages_section ON messages(chat_id, turn_id, section_id);
 
 -- Custom agents (LLM personalities)
 CREATE TABLE agents (
@@ -94,10 +97,12 @@ db = DatabaseManager(db_path="/path/to/workspace_data.db")
 
 | Method | Signature | Description |
 |---|---|---|
-| `save_section` | `(chat_id, turn_id, content_type, content) → int` | Insert a section row |
-| `load_sections` | `(chat_id) → list[dict]` | All sections for a chat, ordered by `id` |
-| `reconstruct_history` | `(chat_id) → list[dict]` | Build LLM-consumable message list from flat sections |
-| `delete_messages` | `(chat_id)` | Delete all sections for a chat |
+| `save_section` | `(chat_id, turn_id, content_type, content, section_id="") → int` | Insert a section row |
+| `load_sections` | `(chat_id) → list[dict]` | All sections for a chat, ordered by `id`. Each dict includes `section_id` |
+| `reconstruct_history` | `(chat_id) → list[dict]` | Build LLM-consumable message list from flat sections. Emits `role="tool"` messages for tool results |
+| `upsert_streaming_section` | `(chat_id, turn_id, section_id, content_type, content)` | Insert or update a streaming section row by section_id |
+| `finalize_streaming_section` | `(chat_id, turn_id, section_id)` | Mark a streaming section as finalized |
+| `update_tool_result` | `(chat_id, turn_id, section_id, result_text)` | Update a tool_call section's result field |
 
 #### Content types
 
@@ -105,9 +110,17 @@ db = DatabaseManager(db_path="/path/to/workspace_data.db")
 |---|---|---|
 | `"user"` | User input | Human's message text |
 | `"thinking"` | Chain-of-thought | Reasoning from DeepSeek-R1, Qwen, etc. |
-| `"tool_call"` | Tool invocation | JSON `{"name": ..., "arguments": ...}` |
+| `"tool_call"` | Tool invocation | JSON `{"name": ..., "arguments": ..., "result": ...}` |
 | `"response"` | Assistant text | LLM output |
 | `"system"` | System message | System prompt turns |
+
+#### Streaming sections
+
+`StreamManager` writes sections to the DB as they arrive, using `upsert_streaming_section()` for in-place updates. This enables the chat display to poll the DB via `refresh_from_sections()` and render updates incrementally.
+
+- **`section_id`** uniquely identifies each sequential section (e.g. `t1-thinking-1`, `t1-response-2`). Set by `StreamManager` during streaming; empty string for non-streaming sections.
+- **Tool calls** are stored as JSON with optional `"result"` key. `update_tool_result()` patches the result into an existing tool_call row.
+- **`finalize_streaming_section()`** marks a section as complete (no longer being updated).
 
 #### `reconstruct_history()`
 
@@ -115,10 +128,9 @@ This method walks flat sections and builds the structured message list
 that `Agent.stream_chat()` expects:
 
 - User sections → `{"role": "user", "content": ...}`
-- Assistant sections (thinking, tool_call, response) merged into one
-  `{"role": "assistant", ...}` dict per turn
+- Assistant sections (thinking, tool_call, response) merged into one `{"role": "assistant", ...}` dict per turn
+- Tool-call sections with a `"result"` key also emit `{"role": "tool", "name": ..., "content": ...}` messages
 - System sections → `{"role": "system", "content": ...}`
-- Tool-call content is JSON-decoded into `tool_calls` lists
 
 ### Agent CRUD
 
@@ -149,6 +161,9 @@ that `Agent.stream_chat()` expects:
 
 | Method | Signature | Description |
 |---|---|---|
+| `upsert_streaming_section` | `(chat_id, turn_id, section_id, content_type, content)` | Insert or update a streaming section row by section_id |
+| `finalize_streaming_section` | `(chat_id, turn_id, section_id)` | Mark a streaming section as finalized |
+| `update_tool_result` | `(chat_id, turn_id, section_id, result_text)` | Update a tool_call section's result field |
 | `delete_sections_from_turn` | `(chat_id, turn_id)` | Delete all sections for a specific turn |
 
 Used by the "revert to checkpoint" feature to wipe DB entries from a

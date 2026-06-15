@@ -51,6 +51,8 @@ class AppContext:
 | `working_directory` | `str` | Bootstrap | Current working directory (project root) |
 | `css_paths` | `list[str]` | Bootstrap | Collected `.tcss` file paths for Textual CSS |
 | `services` | `dict[str, Any]` | Bootstrap | Dynamic service instances from skill `SKILL_SERVICES` |
+| `stream_manager` | `StreamManager \| None` | WorkspaceApp | Owns active LLM stream tasks |
+| `session_manager` | `SessionManager \| None` | WorkspaceApp | Saves/restores workspace state across restarts |
 | `app` | `Any` | `WorkspaceApp.__init__` | The running Textual app instance |
 | `prompts` | `Any` | Bootstrap | **Deprecated** — same as `ctx.agents`, for migration |
 
