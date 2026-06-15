@@ -203,9 +203,6 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
             # await, so the event loop is free between batches.
             message = await pty.recv_queue.get()
 
-            from textual import log
-            log.warning(f"terminal: recv got message: {message[0]}, pty.emulator={pty.emulator is not None}")
-
             stdout_chunks: list[str] = []
             setup_requested = False
             disconnect_requested = False
@@ -244,8 +241,6 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
             # event loop.  Process cleanup is handled by
             # _async_stop_emulator() called from dispose() instead.
             if disconnect_requested:
-                from textual import log
-                log.warning("terminal: disconnect received, stopping recv loop")
                 return
 
             # Feed all accumulated stdout to pyte in one call.
@@ -500,9 +495,17 @@ class TerminalView(Widget):
     def flush_state(self) -> None:
         """Sync current widget state back to ``self.state``.
 
-        Called by :meth:`WorkspaceTabs.save_state` before recomposition.
-        Flushes the emulator, screen, and display back to the state
-        object so the fresh widget can adopt them after the rebuild.
+        Called by :meth:`WorkspaceTabs.save_state` during periodic
+        session saves **and** before recomposition.  Because this method
+        is called during routine saves, it must **only capture** state
+        without disconnecting the widget from its emulator — nulling
+        ``emulator``, ``send_queue``, or ``recv_queue`` would kill the
+        live terminal.
+
+        The disconnection logic that was previously here (setting
+        ``emulator = None``, ``send_queue = None``, etc.) is now in
+        :meth:`disconnect_from_emulator`, which is only called during
+        actual recomposition.
         """
         if self._pty is None:
             return
@@ -511,15 +514,32 @@ class TerminalView(Widget):
         if self._pty.emulator is not None:
             self.state.emulator = self._pty.emulator
 
-        # Capture screen and display before disconnecting
+        # Capture screen and display
         if hasattr(self._pty, "_screen") and self._pty._screen is not None:
             self.state.screen = self._pty._screen
         if hasattr(self._pty, "_display") and self._pty._display is not None:
             self.state.display = self._pty._display
 
-        # Cancel our throttled recv task and await it properly.
-        # We schedule the cleanup as a coroutine since flush_state
-        # is synchronous.
+    def disconnect_from_emulator(self) -> None:
+        """Disconnect the widget from the live PTY emulator.
+
+        Called **only** during recomposition, when the widget is about
+        to be destroyed and replaced by a fresh one.  Cancels the recv
+        task and nulls the emulator / queue references so that the
+        emulator's queues are not read by two recv tasks simultaneously.
+
+        This must NOT be called during periodic saves — it kills the
+        live terminal by setting ``emulator = None``, which causes
+        ``PtyTerminal.on_key`` to stop forwarding keystrokes to the
+        shell process.
+        """
+        if self._pty is None:
+            return
+
+        # Capture state first (same as flush_state).
+        self.flush_state()
+
+        # Cancel our throttled recv task.
         self._cancel_recv_task()
 
         # Disconnect the old PtyTerminal from the emulator so that
@@ -638,36 +658,9 @@ class TerminalView(Widget):
             # Fresh terminal — spawn a new shell process.
             # The upstream start() creates its own recv_task using
             # recv(), so we need to replace it with our throttled one.
-            from textual import log
-            log.warning(f"terminal: mounting fresh terminal")
-
-            # Monkey-patch stop() to log when it's called — diagnostic.
-            _original_stop = self._pty.stop
-            def _logged_stop(msg="unknown caller"):
-                from textual import log
-                log.warning(f"terminal: PtyTerminal.stop() called! caller={msg}")
-                import traceback
-                traceback.print_stack()
-                _original_stop()
-            self._pty.stop = _logged_stop
-
-            # Also trap __setattr__ on the PtyTerminal to catch when
-            # emulator is set to None.
-            _original_setattr = type(self._pty).__setattr__
-            def _trapped_setattr(pty_self, name, value):
-                if name == 'emulator' and value is None:
-                    from textual import log
-                    log.warning(f"terminal: pty.emulator set to None!")
-                    import traceback
-                    traceback.print_stack()
-                _original_setattr(pty_self, name, value)
-            type(self._pty).__setattr__ = _trapped_setattr
-
             self._pty.start()
             # Cancel the upstream recv task and replace with ours.
             if self._pty.recv_task is not None and not self._pty.recv_task.done():
-                from textual import log
-                log.warning(f"terminal: cancelling upstream recv_task={self._pty.recv_task}")
                 self._pty.recv_task.cancel()
                 # Fire-and-forget await — the cancellation will
                 # propagate, we just need to ensure it's awaited.
@@ -676,8 +669,6 @@ class TerminalView(Widget):
                 )
             self._recv_task = asyncio.create_task(_throttled_recv(self._pty))
             self._pty.recv_task = self._recv_task
-            from textual import log
-            log.warning(f"terminal: started throttled recv, task={self._recv_task}, pty.emulator={self._pty.emulator is not None}")
 
         # Focus the terminal so the user can type immediately.
         self._focus_terminal()
@@ -807,14 +798,7 @@ class TerminalView(Widget):
 
         When not scrolled up, all keys are left for PtyTerminal to handle.
         """
-        if self._pty is None:
-            return
-
-        # Diagnostic: check if emulator is alive when key reaches us
-        from textual import log
-        log.warning(f"terminal: TerminalView.on_key key={event.key}, pty.emulator={self._pty.emulator is not None}, pty._stopped={getattr(self._pty, '_stopped', 'n/a')}")
-
-        if self._pty.emulator is None:
+        if self._pty is None or self._pty.emulator is None:
             return
 
         key = event.key
