@@ -150,3 +150,14 @@
 
 ## Not Started
 - Bundled skills: coding, todo
+- Add `web_reader` skill for webpage content extraction ✅
+  - Branch: `feature/web-reader-skill`
+  - Plan: `.agents/plans/web-reader-skill.md`
+  - Pure script skill (no registered tool) — invoked via `run_skill`
+  - Uses `httpx` + `trafilatura` for fetch + boilerplate-free extraction
+  - Supports `--format` (markdown/text), `--no-links`, `--max-length` flags
+  - Graceful handling: missing deps, bad URLs, non-HTML, timeouts, truncation
+  - 17 tests pass, all pre-existing tests unaffected
+
+## Not Started
+- Bundled skills: coding, todo

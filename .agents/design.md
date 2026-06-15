@@ -38,6 +38,7 @@ A Textual-based TUI application providing an AI coding assistant. Supports Ollam
 - **git** — Git panel, checkpoint/diff/log scripts, leader chords
 - **agents** — Agent panel for CRUD and switching
 - **brave_search** — Web search via Brave API (pure script skill)
+- **web_reader** — Webpage content extraction via httpx + trafilatura (pure script skill)
 - **workspace_docs** — Core-systems documentation for agent context
 
 ### Tools (`tools/`)
