@@ -146,6 +146,16 @@
   - 44 tests, all 457 pass
   - **Needs manual testing**: verify terminal stays responsive after multiple commands, session saves don't kill it, closing tabs works, no crashes
 
+- Consolidate workspace_docs skill documentation ✅
+  - Branch: `chore/consolidate-workspace-docs`, commit c94bd0a
+  - Plan: `.agents/plans/consolidate-workspace-docs.md`
+  - Added 4 new docs: stream_manager, session, pane_tree, context_files
+  - Updated 5 existing docs with outdated references (database, context, agent, providers, bootstrap)
+  - Merged skill_loading.md into skills.md (removed skill_loading.md)
+  - Trimmed creating_a_skill.md (22KB→8KB), ui_widgets.md (5KB→2KB), workspace_tabs.md (26KB→13KB)
+  - Updated SKILL.md index with all new/removed files and updated summaries
+  - Net: ~196KB → ~176KB with 19KB of new content for previously undocumented modules
+
 ## In Progress
 
 ## Not Started
@@ -160,10 +170,6 @@
   - 17 tests pass, all pre-existing tests unaffected
 
 ## In Progress
-- Consolidate workspace_docs skill documentation
-  - Branch: `chore/consolidate-workspace-docs`
-  - Plan: `.agents/plans/consolidate-workspace-docs.md`
-  - Audit all 18 doc files against current codebase, fix inaccuracies, add missing modules, eliminate redundancy, condense to most information-dense form
 
 ## Not Started
 - Bundled skills: coding, todo

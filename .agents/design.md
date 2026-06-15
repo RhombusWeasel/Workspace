@@ -62,11 +62,15 @@ Mission-critical tests only — core safety, tools, streaming, chat display, con
 - Error logging added to `_rebuild_and_maybe_resume()` and `HistoryPanel._open_chat()` — previously silent exceptions
 
 ### Key Patterns
-- **AppContext** — Service locator dataclass (config, skills, database, leader, providers, agents, db_connections, working_directory, services)
-- **Bootstrap** — Ordered startup: config → skills → tools → DB → leader → context
+- **AppContext** — Service locator dataclass (config, skills, database, leader, providers, agents, db_connections, working_directory, services, stream_manager, session_manager)
+- **Bootstrap** — Ordered startup: config → skills → tools → DB → vault → providers → agents → context providers → leader → CSS
 - **Skill components/** — Auto-imported Python modules that register sidebar panels, event handlers, leader chords, config defaults
 - **Skill scripts/** — Python scripts run in-process via `exec()` with `context` (AppContext) and `args` globals
 - **3-tier discovery** — Bundled → user-level → project-level (later overrides earlier)
 - **Terminal preservation** — pyte Screen + TerminalDisplay transferred across recomposition, not widget remount
+- **StreamManager** — Owns LLM stream task, writes response/thinking/tool sections to DB, ChatDisplay polls via refresh_from_sections()
+- **SessionManager** — TabTypeHandler registry for serialise/deserialise, saves/restores workspace state to .agents/session.json
+- **PaneTree** — Recursive split/close/navigate data model with JSON serialisation
+- **Context files** — Dynamic template providers for {{user}}, {{design}}, {{tasks}}, {{workspace_agents}}, {{global_agents}}, {{local_agents}}
 - **Throttled terminal recv** — Replaces upstream `PtyTerminal.recv()` with batch-drain + single-render + 16ms sleep to prevent event loop starvation under heavy PTY output
 - **flush_state vs disconnect** — `flush_state()` captures state without destroying live references; `disconnect_from_emulator()` does the full disconnect and is only called during recomposition
