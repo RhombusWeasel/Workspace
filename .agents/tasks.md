@@ -136,6 +136,10 @@
   - **Pending manual test**: Verify tabs are restored correctly after app restart
 
 ## In Progress
+- Fix: Terminal hangs and crashes after 2 commands
+  - Plan: `.agents/plans/fix-terminal-hang-crash.md`
+  - 5 bugs identified: unthrottled render loop (primary), duplicate recv_task, signal leak, compose screen clobber, unmount safety
+  - Branch: TBD
 
 ## Not Started
 - Bundled skills: coding, todo
