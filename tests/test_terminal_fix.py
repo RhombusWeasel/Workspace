@@ -13,6 +13,8 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +28,8 @@ from skills.terminal.terminal import (
     _RENDER_INTERVAL,
     _RE_ANSI_SEQUENCE,
     _DECSET_PREFIX,
+    _async_stop_emulator,
+    _reap_process,
 )
 
 
@@ -161,14 +165,16 @@ class TestThrottledRecvBatching:
 
     @pytest.mark.asyncio
     async def test_disconnect_message_stops_pty(self):
-        """A disconnect message calls pty.stop() and returns."""
+        """A disconnect message causes recv to return without calling pty.stop().
+        Process cleanup is handled by _async_stop_emulator() instead."""
         pty = _FakePty()
         await pty.recv_queue.put(["disconnect"])
 
         task = asyncio.create_task(_throttled_recv(pty))
         await asyncio.sleep(0.05)
 
-        assert pty._stopped
+        # recv should have returned — not called pty.stop().
+        assert not pty._stopped
         assert task.done()
 
     @pytest.mark.asyncio
@@ -649,3 +655,215 @@ class TestANSIRegex:
         text = "\x1b[?1000h\x1b[1;1H"
         matches = list(_RE_ANSI_SEQUENCE.finditer(text))
         assert len(matches) == 2
+
+
+# ---------------------------------------------------------------------------
+# Test: _async_stop_emulator — non-blocking process teardown
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncStopEmulator:
+    """Verify _async_stop_emulator does non-blocking teardown."""
+
+    def test_no_pid_is_noop(self):
+        """If the emulator has no pid, _async_stop_emulator is a no-op."""
+        emulator = MagicMock()
+        emulator.pid = None
+        # Should not raise.
+        _async_stop_emulator(emulator)
+
+    def test_cancels_internal_tasks(self):
+        """Cancels run_task and send_task on the emulator."""
+        emulator = MagicMock()
+        emulator.pid = 99999  # fake pid
+        run_task = MagicMock()
+        run_task.done.return_value = False
+        send_task = MagicMock()
+        send_task.done.return_value = False
+        emulator.run_task = run_task
+        emulator.send_task = send_task
+
+        with patch("skills.terminal.terminal.os.kill") as mock_kill, \
+             patch("skills.terminal.terminal.asyncio.get_running_loop") as mock_loop:
+            mock_loop.side_effect = RuntimeError("no loop")
+            _async_stop_emulator(emulator)
+
+        run_task.cancel.assert_called_once()
+        send_task.cancel.assert_called_once()
+
+    def test_sends_sigterm(self):
+        """Sends SIGTERM to the child process."""
+        emulator = MagicMock()
+        emulator.pid = 12345
+        emulator.run_task = None
+        emulator.send_task = None
+
+        with patch("skills.terminal.terminal.os.kill") as mock_kill, \
+             patch("skills.terminal.terminal.asyncio.get_running_loop") as mock_loop:
+            mock_loop.side_effect = RuntimeError("no loop")
+            _async_stop_emulator(emulator)
+
+        mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+
+    def test_sigterm_process_not_found_is_ok(self):
+        """ProcessLookupError from os.kill is silently caught."""
+        emulator = MagicMock()
+        emulator.pid = 12345
+        emulator.run_task = None
+        emulator.send_task = None
+
+        with patch("skills.terminal.terminal.os.kill", side_effect=ProcessLookupError) as mock_kill, \
+             patch("skills.terminal.terminal.asyncio.get_running_loop") as mock_loop:
+            mock_loop.side_effect = RuntimeError("no loop")
+            # Should not raise.
+            _async_stop_emulator(emulator)
+
+    def test_schedules_reap_task(self):
+        """When there's a running event loop, _reap_process is scheduled."""
+        emulator = MagicMock()
+        emulator.pid = 12345
+        emulator.run_task = None
+        emulator.send_task = None
+
+        mock_loop = MagicMock()
+        mock_loop.create_task = MagicMock()
+
+        with patch("skills.terminal.terminal.os.kill") as mock_kill, \
+             patch("skills.terminal.terminal.asyncio.get_running_loop", return_value=mock_loop):
+            _async_stop_emulator(emulator)
+
+        mock_loop.create_task.assert_called_once()
+        # Verify the scheduled coroutine is _reap_process(12345).
+        coro = mock_loop.create_task.call_args[0][0]
+        assert asyncio.iscoroutine(coro)
+        assert coro.cr_code.co_name == "_reap_process"
+
+
+class TestReapProcess:
+    """Verify _reap_process polls and escalates correctly."""
+
+    @pytest.mark.asyncio
+    async def test_process_already_dead(self):
+        """If waitpid returns a pid, _reap_process returns immediately."""
+        with patch("skills.terminal.terminal.os.waitpid", return_value=(12345, 0)) as mock_waitpid:
+            await _reap_process(12345)
+        # Should have called waitpid at least once.
+        assert mock_waitpid.called
+
+    @pytest.mark.asyncio
+    async def test_process_already_reaped(self):
+        """ChildProcessError from waitpid means already reaped — return."""
+        with patch("skills.terminal.terminal.os.waitpid", side_effect=ChildProcessError) as mock_waitpid:
+            await _reap_process(12345)
+        assert mock_waitpid.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_oserror_from_waitpid(self):
+        """OSError from waitpid is caught — return."""
+        with patch("skills.terminal.terminal.os.waitpid", side_effect=OSError) as mock_waitpid:
+            await _reap_process(12345)
+        assert mock_waitpid.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_escalates_to_sigkill_after_timeout(self):
+        """If process doesn't exit after SIGTERM timeout, SIGKILL is sent."""
+        # Simulate: waitpid always returns (0, 0) (still running)
+        # until SIGKILL, then returns (pid, 9) (killed).
+        call_count = 0
+
+        def fake_waitpid(pid, flags):
+            nonlocal call_count
+            call_count += 1
+            if flags & os.WNOHANG:
+                return (0, 0)  # Still running
+            else:
+                return (pid, 9)  # Reaped after SIGKILL
+
+        sigkill_sent = False
+        original_kill = os.kill
+
+        def fake_kill(pid, sig):
+            nonlocal sigkill_sent
+            if sig == signal.SIGKILL:
+                sigkill_sent = True
+            # Don't actually kill anything
+
+        with patch("skills.terminal.terminal.os.waitpid", side_effect=fake_waitpid), \
+             patch("skills.terminal.terminal.os.kill", side_effect=fake_kill), \
+             patch("skills.terminal.terminal._SIGTERM_TIMEOUT", 0.3), \
+             patch("skills.terminal.terminal._POLL_INTERVAL", 0.1):
+            await _reap_process(12345)
+
+        assert sigkill_sent
+
+    @pytest.mark.asyncio
+    async def test_sigkill_process_not_found_is_ok(self):
+        """ProcessLookupError when sending SIGKILL is silently caught."""
+        def fake_waitpid(pid, flags):
+            if flags & os.WNOHANG:
+                return (0, 0)  # Still running
+            else:
+                return (pid, 9)  # Reaped
+
+        with patch("skills.terminal.terminal.os.waitpid", side_effect=fake_waitpid), \
+             patch("skills.terminal.terminal.os.kill", side_effect=ProcessLookupError), \
+             patch("skills.terminal.terminal._SIGTERM_TIMEOUT", 0.3), \
+             patch("skills.terminal.terminal._POLL_INTERVAL", 0.1):
+            # Should not raise.
+            await _reap_process(12345)
+
+
+# ---------------------------------------------------------------------------
+# Test: TerminalState.dispose uses _async_stop_emulator
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalStateDispose:
+    """Verify dispose() uses non-blocking teardown."""
+
+    def test_dispose_calls_async_stop_emulator(self):
+        """dispose() calls _async_stop_emulator, not emulator.stop()."""
+        emulator = MagicMock()
+        emulator.pid = 12345
+        state = TerminalState(emulator=emulator)
+
+        with patch("skills.terminal.terminal._async_stop_emulator") as mock_stop:
+            state.dispose()
+
+        mock_stop.assert_called_once_with(emulator)
+        assert state.emulator is None
+
+    def test_dispose_clears_screen_and_display(self):
+        """dispose() also clears screen and display references."""
+        emulator = MagicMock()
+        emulator.pid = 12345
+        state = TerminalState(
+            emulator=emulator,
+            screen=MagicMock(),
+            display=MagicMock(),
+        )
+
+        with patch("skills.terminal.terminal._async_stop_emulator"):
+            state.dispose()
+
+        assert state.screen is None
+        assert state.display is None
+
+    def test_dispose_with_no_emulator_is_safe(self):
+        """dispose() with no emulator is a no-op."""
+        state = TerminalState()
+        # Should not raise.
+        state.dispose()
+        assert state.emulator is None
+
+    def test_dispose_exception_is_caught(self):
+        """If _async_stop_emulator raises, dispose() doesn't crash."""
+        emulator = MagicMock()
+        emulator.pid = 12345
+        state = TerminalState(emulator=emulator)
+
+        with patch("skills.terminal.terminal._async_stop_emulator", side_effect=RuntimeError("boom")):
+            # Should not raise.
+            state.dispose()
+
+        assert state.emulator is None

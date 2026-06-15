@@ -47,6 +47,7 @@ import itertools
 import os
 import re
 import shlex
+import signal
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -131,14 +132,35 @@ class TerminalState(TabState):
     display: Any = field(default=None)
     """TerminalDisplay with the rendered Rich Text lines."""
 
+    _cleanup_task: asyncio.Task | None = field(default=None)
+    """Background task that reaps the PTY child process."""
+
     def dispose(self) -> None:
-        """Stop the PTY process when the tab is permanently closed."""
+        """Stop the PTY process when the tab is permanently closed.
+
+        Uses **non-blocking** process teardown instead of calling
+        ``emulator.stop()`` directly.  The upstream ``TerminalEmulator.stop()``
+        calls ``os.waitpid(pid, 0)`` synchronously, which **blocks the event
+        loop** if the shell doesn't respond to SIGTERM immediately — this
+        caused the entire application to hang when closing a terminal tab.
+
+        Instead, we:
+        1. Cancel the emulator's internal tasks (``_run``, ``_send_data``).
+        2. Send SIGTERM to the child process.
+        3. Schedule a background task that polls ``os.waitpid(pid, WNOHANG)``
+           every 100 ms and sends SIGKILL after a 2-second timeout.
+        4. Reap the zombie once the process exits.
+        """
         if self.emulator is not None:
             try:
-                self.emulator.stop()
+                _async_stop_emulator(self.emulator)
             except Exception:
                 pass
             self.emulator = None
+
+        # Also clear screen/display so stale references don't linger.
+        self.screen = None
+        self.display = None
 
 
 def next_terminal_id() -> str:
@@ -205,9 +227,12 @@ async def _throttled_recv(pty: PtyTerminal) -> None:
             if setup_requested and pty.send_queue is not None:
                 await pty.send_queue.put(["set_size", pty.nrow, pty.ncol])
 
-            # Handle disconnect.
+            # Handle disconnect — just return without calling pty.stop().
+            # The upstream PtyTerminal.stop() calls emulator.stop() which
+            # uses os.waitpid(pid, 0) — a BLOCKING call that freezes the
+            # event loop.  Process cleanup is handled by
+            # _async_stop_emulator() called from dispose() instead.
             if disconnect_requested:
-                pty.stop()
                 return
 
             # Feed all accumulated stdout to pyte in one call.
@@ -281,6 +306,106 @@ def _render_screen(pty: PtyTerminal) -> None:
 
     pty._display = TerminalDisplay(lines)
     pty.refresh()
+
+
+# ---------------------------------------------------------------------------
+# Async process teardown — replaces blocking TerminalEmulator.stop()
+# ---------------------------------------------------------------------------
+
+# How long to wait after SIGTERM before escalating to SIGKILL.
+_SIGTERM_TIMEOUT = 2.0
+
+# How often to poll os.waitpid(pid, WNOHANG).
+_POLL_INTERVAL = 0.1
+
+
+def _async_stop_emulator(emulator: Any) -> None:
+    """Stop a PTY emulator **without** blocking the event loop.
+
+    The upstream ``TerminalEmulator.stop()`` calls ``os.waitpid(pid, 0)``
+    synchronously, which blocks the event loop if the child process
+    doesn't exit immediately after SIGTERM.  This function replaces that
+    with a non-blocking teardown:
+
+    1. Cancel the emulator's internal asyncio tasks (``_run``, ``_send_data``)
+       so they stop reading from / writing to the PTY fd.
+    2. Send ``SIGTERM`` to the child process.
+    3. Schedule a background ``asyncio.Task`` that polls
+       ``os.waitpid(pid, WNOHANG)`` every 100 ms, escalating to
+       ``SIGKILL`` after 2 seconds if the process still hasn't exited.
+    4. Reap the zombie once the process exits.
+
+    This is safe to call from synchronous code (e.g. ``dispose()``).
+    The actual waiting happens in the scheduled task.
+    """
+    pid = getattr(emulator, "pid", None)
+    if pid is None:
+        # No process to stop (shouldn't happen, but be safe).
+        return
+
+    # Step 1: Cancel internal tasks so they stop reading the PTY fd.
+    for task_attr in ("run_task", "send_task"):
+        task = getattr(emulator, task_attr, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    # Step 2: Send SIGTERM.
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        # Process already dead — just reap.
+        pass
+
+    # Step 3 & 4: Schedule async reaping.
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_reap_process(pid))
+    except RuntimeError:
+        # No running loop — try to reap synchronously as a fallback.
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            pass
+
+
+async def _reap_process(pid: int) -> None:
+    """Poll ``os.waitpid(pid, WNOHANG)`` until the process exits.
+
+    Sends ``SIGKILL`` after ``_SIGTERM_TIMEOUT`` seconds if the process
+    still hasn't exited.  This ensures zombie processes are always
+    reaped without blocking the event loop.
+    """
+    elapsed = 0.0
+    while elapsed < _SIGTERM_TIMEOUT:
+        try:
+            _, status = os.waitpid(pid, os.WNOHANG)
+            if status != 0 or _ == 0:
+                # Process exited (status != 0 means it was signalled) or
+                # no such child (== 0 with WNOHANG means not exited yet,
+                # but if waitpid returns (0, 0) the child is still alive).
+                # Actually, waitpid returns (pid, status) when reaped,
+                # or (0, 0) when WNOHANG and child still running.
+                if _ != 0:
+                    return  # Successfully reaped
+        except ChildProcessError:
+            return  # Already reaped by someone else
+        except OSError:
+            return
+
+        await asyncio.sleep(_POLL_INTERVAL)
+        elapsed += _POLL_INTERVAL
+
+    # Timeout — escalate to SIGKILL.
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    # Wait again after SIGKILL (process *will* exit now).
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
 
 
 class TerminalView(Widget):
