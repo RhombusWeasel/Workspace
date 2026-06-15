@@ -12,6 +12,7 @@ in the display and database.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -646,7 +647,9 @@ class ChatManager(Widget):
                         sections = self._db.load_sections(self._chat_id)
                         await self._chat_display.refresh_from_sections(sections)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug(
+                            "Stream poll refresh failed", exc_info=True
+                        )
 
                 await asyncio.sleep(poll_interval)
 
@@ -654,6 +657,10 @@ class ChatManager(Widget):
             pass
 
         # Final refresh after stream completes or is cancelled.
+        # This is the critical refresh that finalizes the display
+        # (swaps Static -> Markdown, removes empty sections).  If it
+        # fails we retry without finalisation so at least the raw
+        # content is visible.
         if self.is_mounted and not self._chat_display._detached:
             if self._db is not None and self._chat_id is not None:
                 try:
@@ -672,7 +679,30 @@ class ChatManager(Widget):
                     ]
                     self._rebuild_history()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).error(
+                        "Final stream refresh (finalize=True) failed, "
+                        "retrying without finalize",
+                        exc_info=True,
+                    )
+                    # Retry without finalisation so the raw content is
+                    # at least visible, even if Markdown swap fails.
+                    try:
+                        sections = self._db.load_sections(self._chat_id)
+                        await self._chat_display.refresh_from_sections(sections)
+                        self._sections = [
+                            {
+                                "turn_id": s["turn_id"],
+                                "content_type": s["content_type"],
+                                "content": s["content"],
+                            }
+                            for s in sections
+                        ]
+                        self._rebuild_history()
+                    except Exception:
+                        logging.getLogger(__name__).error(
+                            "Fallback stream refresh also failed",
+                            exc_info=True,
+                        )
 
         # Update context usage bar with token counts from the completed stream.
         usage_chunk = sm.get_usage(stream_id)

@@ -39,6 +39,8 @@ walks, no rebuilds, no prefix computation.
 
 from __future__ import annotations
 
+import logging
+
 from textual.containers import VerticalScroll
 from textual.widgets import Collapsible, Markdown, Static
 
@@ -1248,6 +1250,12 @@ class ChatDisplay(VerticalScroll):
                 old_widget.remove()
                 await contents.mount(new_widget)
             except Exception:
+                logging.getLogger(__name__).debug(
+                    "DOM swap failed for section %s, falling back to "
+                    "_contents_list update",
+                    section_id,
+                    exc_info=True,
+                )
                 # Section not yet composed -- update _contents_list directly.
                 try:
                     idx = section._contents_list.index(old_widget)
@@ -1258,7 +1266,11 @@ class ChatDisplay(VerticalScroll):
                 try:
                     old_widget.remove()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug(
+                        "Could not remove old widget for section %s",
+                        section_id,
+                        exc_info=True,
+                    )
 
             # Update the section's content widget reference.
             section._content_widget = new_widget
