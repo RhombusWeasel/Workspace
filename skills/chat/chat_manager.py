@@ -180,17 +180,29 @@ class ChatManager(Widget):
         Unlike _detach_display(), this cancels the stream in StreamManager
         so the LLM agent is aborted and the background task is cleaned up.
         Used when the user explicitly aborts a response.
+
+        Note: we do NOT set ``_chat_display._detached = True`` here.  That
+        flag means the widget has been removed from the DOM (workspace
+        recomposition).  Setting it would block the post-stream cleanup in
+        ``_sync_conversation``, leaving the input locked and the abort button
+        stuck.
         """
         if self._stream_id is not None:
             ctx = self._get_context()
             if ctx and ctx.stream_manager:
                 ctx.stream_manager.cancel(self._stream_id)
             self._stream_id = None
+        if self._state is not None:
+            self._state._stream_id = None
         if self._streaming_task is not None and not self._streaming_task.is_finished:
             self._streaming_task.cancel()
         self._streaming = False
-        if hasattr(self, '_chat_display') and self._chat_display is not None:
-            self._chat_display._detached = True
+        # Immediately unlock the input so the user can type again.
+        # The async cleanup in _sync_conversation also calls these,
+        # but only after the polling loop exits (up to 250ms delay).
+        if hasattr(self, '_chat_input') and self._chat_input is not None:
+            self._chat_input.set_streaming(False)
+            self._chat_input.focus()
 
     def focus(self) -> None:
         """Focus the chat input.
