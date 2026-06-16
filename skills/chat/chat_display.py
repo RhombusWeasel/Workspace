@@ -1061,17 +1061,36 @@ class ChatDisplay(VerticalScroll):
 
             # Replace the content widget in the Section.
             new_widget = Markdown(text, id=f"{widget.id}-rendered")
-            section._content_widget = new_widget
 
-            # Also update the Collapsible's _contents_list so that when
-            # compose() runs, it yields the new Markdown widget instead of
-            # the old Static widget.
+            # If the section is already composed and in the DOM
+            # (post-streaming case), do a live DOM swap. Otherwise
+            # (initial load / pre-composition batch), update
+            # _contents_list so compose() yields the new widget.
+            swapped_in_dom = False
             try:
-                idx = section._contents_list.index(widget)
-                section._contents_list[idx] = new_widget
-            except ValueError:
-                section._contents_list.append(new_widget)
+                contents = section.query_one(Collapsible.Contents)
+                # Section is in the DOM — swap the widget live.
+                widget.remove()
+                contents.mount(new_widget)
+                swapped_in_dom = True
+            except Exception:
+                # Section not yet composed — update _contents_list
+                # so compose() will yield the new Markdown widget.
+                pass
 
+            if not swapped_in_dom:
+                try:
+                    idx = section._contents_list.index(widget)
+                    section._contents_list[idx] = new_widget
+                except ValueError:
+                    section._contents_list.append(new_widget)
+                # Also try to remove the old widget if it's in the DOM.
+                try:
+                    widget.remove()
+                except Exception:
+                    pass
+
+            section._content_widget = new_widget
             # Update tracking.
             self._section_widgets[section_id] = new_widget
 
