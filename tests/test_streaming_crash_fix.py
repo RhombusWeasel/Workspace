@@ -5,9 +5,8 @@ Verifies:
 2. ChatManager._cancel_streaming() cancels stream via StreamManager on user abort
 3. ChatManager._detach_display() marks display detached, cancels local worker
 4. ChatDisplay guards skip DOM operations when _detached=True
-5. StreamSection guards skip display updates when display is detached
-6. StreamManager start/subscribe/cancel lifecycle
-7. Stream preservation across recomposition
+5. StreamManager start/subscribe/cancel lifecycle
+6. Stream preservation across recomposition
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ from core.providers.base import ToolCall
 from skills.chat.chat_display import ChatDisplay
 from skills.chat.chat_manager import ChatManager
 from skills.chat.chat_input import ChatInput
-from skills.chat.stream_section import StreamSection
 
 
 # ---------------------------------------------------------------------------
@@ -279,80 +277,6 @@ class TestChatDisplayDetached:
 
 		# Should not raise — just return.
 		display.add_tool_result("tc-1", "result text")
-
-
-# ---------------------------------------------------------------------------
-# C: StreamSection guards
-# ---------------------------------------------------------------------------
-
-
-class TestStreamSectionDetached:
-	"""Tests for StreamSection bailing out when display is detached."""
-
-	@pytest.mark.asyncio
-	async def test_append_skips_update_when_detached(self):
-		"""StreamSection.append() should skip display update when detached."""
-		app = _ChatDisplayApp()
-		async with app.run_test(size=(80, 40)):
-			display = app.chat_display
-			display._detached = True
-
-			# Need an active turn for add_section to work even when detached.
-			display._turn_count = 0
-			display._active_asst_id = "asst-1"
-			display._turn_map["asst-1"] = None
-
-			# Create a StreamSection — add_section returns an ID but
-			# doesn't mount anything since we're detached.
-			section = StreamSection(display, "response")
-
-			# Append should not raise and should accumulate text.
-			await section.append("Hello")
-			assert section.text == "Hello", (
-				f"Expected text to be 'Hello', got '{section.text}'"
-			)
-
-	@pytest.mark.asyncio
-	async def test_replace_skips_update_when_detached(self):
-		"""StreamSection.replace() should skip display update when detached."""
-		app = _ChatDisplayApp()
-		async with app.run_test(size=(80, 40)):
-			display = app.chat_display
-			display._detached = True
-
-			# Need an active turn for add_section to work even when detached.
-			display._turn_count = 0
-			display._active_asst_id = "asst-1"
-			display._turn_map["asst-1"] = None
-
-			section = StreamSection(display, "response")
-
-			# Replace should not raise.
-			await section.replace("Replaced text")
-			assert section.text == "Replaced text", (
-				f"Expected text to be 'Replaced text', got '{section.text}'"
-			)
-
-	@pytest.mark.asyncio
-	async def test_flush_skips_update_when_detached(self):
-		"""StreamSection.flush() should skip display update when detached."""
-		app = _ChatDisplayApp()
-		async with app.run_test(size=(80, 40)):
-			display = app.chat_display
-			display._detached = True
-
-			# Need an active turn for add_section to work even when detached.
-			display._turn_count = 0
-			display._active_asst_id = "asst-1"
-			display._turn_map["asst-1"] = None
-
-			section = StreamSection(display, "response")
-			await section.append("Hello")
-
-			# Flush should not raise.
-			await section.flush()
-
-			assert section.text == "Hello"
 
 
 # ---------------------------------------------------------------------------
@@ -619,11 +543,10 @@ class TestStreamingGracefulExit:
 	"""Tests for the streaming loop exiting gracefully when detached."""
 
 	@pytest.mark.asyncio
-	async def test_rebuild_display_bails_out_when_not_mounted(self):
-		"""_rebuild_and_maybe_resume should return early if no sections."""
+	async def test_sync_conversation_returns_when_no_db(self):
+		"""_sync_conversation should return early if no DB or chat_id."""
 		manager = ChatManager()
-		manager._sections = []
 		manager._state = MagicMock()
 
-		# This should return without error — no sections to rebuild.
-		await manager._rebuild_and_maybe_resume()
+		# No DB and no chat_id — should return without error.
+		await manager._sync_conversation(finalize=True)

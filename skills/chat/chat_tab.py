@@ -50,7 +50,6 @@ class ChatTabState(TabState):
         # Conversation state — populated by flush_state(), read by the
         # content factory when recreating the widget after recomposition.
         self._history: list[dict[str, Any]] = []
-        self._sections: list[dict[str, str]] = []
         self._agent: Any = None
         self._tools: list[dict[str, Any]] | None = None
         self._db: Any = None
@@ -90,8 +89,7 @@ def _create_chat_content(state: TabState) -> ChatManager:
     manager = ChatManager()
     if isinstance(state, ChatTabState):
         manager.set_state(state)
-        if not state._history and state._ctx is not None:
-            # No prior conversation — just wire the agent.
+        if state._ctx is not None:
             if state._agent_id:
                 manager.wire_agent_from_id(state._ctx, state._agent_id)
             else:

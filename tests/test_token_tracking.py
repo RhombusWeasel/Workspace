@@ -5,7 +5,7 @@ Verifies:
 2. StreamManager.get_usage() returns stored usage after stream completes
 3. StreamManager.get_usage() returns None for unknown/cancelled streams
 4. StreamManager.cancel() cleans up usage data
-5. ChatManager._poll_stream calls update_context_progress after stream completes
+5. ChatManager._sync_conversation calls update_context_progress after stream completes
 """
 
 from __future__ import annotations
@@ -278,8 +278,8 @@ class TestChatManagerTokenTracking:
 	"""Tests that ChatManager calls update_context_progress after streaming."""
 
 	@pytest.mark.asyncio
-	async def test_poll_stream_updates_context_bar(self):
-		"""_poll_stream should call update_context_progress with usage data after stream completes."""
+	async def test_sync_conversation_updates_context_bar(self):
+		"""_sync_conversation should call update_context_progress with usage data after stream completes."""
 		from core.database import DatabaseManager
 
 		sm = StreamManager()
