@@ -340,9 +340,9 @@ class ChatManager(Widget):
                 )
                 self._rebuild_history()
             except Exception:
-                logging.getLogger(__name__).error(
+                _log.exception(
                     "Conversation sync (finalize=%s) failed",
-                    finalize, exc_info=True
+                    finalize
                 )
                 # Retry without finalize so raw content is at least visible.
                 if finalize:
