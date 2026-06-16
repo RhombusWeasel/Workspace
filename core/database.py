@@ -81,6 +81,29 @@ class SQLiteProvider(BaseDBProvider):
     # Internal
     # ------------------------------------------------------------------
 
+    def _migrate_messages_table(self) -> None:
+        """Add the status column to the messages table if it doesn't exist.
+
+        Pre-existing rows have status='complete' since they were all
+        written by completed streams.
+        """
+        assert self._conn is not None
+        try:
+            cursor = self._conn.execute("PRAGMA table_info(messages)")
+            rows = cursor.fetchall()
+            if not rows:
+                # Table doesn't exist yet — CREATE TABLE will include the column.
+                return
+            columns = {row[1] for row in rows}
+        except Exception:
+            return
+
+        if "status" not in columns:
+            self._conn.execute(
+                "ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'"
+            )
+            self._conn.commit()
+
     def _migrate_agents_table(self) -> None:
         """Rename the old agents table if it has the legacy schema.
 
@@ -119,6 +142,7 @@ class SQLiteProvider(BaseDBProvider):
         # The new agents table has additional columns.  If the old schema is detected,
         # rename it so the new table can be created.
         self._migrate_agents_table()
+        self._migrate_messages_table()
 
         self._conn.executescript(
             """
@@ -136,6 +160,7 @@ class SQLiteProvider(BaseDBProvider):
                 section_id   TEXT NOT NULL DEFAULT '',
                 content_type TEXT NOT NULL,
                 content      TEXT NOT NULL DEFAULT '',
+                status       TEXT NOT NULL DEFAULT 'streaming',
                 created_at   TEXT NOT NULL
             );
 
@@ -144,6 +169,9 @@ class SQLiteProvider(BaseDBProvider):
 
             CREATE INDEX IF NOT EXISTS idx_messages_section
                 ON messages(chat_id, turn_id, section_id);
+
+            CREATE INDEX IF NOT EXISTS idx_messages_status
+                ON messages(chat_id, status);
 
             CREATE TABLE IF NOT EXISTS agents (
                 id                  TEXT PRIMARY KEY,
@@ -282,8 +310,8 @@ class DatabaseManager:
             can be updated in place.  Empty for one-shot sections.
         """
         cur = self._provider.conn.execute(
-            "INSERT INTO messages (chat_id, turn_id, section_id, content_type, content, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (chat_id, turn_id, section_id, content_type, content, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'complete', ?)",
             (chat_id, turn_id, section_id, content_type, content, _now()),
         )
         self._provider.conn.commit()
@@ -316,9 +344,14 @@ class DatabaseManager:
             self._provider.conn.commit()
             return row_id
 
-        return self.save_section(
-            chat_id, turn_id, content_type, content, section_id=section_id
+        # New streaming section — insert with status='streaming'.
+        cur = self._provider.conn.execute(
+            "INSERT INTO messages (chat_id, turn_id, section_id, content_type, content, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'streaming', ?)",
+            (chat_id, turn_id, section_id, content_type, content, _now()),
         )
+        self._provider.conn.commit()
+        return cur.lastrowid
 
     def finalize_streaming_section(
         self,
@@ -341,14 +374,43 @@ class DatabaseManager:
         """Return all message sections for *chat_id* ordered by ``id``.
 
         Each dict has keys ``id``, ``chat_id``, ``turn_id``,
-        ``section_id``, ``content_type``, ``content``, ``created_at``.
+        ``section_id``, ``content_type``, ``content``, ``status``,
+        ``created_at``.
         """
         rows = self._provider.execute(
-            "SELECT id, chat_id, turn_id, section_id, content_type, content, created_at "
+            "SELECT id, chat_id, turn_id, section_id, content_type, content, status, created_at "
             "FROM messages WHERE chat_id = ? ORDER BY id ASC",
             (chat_id,),
         )
         return [dict(r) for r in rows]
+
+    def finalize_section(
+        self, chat_id: str, turn_id: str, section_id: str
+    ) -> None:
+        """Mark a single streaming section as complete.
+
+        Called by the StreamManager when a section finishes streaming
+        (e.g. on a section transition or stream end).
+        """
+        self._provider.execute(
+            "UPDATE messages SET status = 'complete' "
+            "WHERE chat_id = ? AND turn_id = ? AND section_id = ?",
+            (chat_id, turn_id, section_id),
+        )
+
+    def finalize_sections_for_turn(
+        self, chat_id: str, turn_id: str
+    ) -> None:
+        """Mark all streaming sections for a turn as complete.
+
+        Safety net called in the StreamManager finally block to ensure
+        no sections are left in 'streaming' state.
+        """
+        self._provider.execute(
+            "UPDATE messages SET status = 'complete' "
+            "WHERE chat_id = ? AND turn_id = ? AND status = 'streaming'",
+            (chat_id, turn_id),
+        )
 
     def reconstruct_history(self, chat_id: str) -> list[dict[str, Any]]:
         """Reconstruct LLM-consumable message list from flat sections.

@@ -484,12 +484,17 @@ class ChatDisplay(VerticalScroll):
         self._schedule_scroll()
         return asst_id
 
-    def add_section(self, section_type: str) -> str:
+    def add_section(self, section_type: str, *, as_markdown: bool = False) -> str:
         """Add a new section to the current assistant turn.
 
         *section_type* must be one of ``'thinking'``, ``'tools'``, or
         ``'response'``.  Returns the section ID for use with
         :meth:`update_section`.
+
+        When *as_markdown* is True, the section content widget is created
+        as a ``Markdown`` widget instead of ``Static``.  This is used when
+        the section is already complete (status='complete') so it can
+        be rendered with rich formatting from the start.
         """
         if section_type not in _VALID_SECTIONS:
             raise ValueError(
@@ -512,12 +517,21 @@ class ChatDisplay(VerticalScroll):
         self._section_count += 1
         section_id = f"{section_type}-sec{self._section_count}"
 
-        # All sections use Static during streaming.
+        # Use Markdown for complete sections that benefit from rich rendering.
+        # Thinking sections always use Static regardless of completion.
+        use_markdown = as_markdown and section_type not in _KEEP_STATIC_SECTIONS
+
         css_class = "thinking-content" if section_type == "thinking" else "streaming-content"
-        content_widget: Widget = Static(
-            "", markup=False,
-            id=f"md-{section_id}", classes=css_class,
-        )
+        if use_markdown:
+            content_widget: Widget = Markdown(
+                "",
+                id=f"md-{section_id}",
+            )
+        else:
+            content_widget = Static(
+                "", markup=False,
+                id=f"md-{section_id}", classes=css_class,
+            )
 
         self._section_widgets[section_id] = content_widget
         self._section_texts[section_id] = ""
@@ -717,14 +731,18 @@ class ChatDisplay(VerticalScroll):
         content changed; new rows create new widgets.  Missing rows are left
         alone (they may belong to a different conversation).
 
+        The ``status`` field (``'streaming'`` or ``'complete'``) drives
+        rendering: complete sections are rendered as Markdown (rich
+        formatting), streaming sections as Static (cheap updates).  When
+        a section transitions from streaming to complete between polls,
+        it is swapped from Static to Markdown in place.
+
         When ``finalize=True``, the entire rebuild runs in batch mode:
         ``begin_batch`` is called first, all widgets are accumulated
         without DOM mounts, then ``batch_finalize_turns`` swaps
         Static→Markdown for all turns, and ``end_batch`` mounts
         everything at once.  This ensures multi-turn conversations are
-        rebuilt correctly — without batch mode, ``begin_assistant_turn``
-        clears per-turn tracking dicts, causing earlier turns' sections
-        to appear "empty" and be removed by ``finalize_turn``.
+        rebuilt correctly.
 
         Parameters
         ----------
@@ -783,12 +801,15 @@ class ChatDisplay(VerticalScroll):
                     ct = sec["content_type"]
                     content = sec.get("content", "")
                     sid = sec.get("section_id") or str(sec.get("id", ""))
+                    status = sec.get("status", "complete")  # default for old rows
                     key = (tid, sid)
+                    is_complete = status == "complete"
                     if ct == "system" and key not in self._section_state:
                         self.add_system_message(content)
                     self._section_state[key] = {
                         "content_type": ct,
                         "content": content,
+                        "is_complete": is_complete,
                     }
                 continue
 
@@ -796,23 +817,41 @@ class ChatDisplay(VerticalScroll):
                 ct = sec["content_type"]
                 content = sec.get("content", "")
                 sid = sec.get("section_id") or str(sec.get("id", ""))
+                status = sec.get("status", "complete")  # default for old rows
                 key = (tid, sid)
+                is_complete = status == "complete"
 
                 prev = self._section_state.get(key)
-                if prev is not None and prev["content"] == content:
-                    continue
+                if prev is not None:
+                    # Content unchanged — but status may have changed.
+                    if prev["content"] == content:
+                        # Check if section transitioned from streaming → complete.
+                        if is_complete and not prev.get("is_complete", True):
+                            await self._maybe_swap_to_markdown(key, content)
+                            self._section_state[key] = {
+                                "content_type": ct,
+                                "content": content,
+                                "is_complete": True,
+                            }
+                        continue
 
                 if ct == "thinking":
                     section_id = self._refresh_section_map.get(key)
                     if section_id is None:
-                        section_id = self.add_section("thinking")
+                        # During batch finalize, always use Static —
+                        # batch_finalize_turns will swap to Markdown later.
+                        # During incremental streaming, use Markdown for
+                        # completed sections.
+                        use_markdown = is_complete and not finalize
+                        section_id = self.add_section("thinking", as_markdown=use_markdown)
                         self._refresh_section_map[key] = section_id
                     await self.update_section(section_id, content)
 
                 elif ct == "response":
                     section_id = self._refresh_section_map.get(key)
                     if section_id is None:
-                        section_id = self.add_section("response")
+                        use_markdown = is_complete and not finalize
+                        section_id = self.add_section("response", as_markdown=use_markdown)
                         self._refresh_section_map[key] = section_id
                     await self.update_section(section_id, content)
 
@@ -843,6 +882,7 @@ class ChatDisplay(VerticalScroll):
                 self._section_state[key] = {
                     "content_type": ct,
                     "content": content,
+                    "is_complete": is_complete,
                 }
 
         if finalize:
@@ -1222,6 +1262,25 @@ class ChatDisplay(VerticalScroll):
     # ------------------------------------------------------------------
     # Static → Markdown swap (called from finalize_turn)
     # ------------------------------------------------------------------
+
+    async def _maybe_swap_to_markdown(
+        self, key: tuple[str, str], content: str
+    ) -> None:
+        """Swap a streaming section from Static to Markdown if it has completed.
+
+        Called by refresh_from_sections when it detects a section whose
+        status changed from 'streaming' to 'complete'.  Only swaps
+        sections that are not thinking (thinking stays Static).
+        """
+        section_id = self._refresh_section_map.get(key)
+        if section_id is None:
+            return
+
+        widget = self._section_widgets.get(section_id)
+        if widget is None or not isinstance(widget, Static):
+            return  # Already Markdown or not found
+
+        await self._swap_to_markdown(section_id)
 
     async def _swap_sections_to_markdown(self) -> None:
         """Swap completed response/tools sections from Static → Markdown.

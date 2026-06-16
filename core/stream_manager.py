@@ -194,6 +194,15 @@ class StreamManager:
             "text": meta["current_section_text"],
             "dirty": meta.get("current_section_dirty", False),
         })
+        # Mark the section as complete in the DB.
+        db = meta.get("db")
+        chat_id = meta.get("chat_id")
+        turn_id = meta.get("turn_id")
+        if db is not None and chat_id is not None and turn_id is not None:
+            try:
+                db.finalize_section(chat_id, turn_id, meta["sections"][-1]["section_id"])
+            except Exception:
+                pass
         meta["current_section_type"] = None
         meta["current_section_id"] = None
         meta["current_section_text"] = ""
@@ -377,6 +386,15 @@ class StreamManager:
                     except Exception:
                         pass
 
+                # Safety net: mark any remaining streaming sections
+                # as complete.  Individual sections are finalized by
+                # _finalize_current_section() and tool-result handlers,
+                # but this catches anything that slipped through.
+                try:
+                    db.finalize_sections_for_turn(chat_id, turn_id)
+                except Exception:
+                    pass
+
             self._streams.pop(stream_id, None)
             self._metadata.pop(stream_id, None)
 
@@ -437,6 +455,8 @@ class StreamManager:
                             "tool_call",
                             _format_tool_call_json(tc.name, tc.arguments, result=result),
                         )
+                        # Tool call with result is now complete.
+                        db.finalize_section(chat_id, turn_id, tc_id)
                     except Exception:
                         pass
 
