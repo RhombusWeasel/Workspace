@@ -851,10 +851,11 @@ class ChatDisplay(VerticalScroll):
             self.batch_finalize_turns()
             self.end_batch()
             self._schedule_scroll()
-        elif self._active_asst_id is not None:
-            # Incremental streaming update — only finalise the active turn.
-            await self.finalize_turn()
-            self._schedule_scroll()
+        # During incremental streaming (finalize=False), do NOT call
+        # finalize_turn(). Sections stay as Static widgets and are updated
+        # in place. Finalization only happens when the streaming loop ends
+        # and _sync_conversation calls refresh_from_sections with
+        # finalize=True.
 
     # ------------------------------------------------------------------
     # Helpers

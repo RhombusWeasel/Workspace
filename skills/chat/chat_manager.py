@@ -582,26 +582,20 @@ class ChatManager(Widget):
     # ------------------------------------------------------------------
 
     async def _handle_submit(self, user_text: str) -> None:
-        """Full streaming turn: display user msg, start LLM stream, sync display."""
+        """Full streaming turn: persist user msg to DB, start LLM stream, sync display."""
         turn_id = uuid.uuid4().hex
 
         # Create a git checkpoint before processing the user message.
         checkpoint_tag = self._create_turn_checkpoint(turn_id)
 
-        # User message in display and database.
-        self._chat_display.add_user_message(user_text)
-        self._chat_display._user_turn_ids.add(turn_id)
+        # Persist user message to DB — the display will pick it up via
+        # _sync_conversation polling refresh_from_sections().
         self._persist_section(turn_id, "user", user_text)
 
-        # Assistant branch -- StreamManager will write sections here.
-        self._chat_display.begin_assistant_turn(turn_id=turn_id)
-        self.refresh(layout=True)
-        await asyncio.sleep(0)
-
         if self._agent is None:
-            error_section_id = self._chat_display.add_section("response")
-            await self._chat_display.update_section(error_section_id, "No agent configured.")
-            await self._chat_display.finalize_turn()
+            # Persist error to DB and finalise — display reads from DB.
+            self._persist_section(turn_id, "response", "No agent configured.")
+            await self._sync_conversation(finalize=True)
             self._chat_input.focus()
             return
 
@@ -618,9 +612,8 @@ class ChatManager(Widget):
 
         if stream_manager is None:
             # StreamManager is created by bootstrap and should always be present.
-            error_section_id = self._chat_display.add_section("response")
-            await self._chat_display.update_section(error_section_id, "StreamManager not available.")
-            await self._chat_display.finalize_turn()
+            self._persist_section(turn_id, "response", "StreamManager not available.")
+            await self._sync_conversation(finalize=True)
             self._chat_input.set_streaming(False)
             self._streaming = False
             self._chat_input.focus()

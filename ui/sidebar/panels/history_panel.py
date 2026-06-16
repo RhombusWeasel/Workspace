@@ -255,16 +255,6 @@ class HistoryPanel(Container):
         # Reconstruct LLM-consumable history from the sections
         history = ctx.database.reconstruct_history(chat_id)
 
-        # Reconstruct in-memory sections (flat dicts) for display rebuild
-        flat_sections = [
-            {
-                "turn_id": s["turn_id"],
-                "content_type": s["content_type"],
-                "content": s["content"],
-            }
-            for s in sections
-        ]
-
         # Determine agent_id from the sections — look for system messages
         # that contain an agent identifier, or use default
         agent_id = None
@@ -273,7 +263,6 @@ class HistoryPanel(Container):
         # Create a ChatTabState pre-populated with the loaded history
         state = ChatTabState(ctx=ctx, agent_id=agent_id)
         state._history = history
-        state._sections = flat_sections
         state._db = ctx.database
         state._chat_id = chat_id
 
