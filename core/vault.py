@@ -35,6 +35,60 @@ VAULT_VERSION: int = 1
 
 _PBKDF2_ITERATIONS: int = 480_000
 _SALT_LENGTH: int = 32
+_NAME_MAX_LENGTH: int = 128
+_PASSWORD_MIN_LENGTH: int = 4
+_PASSWORD_MAX_LENGTH: int = 256
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def validate_name(name: str) -> str:
+	"""Validate and normalise a vault entry name.
+
+	Returns the stripped name on success; raises ``ValueError`` on failure.
+
+	Rules:
+	* Must not be empty or whitespace-only.
+	* Must not contain ``-`` (breaks UI action routing).
+	* Must not start with ``vault:`` (reserved for internal passkeys).
+	* Must not contain control characters (U+0000–U+001F, U+007F).
+	* Must be 128 characters or fewer (after stripping).
+	"""
+	name = name.strip()
+	if not name:
+		raise ValueError("Name must not be empty")
+	if "-" in name:
+		raise ValueError("Name must not contain '-' (use underscores instead)")
+	if name.startswith("vault:"):
+		raise ValueError("Name must not start with 'vault:'")
+	if any(ord(c) <= 0x1F or ord(c) == 0x7F for c in name):
+		raise ValueError("Name must not contain control characters")
+	if len(name) > _NAME_MAX_LENGTH:
+		raise ValueError(f"Name must be {_NAME_MAX_LENGTH} characters or fewer")
+	return name
+
+
+def validate_master_password(password: str) -> str:
+	"""Validate a master password.
+
+	Returns the stripped password on success; raises ``ValueError`` on failure.
+
+	Rules:
+	* Must be at least 4 characters.
+	* Must not be whitespace-only.
+	* Must be 256 characters or fewer (after stripping).
+	"""
+	password = password.strip()
+	if not password:
+		raise ValueError("Master password must not be empty")
+	if len(password) < _PASSWORD_MIN_LENGTH:
+		raise ValueError(f"Master password must be at least {_PASSWORD_MIN_LENGTH} characters")
+	if len(password) > _PASSWORD_MAX_LENGTH:
+		raise ValueError(f"Master password must be {_PASSWORD_MAX_LENGTH} characters or fewer")
+	return password
+
 
 # ---------------------------------------------------------------------------
 # Crypto helpers
@@ -95,6 +149,7 @@ class Vault:
         Any existing file at *filepath* is overwritten.  The vault is
         unlocked afterwards using *master_password*.
         """
+        master_password = validate_master_password(master_password)
         salt = secrets.token_bytes(_SALT_LENGTH)
         key = _derive_key(master_password, salt)
         self._key = key
@@ -154,6 +209,12 @@ class Vault:
     def register_credential(self, name: str, username: str, password: str) -> None:
         """Store (or overwrite) a named credential."""
         self._require_unlocked()
+        name = validate_name(name)
+        self._register_credential_raw(name, username, password)
+
+    def _register_credential_raw(self, name: str, username: str, password: str) -> None:
+        """Store a credential without name validation (internal use only)."""
+        self._require_unlocked()
         self._entries["credentials"][name] = {
             "username": username,
             "password": password,
@@ -186,6 +247,7 @@ class Vault:
     def register_secure_note(self, name: str, text: str) -> None:
         """Store (or overwrite) a secure note."""
         self._require_unlocked()
+        name = validate_name(name)
         self._entries["notes"][name] = text
         self._write()
 
@@ -289,6 +351,7 @@ class VaultManager:
 
     def initialize_master(self, master_password: str) -> None:
         """Create a brand-new master vault, overwriting any existing file."""
+        master_password = validate_master_password(master_password)
         self.master.initialize(master_password)
         self._local = None
 
@@ -336,7 +399,7 @@ class VaultManager:
         self._local = local
 
         project_abs = os.path.abspath(self.working_dir)
-        self.master.register_credential(f"vault:{project_abs}", "_", passkey)
+        self.master._register_credential_raw(f"vault:{project_abs}", "_", passkey)
 
     def remove_local_vault(self) -> None:
         """Delete the local vault file and its passkey from the master vault."""
@@ -362,6 +425,7 @@ class VaultManager:
     def register_credential(self, name: str, username: str, password: str) -> None:
         """Store a credential in the local vault if available, otherwise master."""
         self._require_unlocked()
+        name = validate_name(name)
         target = self._write_target()
         target.register_credential(name, username, password)
 
@@ -407,6 +471,7 @@ class VaultManager:
     def register_secure_note(self, name: str, text: str) -> None:
         """Store a secure note in the local vault if available, otherwise master."""
         self._require_unlocked()
+        name = validate_name(name)
         target = self._write_target()
         target.register_secure_note(name, text)
 

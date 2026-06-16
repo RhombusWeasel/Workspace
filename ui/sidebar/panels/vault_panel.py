@@ -330,10 +330,14 @@ class VaultPanel(Container):
                 if password is None:
                     return
 
-                if scope == "local" and self._vault is not None:
-                    self._vault._local.register_credential(name, username, password)
-                elif self._vault is not None:
-                    self._vault.register_credential(name, username, password)
+                try:
+                    if scope == "local" and self._vault is not None:
+                        self._vault._local.register_credential(name, username, password)
+                    elif self._vault is not None:
+                        self._vault.register_credential(name, username, password)
+                except ValueError as e:
+                    self.app.notify(str(e), severity="error")
+                    return
             else:
                 name_modal = InputModal("Note name:", "Name")
                 name = await self.app.push_screen_wait(name_modal)
@@ -345,10 +349,14 @@ class VaultPanel(Container):
                 if text is None:
                     return
 
-                if scope == "local" and self._vault is not None:
-                    self._vault._local.register_secure_note(name, text)
-                elif self._vault is not None:
-                    self._vault.register_secure_note(name, text)
+                try:
+                    if scope == "local" and self._vault is not None:
+                        self._vault._local.register_secure_note(name, text)
+                    elif self._vault is not None:
+                        self._vault.register_secure_note(name, text)
+                except ValueError as e:
+                    self.app.notify(str(e), severity="error")
+                    return
 
             self._rebuild()
 
@@ -383,7 +391,11 @@ class VaultPanel(Container):
                 if password is None:
                     return
 
-                self._vault.register_credential(name, username, password)
+                try:
+                    self._vault.register_credential(name, username, password)
+                except ValueError as e:
+                    self.app.notify(str(e), severity="error")
+                    return
             else:
                 old_text = self._vault.get_secure_note(name)
                 if old_text is None:
@@ -394,7 +406,11 @@ class VaultPanel(Container):
                 if text is None:
                     return
 
-                self._vault.register_secure_note(name, text)
+                try:
+                    self._vault.register_secure_note(name, text)
+                except ValueError as e:
+                    self.app.notify(str(e), severity="error")
+                    return
 
             self._rebuild()
 
@@ -508,6 +524,8 @@ def _prompt_vault_password(ctx: AppContext, prompt: str, action) -> None:
             action(ctx.vault, result)
             panel = app.query_one("VaultPanel")
             panel._rebuild()
+        except ValueError as e:
+            app.notify(str(e), severity="error")
         except Exception:
             pass
 
