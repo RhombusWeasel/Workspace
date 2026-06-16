@@ -717,17 +717,34 @@ class ChatDisplay(VerticalScroll):
         content changed; new rows create new widgets.  Missing rows are left
         alone (they may belong to a different conversation).
 
+        When ``finalize=True``, the entire rebuild runs in batch mode:
+        ``begin_batch`` is called first, all widgets are accumulated
+        without DOM mounts, then ``batch_finalize_turns`` swaps
+        Static→Markdown for all turns, and ``end_batch`` mounts
+        everything at once.  This ensures multi-turn conversations are
+        rebuilt correctly — without batch mode, ``begin_assistant_turn``
+        clears per-turn tracking dicts, causing earlier turns' sections
+        to appear "empty" and be removed by ``finalize_turn``.
+
         Parameters
         ----------
         sections:
             DB section rows ordered by ``id``.
         finalize:
-            When True, call :meth:`finalize_turn` on the active assistant
-            turn after applying updates.  Use this when the stream has
-            completed.
+            When True, rebuild in batch mode and finalize all turns.
+            Use this for initial loads and post-stream finalisation.
+            When False (streaming incremental), update in place.
         """
         if self._detached or not self.is_mounted:
             return
+
+        # When finalising (initial load or post-stream), use batch mode
+        # for the entire rebuild.  Batch mode defers DOM mounts until
+        # end_batch(), accumulates section tracking across all turns (no
+        # per-turn dict clears), and batch_finalize_turns swaps
+        # Static→Markdown for ALL turns — not just the last one.
+        if finalize:
+            self.begin_batch()
 
         # Group by turn, preserving order of first appearance.
         turn_order: list[str] = []
@@ -828,7 +845,14 @@ class ChatDisplay(VerticalScroll):
                     "content": content,
                 }
 
-        if finalize and self._active_asst_id is not None:
+        if finalize:
+            # Batch finalisation: swap Static→Markdown for ALL turns,
+            # remove empty sections, then mount everything at once.
+            self.batch_finalize_turns()
+            self.end_batch()
+            self._schedule_scroll()
+        elif self._active_asst_id is not None:
+            # Incremental streaming update — only finalise the active turn.
             await self.finalize_turn()
             self._schedule_scroll()
 
