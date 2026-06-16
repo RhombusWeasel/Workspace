@@ -54,10 +54,14 @@ A Textual-based TUI application providing an AI coding assistant. Supports Ollam
 - Graceful degradation: missing chats/files cause tab to be skipped
 - Pane tree serialisation via `pane_tree_to_dict()` / `pane_tree_from_dict()` in `pane_tree.py`
 
-### Testing
-Mission-critical tests only — core safety, tools, streaming, chat display, config, skill discovery, session persistence. No tests for internal implementation details or unimplemented features. See `tests/README.md`.
+### Build & Test
+- **Package manager:** UV (`uv`) — used for all dependency management, running tests, and running the app
+- **Running tests:** `uv run pytest tests/`
+- **Test files are NOT tracked in git** — `tests/` is in `.gitignore`. Tests exist locally for development but are not shipped in the repo. Do NOT `git add -f` any test files.
+- **Scope:** Mission-critical tests only — core safety, tools, streaming, chat display, config, skill discovery, session persistence. No tests for internal implementation details or unimplemented features.
 
 ### Key Bug Fixes
+- **Chat display conversation reconstruction** — `refresh_from_sections(f finalize=True)` now uses batch mode (`begin_batch` / `batch_finalize_turns` / `end_batch`) for full conversation rebuilds. Previously, non-batch mode caused `begin_assistant_turn()` to clear per-turn tracking dicts between turns, making earlier turns' sections appear "empty" to `finalize_turn()` which removed them from the DOM. Only the last turn got the Static→Markdown swap.
 - Duplicate `_rebuild_and_maybe_resume` method removed from `chat_manager.py` — Python was using the second definition, shadowing the first
 - Error logging added to `_rebuild_and_maybe_resume()` and `HistoryPanel._open_chat()` — previously silent exceptions
 
