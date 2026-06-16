@@ -133,14 +133,23 @@ class ChatManager(Widget):
 
         if self._state is not None and self._chat_id is not None:
             # Rebuild the display from the database and resume any
-            # active stream.
+            # active stream.  Use call_after_refresh so the rebuild
+            # runs after the widget is fully laid out and the screen
+            # has been refreshed.  This avoids the worker being
+            # cancelled if the widget is briefly unmounted during
+            # tab creation (Textual cancels all workers on unmount).
             logging.getLogger(__name__).warning(
                 "on_mount: state=%s chat_id=%s",
                 type(self._state).__name__, self._chat_id[:8] if self._chat_id else None,
             )
-            self.run_worker(self._rebuild_and_resume())
+            self.call_after_refresh(self._start_rebuild)
         else:
             self._maybe_show_system_prompt()
+
+    def _start_rebuild(self) -> None:
+        """Launch _rebuild_and_resume as a worker (called via call_after_refresh)."""
+        if self._chat_id is not None and self.is_mounted:
+            self.run_worker(self._rebuild_and_resume())
 
     def on_unmount(self) -> None:
         """Detach display when the widget is removed from the DOM.
@@ -266,19 +275,25 @@ class ChatManager(Widget):
     async def _rebuild_and_resume(self) -> None:
         """Rebuild the display from the database and resume streaming if active.
 
-        Called from ``on_mount()`` when the ChatManager is created after
-        workspace recomposition.  Loads sections from the database,
-        refreshes the display, and re-enters the streaming loop if a
-        stream was in progress.
+        Called from ``_start_rebuild()`` (via ``call_after_refresh``) when
+        the ChatManager is created with an existing chat_id — either from
+        history panel or after workspace recomposition.  Loads sections
+        from the database, refreshes the display, and re-enters the
+        streaming loop if a stream was in progress.
         """
         logging.getLogger(__name__).warning(
-            "_rebuild_and_resume: db=%s chat_id=%s mounted=%s",
+            "_rebuild_and_resume: db=%s chat_id=%s mounted=%s display_mounted=%s detached=%s",
             self._db is not None,
             self._chat_id[:8] if self._chat_id else None,
             self.is_mounted,
+            self._chat_display.is_mounted if hasattr(self, '_chat_display') else False,
+            self._chat_display._detached if hasattr(self, '_chat_display') else 'N/A',
         )
         await self._sync_conversation(finalize=True)
-        logging.getLogger(__name__).warning("_rebuild_and_resume: sync done")
+        logging.getLogger(__name__).warning(
+            "_rebuild_and_resume: sync done, display_children=%d",
+            len(self._chat_display.children) if hasattr(self, '_chat_display') else 0,
+        )
 
         # If a stream was active before recomposition, re-enter the
         # polling loop.
