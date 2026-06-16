@@ -24,7 +24,6 @@ from ui.tree.tree_row import RowButton, TreeNode, TreeRow
 from utils.icons import DELETE, REFRESH
 from context import AppContext
 from skills.chat.chat_tab import ChatTabState
-from skills.chat.chat_manager import ChatManager
 from ui.workspace.tabs import TabState
 
 # ---------------------------------------------------------------------------
@@ -233,48 +232,45 @@ class HistoryPanel(Container):
     def _open_chat(self, chat_id: str) -> None:
         """Open a past conversation in a new chat tab.
 
-        Loads the conversation sections from the database, creates a
-        ChatTabState pre-populated with the history and sections, and
-        opens a new workspace tab.
+        Creates a ChatTabState with just chat_id and db. The ChatManager
+        handles loading sections from the DB and rebuilding the display
+        via _sync_conversation(finalize=True) in on_mount().
         """
         if self._ctx is None or self._ctx.database is None:
             return
         ctx = self._ctx
 
-        # Load sections from the database
+        # Get chat metadata for the tab label.
         try:
-            sections = ctx.database.load_sections(chat_id)
+            chat_meta = ctx.database.get_chat(chat_id)
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Error loading sections for chat %s", chat_id)
-            return
+            chat_meta = None
 
-        if not sections:
-            return
-
-        # Reconstruct LLM-consumable history from the sections
-        history = ctx.database.reconstruct_history(chat_id)
-
-        # Determine agent_id from the sections — look for system messages
-        # that contain an agent identifier, or use default
-        agent_id = None
-        # For now, use the default agent.  Future: store agent_id in chat metadata.
-
-        # Create a ChatTabState pre-populated with the loaded history
-        state = ChatTabState(ctx=ctx, agent_id=agent_id)
-        state._history = history
-        state._db = ctx.database
-        state._chat_id = chat_id
-
-        # Update the chat title with the preview text if it was empty
-        preview = _chat_preview(sections)
-        if preview and preview != "New conversation":
+        preview = "New conversation"
+        if chat_meta and chat_meta.get("title"):
+            preview = chat_meta["title"]
+        else:
+            # Load sections only for the tab label preview.
             try:
-                existing_chat = ctx.database.get_chat(chat_id)
-                if existing_chat and not existing_chat.get("title"):
-                    ctx.database.update_chat(chat_id, preview)
+                sections = ctx.database.load_sections(chat_id)
+                if sections:
+                    preview = _chat_preview(sections)
+                    # Update the chat title if it was empty.
+                    if preview != "New conversation":
+                        try:
+                            ctx.database.update_chat(chat_id, preview)
+                        except Exception:
+                            pass
             except Exception:
                 pass
+
+        # Create a ChatTabState with just chat_id and db.
+        # The ChatManager.on_mount() will see _chat_id is set and call
+        # _rebuild_and_resume() → _sync_conversation(finalize=True)
+        # which loads everything from the DB.
+        state = ChatTabState(ctx=ctx, agent_id=None)
+        state._db = ctx.database
+        state._chat_id = chat_id
 
         # Open a chat tab with this state
         from ui.workspace.workspace import Workspace
@@ -301,31 +297,16 @@ class HistoryPanel(Container):
             tabs.switch_tab(tab_id)
             return
 
-        # Content factory that creates a ChatManager pre-loaded with
-        # the conversation history.  The agent is wired from the context
-        # so the user can continue chatting after viewing past messages.
-        def _create_loaded_chat_content(tab_state: TabState) -> ChatManager:
-            manager = ChatManager()
-            if isinstance(tab_state, ChatTabState):
-                manager.set_state(tab_state)
-                # Wire the agent so the user can continue the conversation.
-                # If the state already has an agent (from a previous
-                # ChatManager that was flushed), keep it.  Otherwise,
-                # wire a fresh agent from the context.
-                if tab_state._agent is None and tab_state._ctx is not None:
-                    if tab_state._agent_id:
-                        manager.wire_agent_from_id(
-                            tab_state._ctx, tab_state._agent_id
-                        )
-                    else:
-                        manager.wire_from_context(tab_state._ctx)
-            return manager
+        # Use the standard chat content factory — it calls set_state()
+        # then wire_from_context(), giving us a working agent.
+        # The ChatManager.on_mount() detects _chat_id and rebuilds from DB.
+        from skills.chat.chat_tab import _create_chat_content
 
         tabs.open_tab(
             tab_id,
             label,
             state=state,
-            content_factory=_create_loaded_chat_content,
+            content_factory=_create_chat_content,
         )
 
     # ------------------------------------------------------------------
