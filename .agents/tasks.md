@@ -2,10 +2,12 @@
 
 ## In-Progress Tasks
 
+## Completed Tasks
+
 ### Fix Last Response Section Static→Markdown Swap
 - **Plan:** `.agents/plans/fix-last-response-static-to-markdown.md`
-- **Branch:** `fix-last-response-static-markdown`
-- **Status:** Complete — fix applied, 8 tests added, all 143 tests pass
+- **Branch:** `fix/last-response-static-markdown` → merged to `main`
+- **Status:** Complete — merged
 - **Summary:** Fixed `batch_finalize_turns()` to do a live DOM swap (`widget.remove()` + `contents.mount(new_widget)`) for sections already composed in the DOM, instead of only updating `_contents_list` (which has no effect post-composition). Falls back to `_contents_list` update for pre-composition batch mode. 8 regression tests added, all 143 tests pass.
 
 ### Section Completion Flag in DB
