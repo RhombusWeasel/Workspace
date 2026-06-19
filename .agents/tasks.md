@@ -5,8 +5,8 @@
 ### Markdown Preview Toggle for File Editor
 - **Plan:** `.agents/plans/markdown-preview-toggle.md`
 - **Branch:** `feature/markdown-preview-toggle`
-- **Status:** Planning
-- **Summary:** Add `Ctrl+P` toggle in `FileEditor` to switch between edit mode (TextArea with syntax highlighting) and a read-only rendered `Markdown` preview for `.md` files.
+- **Status:** Complete — implementation done, 8 tests added, all 151 tests pass
+- **Summary:** Added `Ctrl+E` toggle in `FileEditor` to switch between edit mode (TextArea with syntax highlighting) and a read-only rendered `Markdown` preview for `.md` files. Used `Ctrl+E` instead of `Ctrl+P` because Textual's test pilot silently swallows `Ctrl+P`. Made `FileEditor` focusable so key bindings work when the TextArea is hidden in preview mode. Guards AI suggestion requests as no-ops in preview mode.
 
 ## Completed Tasks
 

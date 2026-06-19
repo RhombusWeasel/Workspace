@@ -32,7 +32,7 @@ from __future__ import annotations
 import os
 
 from textual.app import ComposeResult
-from textual.widgets import TextArea
+from textual.widgets import Markdown, TextArea
 from textual.widget import Widget
 from textual.binding import Binding
 from textual import events
@@ -143,8 +143,26 @@ class FileEditor(Widget):
         path and handles any per-tab state.
     """
 
+    can_focus = True
+
+    DEFAULT_CSS = """
+    FileEditor Markdown {
+        display: none;
+        height: 1fr;
+        overflow: auto;
+        padding: 0 1;
+    }
+    """
+
     BINDINGS = [
         Binding("ctrl+s", "save", "Save", show=True),
+        Binding(
+            "ctrl+e",
+            "toggle_preview",
+            "Preview",
+            show=True,
+            priority=True,
+        ),
         Binding(
             "ctrl+a",
             "request_ai_suggestion",
@@ -187,6 +205,10 @@ class FileEditor(Widget):
         same as the inline ghost text.  For multi-line suggestions, the
         first line is shown inline and the full text is shown in the
         :class:`~ui.workspace.suggestion_overlay.SuggestionOverlay`."""
+        self._preview_mode: bool = False
+        """When ``True`` the editor is in read-only Markdown preview mode
+        (the rendered :class:`~textual.widgets.Markdown` widget is shown
+        and the :class:`~textual.widgets.TextArea` is hidden)."""
 
     @property
     def filepath(self) -> str:
@@ -217,6 +239,7 @@ class FileEditor(Widget):
             text_area.language = self._language
         yield text_area
         yield SuggestionOverlay()
+        yield Markdown(id="md-preview")
 
     def on_mount(self) -> None:
         self._load_file()
@@ -279,6 +302,60 @@ class FileEditor(Widget):
             return text_area.text != self._content
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Markdown preview toggle
+    # ------------------------------------------------------------------
+
+    @property
+    def is_markdown(self) -> bool:
+        """Whether this file is a Markdown file."""
+        return self._language == "markdown"
+
+    @property
+    def preview_mode(self) -> bool:
+        """Whether the editor is currently in Markdown preview mode."""
+        return self._preview_mode
+
+    def action_toggle_preview(self) -> None:
+        """Toggle between edit mode and rendered Markdown preview (``Ctrl+P``).
+
+        Only applies to Markdown files (``.md``).  For other file types
+        this is a no-op.
+
+        **Edit → Preview:**
+            Snapshots the current ``TextArea`` text into the ``Markdown``
+            widget, hides the ``TextArea``, shows the preview, and clears
+            any active AI suggestion.
+
+        **Preview → Edit:**
+            Hides the ``Markdown`` widget, shows the ``TextArea``, and
+            focuses it so the user can resume editing immediately.
+        """
+        if not self.is_markdown:
+            return
+
+        if not self._preview_mode:
+            # Edit → Preview
+            text_area = self.query_one(TextArea)
+            md_widget = self.query_one("#md-preview", Markdown)
+            md_widget.update(text_area.text)
+            text_area.styles.display = "none"
+            md_widget.styles.display = "block"
+            # Clear any active AI suggestion — no suggestions in preview
+            self._clear_suggestion()
+            self._preview_mode = True
+            # Focus the FileEditor so key bindings still work (Markdown
+            # widget is not focusable).
+            self.focus()
+        else:
+            # Preview → Edit
+            md_widget = self.query_one("#md-preview", Markdown)
+            text_area = self.query_one(TextArea)
+            md_widget.styles.display = "none"
+            text_area.styles.display = "block"
+            text_area.focus()
+            self._preview_mode = False
 
     # ------------------------------------------------------------------
     # Inline AI suggestions
@@ -526,7 +603,13 @@ class FileEditor(Widget):
 
         Cancels any pending debounce timer by incrementing the debounce
         counter and requests a suggestion immediately.
+
+        No-op when in Markdown preview mode — suggestions are only
+        available in edit mode.
         """
+        if self._preview_mode:
+            return
+
         cfg = self._get_suggest_config()
         if not cfg["enabled"]:
             return
