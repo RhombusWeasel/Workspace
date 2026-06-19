@@ -2,6 +2,12 @@
 
 ## In-Progress Tasks
 
+### Markdown Preview Toggle for File Editor
+- **Plan:** `.agents/plans/markdown-preview-toggle.md`
+- **Branch:** `feature/markdown-preview-toggle`
+- **Status:** Planning
+- **Summary:** Add `Ctrl+P` toggle in `FileEditor` to switch between edit mode (TextArea with syntax highlighting) and a read-only rendered `Markdown` preview for `.md` files.
+
 ## Completed Tasks
 
 ### Fix Last Response Section Static→Markdown Swap
