@@ -2,6 +2,12 @@
 
 ## In-Progress Tasks
 
+### Fix Chat Display Long Session Disconnect
+- **Plan:** `.agents/plans/fix-chat-display-long-session.md`
+- **Branch:** `fix/chat-display-long-session`
+- **Status:** Complete — implementation done, 8 new tests added, all 208 tests pass
+- **Summary:** Fixed the chat display silently losing connection in long sessions. Root cause was the `_sync_conversation` polling loop catching all exceptions from `refresh_from_sections` at DEBUG level (effectively silent). Four fixes applied: (1) upgraded polling loop error logging from DEBUG to WARNING, (2) added per-section try/except isolation in `refresh_from_sections` so one failing section doesn't block all subsequent sections, (3) removed dict-clearing in `begin_assistant_turn` that caused earlier-turn section lookups to fail during DB-driven refresh, (4) made `_mount_into_collapsible`, `add_section`, `add_tool_call`, and `batch_finalize_turns` async with awaited mount calls to ensure widgets are fully mounted before subsequent operations. Updated existing tests for new async signatures.
+
 ### Markdown Preview Toggle for File Editor
 - **Plan:** `.agents/plans/markdown-preview-toggle.md`
 - **Branch:** `feature/markdown-preview-toggle`

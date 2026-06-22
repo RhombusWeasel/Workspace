@@ -81,7 +81,7 @@ class TestBatchFinalizeDOMSwap:
 
             # Simulate streaming: add section as Static (not batch mode)
             display.begin_assistant_turn(turn_id="t1")
-            section_id = display.add_section("response")
+            section_id = await display.add_section("response")
             await display.update_section(section_id, "Hello **world**")
             await pilot.pause()
 
@@ -103,7 +103,7 @@ class TestBatchFinalizeDOMSwap:
             display._section_texts[section_id] = "Hello **world**"
             display._section_types[section_id] = "response"
 
-            display.batch_finalize_turns()
+            await display.batch_finalize_turns()
             display.end_batch()
             await pilot.pause()
 
@@ -127,7 +127,7 @@ class TestBatchFinalizeDOMSwap:
 
             # Simulate streaming: add thinking section as Static
             display.begin_assistant_turn(turn_id="t1")
-            section_id = display.add_section("thinking")
+            section_id = await display.add_section("thinking")
             await display.update_section(section_id, "Hmm, let me think...")
             await pilot.pause()
 
@@ -142,7 +142,7 @@ class TestBatchFinalizeDOMSwap:
             display._section_texts[section_id] = "Hmm, let me think..."
             display._section_types[section_id] = "thinking"
 
-            display.batch_finalize_turns()
+            await display.batch_finalize_turns()
             display.end_batch()
             await pilot.pause()
 
@@ -163,7 +163,7 @@ class TestBatchFinalizeDOMSwap:
             display = pilot.app.chat_display
 
             display.begin_assistant_turn(turn_id="t1")
-            section_id = display.add_section("response")
+            section_id = await display.add_section("response")
             # Don't call update_section — content stays empty
             await pilot.pause()
 
@@ -175,7 +175,7 @@ class TestBatchFinalizeDOMSwap:
             display._section_texts[section_id] = ""  # empty
             display._section_types[section_id] = "response"
 
-            display.batch_finalize_turns()
+            await display.batch_finalize_turns()
             display.end_batch()
             await pilot.pause()
 
