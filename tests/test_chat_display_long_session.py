@@ -399,6 +399,66 @@ class TestPollingLoopErrorVisibility:
 # Tests — long multi-turn conversation
 # ---------------------------------------------------------------------------
 
+class TestBatchEndBatchMounts:
+	"""Test that end_batch correctly mounts sections inside AssistantTurns.
+
+	Regression test for a bug where compose_add_child was used to mount
+	Section widgets into already-composed AssistantTurn Collapsibles.
+	compose_add_child only works pre-composition; after self.mount(widget)
+	composes the AssistantTurn, sections must be mounted via contents.mount().
+	"""
+
+	@pytest.mark.asyncio
+	async def test_sections_appear_inside_assistant_turn_after_batch(self):
+		"""After end_batch, each AssistantTurn's Contents must contain its
+		Section widgets — not just in _contents_list but actually in the DOM."""
+		sections = _make_sections("chat-1", [
+			{
+				"turn_id": "t1",
+				"messages": [
+					{"content_type": "user", "content": "Hello"},
+					{"content_type": "thinking", "content": "Hmm..."},
+					{"content_type": "response", "content": "Hi!"},
+				],
+			},
+			{
+				"turn_id": "t2",
+				"messages": [
+					{"content_type": "user", "content": "Bye"},
+					{"content_type": "response", "content": "Bye!"},
+				],
+			},
+		])
+
+		async with _ChatApp().run_test() as pilot:
+			display = pilot.app.chat_display
+
+			await display.refresh_from_sections(sections, finalize=True)
+			await pilot.pause()
+
+			# Check that each AssistantTurn has Section widgets INSIDE its
+			# Contents container (not just in _contents_list).
+			for turn in display.query(AssistantTurn):
+				contents = turn.query_one(Collapsible.Contents)
+				inner_sections = list(contents.query(Section))
+				assert len(inner_sections) >= 1, (
+					f"Turn {turn.turn_id} has no sections inside its Contents "
+					f"— they were not mounted into the DOM"
+				)
+				# Verify the section actually has content
+				for sec in inner_sections:
+					sec_contents = sec.query_one(Collapsible.Contents)
+					content_children = list(sec_contents.children)
+					assert len(content_children) >= 1, (
+						f"Section {sec.section_id} in turn {turn.turn_id} "
+						f"has no content widget inside its Contents"
+					)
+
+
+# ---------------------------------------------------------------------------
+# Tests — long multi-turn conversation
+# ---------------------------------------------------------------------------
+
 class TestLongMultiTurnConversation:
 	"""Test that a long multi-turn conversation renders correctly."""
 

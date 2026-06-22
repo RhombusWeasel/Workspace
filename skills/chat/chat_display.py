@@ -1008,21 +1008,27 @@ class ChatDisplay(VerticalScroll):
                     self.mount(widget)
                     current_turn = widget
                 else:
-                    # Section or ToolCallSection -- mount inside the current
-                    # turn's Contents container.  In batch mode, the
-                    # AssistantTurn Collapsible has NOT yet composed (it was
-                    # just mounted above), so Contents doesn't exist yet.
-                    # Use compose_add_child directly so the Collapsible's
-                    # compose() will yield the widget inside Contents.
+                    # Section or ToolCallSection -- mount inside the
+                    # current turn's Contents container.
+                    #
+                    # When the AssistantTurn was just mounted above,
+                    # Textual composes it immediately.  This means
+                    # Collapsible.Contents already exists, so we must use
+                    # contents.mount() (live DOM mount), NOT
+                    # compose_add_child (which only works pre-composition).
+                    #
+                    # _mount_into_collapsible handles both cases: it tries
+                    # contents.mount() first (for composed Collapsibles) and
+                    # falls back to compose_add_child (for pre-composition).
                     if current_turn is not None:
                         try:
-                            current_turn.compose_add_child(widget)
+                            contents = current_turn.query_one(Collapsible.Contents)
+                            contents.mount(widget)
                         except Exception:
-                            logging.getLogger(__name__).warning(
-                                "Failed to add batch widget to turn %s",
-                                current_turn.turn_id,
-                                exc_info=True,
-                            )
+                            # Collapsible not yet composed — use
+                            # compose_add_child so compose() will yield
+                            # the widget inside Contents.
+                            current_turn.compose_add_child(widget)
                     else:
                         self.mount(widget)
 
