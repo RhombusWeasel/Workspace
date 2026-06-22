@@ -358,8 +358,9 @@ class ChatManager(Widget):
                         sections = self._db.load_sections(self._chat_id)
                         await self._chat_display.refresh_from_sections(sections)
                     except Exception:
-                        logging.getLogger(__name__).debug(
-                            "Conversation sync refresh failed", exc_info=True
+                        logging.getLogger(__name__).warning(
+                            "Conversation sync refresh failed during polling",
+                            exc_info=True,
                         )
                     await asyncio.sleep(0.25)
             except asyncio.CancelledError:

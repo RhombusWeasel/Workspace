@@ -475,16 +475,19 @@ class ChatDisplay(VerticalScroll):
         self._active_asst_id = asst_id
         self._turn_map[asst_id] = turn
 
-        # In batch mode, accumulate section tracking across turns.
-        if not self._batch_mode:
-            self._section_widgets = {}
-            self._section_texts = {}
-            self._section_types = {}
+        # In batch mode, section tracking dicts accumulate across turns
+        # (needed by batch_finalize_turns).  In normal (non-batch) mode,
+        # we also DON'T clear the dicts — during DB-driven incremental
+        # refresh, begin_assistant_turn is called for each new turn, but
+        # the dicts contain references to sections from earlier turns that
+        # may still need updates (e.g. status swaps).  Clearing them causes
+        # _maybe_swap_to_markdown to fail silently for earlier sections.
+        # The dicts are cleared by finalize_turn() or end_batch() instead.
 
         self._schedule_scroll()
         return asst_id
 
-    def add_section(self, section_type: str, *, as_markdown: bool = False) -> str:
+    async def add_section(self, section_type: str, *, as_markdown: bool = False) -> str:
         """Add a new section to the current assistant turn.
 
         *section_type* must be one of ``'thinking'``, ``'tools'``, or
@@ -570,7 +573,7 @@ class ChatDisplay(VerticalScroll):
             if self._batch_mode:
                 self._batch_widgets.append(section)
             else:
-                self._mount_into_collapsible(turn, section)
+                await self._mount_into_collapsible(turn, section)
 
         self._schedule_scroll()
         return section_id
@@ -785,12 +788,24 @@ class ChatDisplay(VerticalScroll):
             # that hasn't been responded to yet).
             for sec in turns[tid]:
                 if sec["content_type"] == "user" and tid not in self._user_turn_ids:
-                    self.add_user_message(sec["content"])
+                    try:
+                        self.add_user_message(sec["content"])
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "Failed to add user message for turn %s", tid,
+                            exc_info=True,
+                        )
                     self._user_turn_ids.add(tid)
 
             # Ensure an assistant turn exists for this turn_id.
             if has_assistant and tid not in self._turn_map:
-                self.begin_assistant_turn(turn_id=tid)
+                try:
+                    self.begin_assistant_turn(turn_id=tid)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Failed to begin assistant turn %s", tid,
+                        exc_info=True,
+                    )
 
             turn_widget = self._turn_map.get(tid)
             if turn_widget is None:
@@ -827,7 +842,14 @@ class ChatDisplay(VerticalScroll):
                     if prev["content"] == content:
                         # Check if section transitioned from streaming → complete.
                         if is_complete and not prev.get("is_complete", True):
-                            await self._maybe_swap_to_markdown(key, content)
+                            try:
+                                await self._maybe_swap_to_markdown(key, content)
+                            except Exception:
+                                logging.getLogger(__name__).warning(
+                                    "Failed to swap section %s to Markdown",
+                                    key,
+                                    exc_info=True,
+                                )
                             self._section_state[key] = {
                                 "content_type": ct,
                                 "content": content,
@@ -835,49 +857,57 @@ class ChatDisplay(VerticalScroll):
                             }
                         continue
 
-                if ct == "thinking":
-                    section_id = self._refresh_section_map.get(key)
-                    if section_id is None:
-                        # During batch finalize, always use Static —
-                        # batch_finalize_turns will swap to Markdown later.
-                        # During incremental streaming, use Markdown for
-                        # completed sections.
-                        use_markdown = is_complete and not finalize
-                        section_id = self.add_section("thinking", as_markdown=use_markdown)
-                        self._refresh_section_map[key] = section_id
-                    await self.update_section(section_id, content)
+                try:
+                    if ct == "thinking":
+                        section_id = self._refresh_section_map.get(key)
+                        if section_id is None:
+                            # During batch finalize, always use Static —
+                            # batch_finalize_turns will swap to Markdown later.
+                            # During incremental streaming, use Markdown for
+                            # completed sections.
+                            use_markdown = is_complete and not finalize
+                            section_id = await self.add_section("thinking", as_markdown=use_markdown)
+                            self._refresh_section_map[key] = section_id
+                        await self.update_section(section_id, content)
 
-                elif ct == "response":
-                    section_id = self._refresh_section_map.get(key)
-                    if section_id is None:
-                        use_markdown = is_complete and not finalize
-                        section_id = self.add_section("response", as_markdown=use_markdown)
-                        self._refresh_section_map[key] = section_id
-                    await self.update_section(section_id, content)
+                    elif ct == "response":
+                        section_id = self._refresh_section_map.get(key)
+                        if section_id is None:
+                            use_markdown = is_complete and not finalize
+                            section_id = await self.add_section("response", as_markdown=use_markdown)
+                            self._refresh_section_map[key] = section_id
+                        await self.update_section(section_id, content)
 
-                elif ct == "tool_call":
-                    section_id = self._refresh_section_map.get(key)
-                    if section_id is None:
+                    elif ct == "tool_call":
+                        section_id = self._refresh_section_map.get(key)
+                        if section_id is None:
+                            import json as _json
+                            try:
+                                tc_data = _json.loads(content)
+                                name = tc_data.get("name", "unknown")
+                                args = tc_data.get("arguments", {})
+                            except (_json.JSONDecodeError, KeyError):
+                                name = "unknown"
+                                args = {}
+                            section_id = await self.add_tool_call(name, args)
+                            self._refresh_section_map[key] = section_id
                         import json as _json
                         try:
                             tc_data = _json.loads(content)
-                            name = tc_data.get("name", "unknown")
-                            args = tc_data.get("arguments", {})
+                            if "result" in tc_data and tc_data["result"]:
+                                self.add_tool_result(section_id, tc_data["result"])
                         except (_json.JSONDecodeError, KeyError):
-                            name = "unknown"
-                            args = {}
-                        section_id = self.add_tool_call(name, args)
-                        self._refresh_section_map[key] = section_id
-                    import json as _json
-                    try:
-                        tc_data = _json.loads(content)
-                        if "result" in tc_data and tc_data["result"]:
-                            self.add_tool_result(section_id, tc_data["result"])
-                    except (_json.JSONDecodeError, KeyError):
-                        pass
+                            pass
 
-                elif ct == "system" and key not in self._section_state:
-                    self.add_system_message(content)
+                    elif ct == "system" and key not in self._section_state:
+                        self.add_system_message(content)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Failed to process section %s (type=%s)",
+                        key, ct,
+                        exc_info=True,
+                    )
+                    # Still update _section_state so we don't retry on every poll.
 
                 self._section_state[key] = {
                     "content_type": ct,
@@ -888,7 +918,7 @@ class ChatDisplay(VerticalScroll):
         if finalize:
             # Batch finalisation: swap Static→Markdown for ALL turns,
             # remove empty sections, then mount everything at once.
-            self.batch_finalize_turns()
+            await self.batch_finalize_turns()
             self.end_batch()
             self._schedule_scroll()
         # During incremental streaming (finalize=False), do NOT call
@@ -916,16 +946,18 @@ class ChatDisplay(VerticalScroll):
         """Find an AssistantTurn widget by its turn_id."""
         return self._turn_map.get(turn_id)
 
-    def _mount_into_collapsible(self, collapsible: Collapsible, widget: Widget) -> None:
+    async def _mount_into_collapsible(self, collapsible: Collapsible, widget: Widget) -> None:
         """Mount a widget into a Collapsible's Contents container.
 
         If the Collapsible has already composed (Contents exists), mount
-        directly into Contents. Otherwise, use compose_add_child so that
-        Collapsible.compose() will place the widget inside Contents.
+        directly into Contents and await the result to ensure the widget
+        is fully mounted before subsequent operations. Otherwise, use
+        compose_add_child so that Collapsible.compose() will place the
+        widget inside Contents.
         """
         try:
             contents = collapsible.query_one(Collapsible.Contents)
-            contents.mount(widget)
+            await contents.mount(widget)
         except Exception:
             # Collapsible not yet composed -- add to _contents_list so
             # compose() will yield it inside Contents.
@@ -977,11 +1009,20 @@ class ChatDisplay(VerticalScroll):
                     current_turn = widget
                 else:
                     # Section or ToolCallSection -- mount inside the current
-                    # turn's Contents container via _mount_into_collapsible,
-                    # which correctly routes widgets into the Collapsible's
-                    # Contents whether the parent has already composed or not.
+                    # turn's Contents container.  In batch mode, the
+                    # AssistantTurn Collapsible has NOT yet composed (it was
+                    # just mounted above), so Contents doesn't exist yet.
+                    # Use compose_add_child directly so the Collapsible's
+                    # compose() will yield the widget inside Contents.
                     if current_turn is not None:
-                        self._mount_into_collapsible(current_turn, widget)
+                        try:
+                            current_turn.compose_add_child(widget)
+                        except Exception:
+                            logging.getLogger(__name__).warning(
+                                "Failed to add batch widget to turn %s",
+                                current_turn.turn_id,
+                                exc_info=True,
+                            )
                     else:
                         self.mount(widget)
 
@@ -1033,7 +1074,7 @@ class ChatDisplay(VerticalScroll):
         # where we may need to override.
         pass
 
-    def batch_finalize_turns(self) -> None:
+    async def batch_finalize_turns(self) -> None:
         """Finalize all completed assistant turns in batch mode.
 
         Removes empty sections, swaps Static → Markdown in the DOM,
@@ -1071,7 +1112,7 @@ class ChatDisplay(VerticalScroll):
                 contents = section.query_one(Collapsible.Contents)
                 # Section is in the DOM — swap the widget live.
                 widget.remove()
-                contents.mount(new_widget)
+                await contents.mount(new_widget)
                 swapped_in_dom = True
             except Exception:
                 # Section not yet composed — update _contents_list
@@ -1108,7 +1149,7 @@ class ChatDisplay(VerticalScroll):
     # Tool call entries
     # ------------------------------------------------------------------
 
-    def add_tool_call(
+    async def add_tool_call(
         self,
         name: str,
         arguments: dict,
@@ -1156,7 +1197,7 @@ class ChatDisplay(VerticalScroll):
             if self._batch_mode:
                 self._batch_widgets.append(tool_section)
             else:
-                self._mount_into_collapsible(turn, tool_section)
+                await self._mount_into_collapsible(turn, tool_section)
 
         self._schedule_scroll()
         return tc_id
