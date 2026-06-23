@@ -19,6 +19,15 @@ An early `ls -l | grep design` can save a lot of time reading other files trying
 5. Apply the change.
 6. Ask the user to check and test the change.  Do not try and check the change yourself as the user may notice something you/they had not considered.
 
+# Coding Principles:
+1. Does this need to exist?   → no: skip it (YAGNI)
+2. Already in this codebase?  → reuse it, don't rewrite
+3. Stdlib does it?            → use it
+4. Native platform feature?   → use it
+5. Installed dependency?      → use it
+6. One line?                  → one line
+7. Only then: the minimum amount of code that works
+
 # Skills
 Below is an XML representation of the skills you have available, you can call the activate_skill tool at any time to get more detailed information about the skill and it's usage.
 Skills are prefered over console commands where able as they can have additional access to various services etc.
